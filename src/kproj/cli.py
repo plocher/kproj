@@ -15,7 +15,10 @@ import sys
 def main() -> int:
     """kproj CLI entry point (placeholder)."""
     print("kproj v0.1.0 — not yet implemented", file=sys.stderr)
-    print("See docs/GLOSSARY.md / docs/PRD.md / docs/DESIGN.md for the locked v1 contract.", file=sys.stderr)
+    print(
+        "See docs/GLOSSARY.md / docs/PRD.md / docs/DESIGN.md for the locked v1 contract.",
+        file=sys.stderr,
+    )
     return 2
 
 
