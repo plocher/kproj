@@ -241,12 +241,19 @@ THEN I download a zip containing exactly three files: bom.csv, pos.csv, gerbers.
 GIVEN a published version page
 WHEN I click the source.zip artifact link
 THEN I download a zip containing the project's non-derived KiCad files (*.kicad_pro/sch/pcb/sym/pretty/dru/wks plus library tables + README.md + LICENSE + CHANGELOG.md)
-AND the zip contains a top-level `SOURCE_README.md` listing any external-library prerequisites (e.g. `SPCoast_KiCad_Library`) the project references
+AND the zip contains a top-level `SOURCE_README.md` documenting the (small) limits of opening the project without the original external libraries
+AND I can unzip the archive and open `<Project>.kicad_pro` in KiCad 9 with the schematic and PCB rendering correctly
 ```
 
-*Note*: the source archive contains *only* project-local files. External libraries the project references (the SPCoast shared library at `~/Dropbox/KiCad/SPCoast_KiCad_Library`, KiCad's bundled standard libraries, etc.) are NOT vendored — they are documented in `SOURCE_README.md` instead.
+*Scope*: the source archive captures **project artifacts**, not the larger KiCad-install context (libraries, plugins, etc.). KiCad 6.0+ embeds all symbols and footprints used in the design inside the project's `.kicad_sch` and `.kicad_pcb` files, so the archive is sufficient for opening + viewing + editing + generating manufacturing files.
 
-*Open experimental finding*: whether KiCad raises an error / silently fails / loads with missing symbols when a project is opened without its referenced external libraries is not yet validated against the v1 corpus. The empirical answer determines how prominent the `SOURCE_README.md` prerequisite needs to be (a footnote, a warning banner, or an error-out). See `docs/DESIGN.md` § *SourcePackager*.
+*Known limits without the original libraries* (documented in `SOURCE_README.md`):
+
+- **3D viewer shows the bare PCB.** 3D models are linked by absolute filesystem path, not embedded; the 3D viewer renders the board without component shapes. 2D PCB view and fabrication output are unaffected.
+- **"Update Symbols from Library" does not work.** Requires the source libraries; the consumer has the embedded copies, not the originals.
+- **Reusing parts in other projects is awkward.** Pulling a custom symbol into a new design requires the source library.
+
+For users who want full library access, `SOURCE_README.md` lists the external libraries referenced by the project (e.g. `SPCoast_KiCad_Library`) with install pointers. See `docs/DESIGN.md` § *SourcePackager*.
 
 #### Story 18 — Inspect the BOM interactively
 *As a project consumer planning a build, I want to view the interactive HTML BOM, so that I can plan component sourcing without unzipping anything.*
