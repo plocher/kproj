@@ -14,11 +14,25 @@ from .kicad_install import (
     find_plugins_dir,
     kicad_version,
 )
+from .subprocess_runner import (
+    DEFAULT_GIT_TIMEOUT,
+    DEFAULT_KICAD_TIMEOUT,
+    SubprocessFailedError,
+    SubprocessResult,
+    SubprocessTimeoutError,
+    run,
+)
 
 __all__ = [
+    "DEFAULT_GIT_TIMEOUT",
+    "DEFAULT_KICAD_TIMEOUT",
     "KicadNotFoundError",
+    "SubprocessFailedError",
+    "SubprocessResult",
+    "SubprocessTimeoutError",
     "find_ibom_script",
     "find_kicad_cli",
     "find_plugins_dir",
     "kicad_version",
+    "run",
 ]
