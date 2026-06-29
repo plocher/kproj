@@ -98,12 +98,14 @@ AND the version page body shows two adjacent Markdown tables: metadata audit fin
 
 ```gherkin path=null start=null
 GIVEN a version already published with `status: experimental`
-AND I have edited ${COMMENT9} in the PCB title-block to `active`
+AND I have edited ${COMMENT9} in the SCH title-block to `active`
 WHEN I run `kproj`
 THEN the version markdown is re-written with `status: active`
 AND no renders / SVGs / iBOM / fab.zip are regenerated
 AND the site repo is committed with a `refresh:` commit-message prefix
 ```
+
+*Note*: `${COMMENT9}` is read from the SCH title-block per the locked per-field metadata precedence (SCH is canonical for `comment2`/`comment3`/`comment9`; PCB title-blocks routinely omit them). See `docs/DESIGN.md` § *Metadata precedence*.
 
 #### Story 7 — Skip a private project
 *As a project author with a project not for public release (cpOD pattern), I want to mark it as `status: private`, so that kproj skips the site-publish step automatically.*
@@ -114,8 +116,13 @@ WHEN I run `kproj`
 THEN the audit + DRC/ERC run normally (for the user's stderr)
 AND no files are written to the site repo
 AND no git operations are performed on the site repo
-AND kproj exits with code 0
+AND kproj exits with code 0 when no findings exist
+AND kproj exits with code 1 when audit/DRC/ERC findings exist (uniform with the global findings-present rule)
 ```
+
+*Semantics*: `private` is **prospective only**. kproj will not publish *future* snapshots while the status is private; any previously published version of the project remains on the site unchanged. The site-repo cleanliness check and iBOM availability check are deferred past status detection so a `private` project never fails preflight on either condition.
+
+*Out of scope for v1*: retroactive unpublishing of a version that was mistakenly published. If a public version was published and the user now wants to hide it, that is a separate "mistakenly-published unpublish" workflow (deferred discussable sub-project, see plan).
 
 #### Story 8 — Batch-publish without N pushes
 *As a project author, I want to publish many projects in a corpus-wide batch, so that I can update the site after a bulk cleanup pass.*
@@ -223,8 +230,12 @@ THEN I download a zip containing exactly three files: bom.csv, pos.csv, gerbers.
 GIVEN a published version page
 WHEN I click the source.zip artifact link
 THEN I download a zip containing the project's non-derived KiCad files (*.kicad_pro/sch/pcb/sym/pretty/dru/wks plus library tables + README.md + LICENSE + CHANGELOG.md)
-AND the zip's contents can be opened in KiCad without modification
+AND the zip contains a top-level `SOURCE_README.md` listing any external-library prerequisites (e.g. `SPCoast_KiCad_Library`) the project references
 ```
+
+*Note*: the source archive contains *only* project-local files. External libraries the project references (the SPCoast shared library at `~/Dropbox/KiCad/SPCoast_KiCad_Library`, KiCad's bundled standard libraries, etc.) are NOT vendored — they are documented in `SOURCE_README.md` instead.
+
+*Open experimental finding*: whether KiCad raises an error / silently fails / loads with missing symbols when a project is opened without its referenced external libraries is not yet validated against the v1 corpus. The empirical answer determines how prominent the `SOURCE_README.md` prerequisite needs to be (a footnote, a warning banner, or an error-out). See `docs/DESIGN.md` § *SourcePackager*.
 
 #### Story 18 — Inspect the BOM interactively
 *As a project consumer planning a build, I want to view the interactive HTML BOM, so that I can plan component sourcing without unzipping anything.*

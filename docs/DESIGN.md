@@ -62,7 +62,8 @@ src/kproj/
 │   └── change_journal.py
 ├── common/
 │   ├── __init__.py
-│   └── kicad_install.py     # KiCad install discovery (ADR 0009)
+│   ├── kicad_install.py     # KiCad install discovery (ADR 0009)
+│   └── subprocess_runner.py # Shared subprocess runner (timeouts + signals)
 ├── application/
 │   ├── __init__.py
 │   └── publish_workflow.py  # PublishWorkflow, PublishRequest, PublishResult
@@ -167,62 +168,75 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
 `PublishWorkflow.run(PublishRequest) -> PublishResult`:
 
 ```text path=null start=null
-1. Pre-flight checks
+1. Minimal pre-flight (only what's needed to read metadata)
    - Resolve project: KicadProjectReader.resolve(request.project_arg) → ResolvedProject
-   - Discover KiCad install (common.kicad_install):
-        kicad_cli      = config.kicad_cli or find_kicad_cli()
-        ibom_script    = find_ibom_script()    # required per ADR 0008; hard-fail exit 2 if missing
-        kicad_ver      = kicad_version(kicad_cli)
-      Report discovered paths + version to stderr at default verbosity (one line).
-      Enforce major version 9.x for v1; mismatch → exit 2.
-   - If not dry_run: check site_repo cleanliness (git -C <site_repo> status --porcelain)
-   - Any pre-flight failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
+   - Discover kicad-cli: kicad_cli = config.kicad_cli or common.kicad_install.find_kicad_cli()
+     - Verify with kicad_version(kicad_cli); enforce major version 9.x for v1
+     - Report binary path + version to stderr at default verbosity (one line)
+   - Any failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
 2. Read project metadata
    - KicadProjectReader.read(resolved) → ProjectInfo + metadata findings
-3. Analyze
+3. Analyze (uses kicad_cli for DRC/ERC)
    - MetadataAnalyzer.analyze(project_info, resolved) → metadata findings
    - DesignAnalyzer.analyze(resolved, kicad_cli) → DRC + ERC findings
    - Merge into AnalysisInfo
-4. Status detection (early)
-   - project_info.status == "private" → outcome="private-skip", return without journal open or site writes
-5. New-release detection (consults site_repo)
+4. Status detection (early — BEFORE iBOM / site preflight)
+   - project_info.status == "private" → outcome="private-skip", return without remaining pre-flight, without journal open, without site writes
+   - This ordering is mandatory: a private project must not fail on "iBOM plugin missing" or "site repo dirty", since it neither invokes iBOM nor writes to the site
+5. Remaining pre-flight (non-private only)
+   - ibom_script = common.kicad_install.find_ibom_script()       # ADR 0008; missing → exit 2
+   - If not dry_run: check site_repo cleanliness (git -C <site_repo> status --porcelain); dirty → exit 2
+   - Any failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
+6. New-release detection (consults site_repo)
    - Compute target path: <site_repo>/_versions/<P>/<board_rev>.md
-   - Compare rendered publication (front-matter + body + project page body + asset manifest) to on-disk state
+   - Compare full rendered publication to on-disk state (see § New-release detection below)
    - All match → outcome="noop", return early
    - Front-matter or body differs, assets unchanged → outcome="refresh"
-   - Absent or assets out-of-date → outcome="publish"
-6. Open ChangeJournal scoped to the site_repo
-   - Journal lives across steps 7–9. Any unhandled exception triggers full rollback (ADR 0005).
+   - Absent, or any asset missing/stale, or body changed alongside assets → outcome="publish"
+7. Open ChangeJournal scoped to the site_repo
+   - Journal lives across steps 8–10. Any unhandled exception triggers full rollback (ADR 0005).
    - On dry_run, the journal is opened in dry-run mode: registers intent only, never writes.
-7. Generate artifacts (only on outcome=="publish"; skipped on outcome=="refresh"/"noop")
+8. Generate artifacts (only on outcome=="publish"; skipped on outcome=="refresh"/"noop")
    - Every artifact-producing service receives the open journal + kicad_cli + (for IbomGenerator) ibom_script.
-   - Each service writes to <site_repo>/versions/<P>/<R>/<file> via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 9.
-   - PcbExporter.export_render(side=top|bottom)
+   - Each service writes to <site_repo>/versions/<P>/<R>/<file> via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 10.
+   - PcbExporter.export_render(side=top|bottom)        # see ExportResult below
    - PcbExporter.export_step()
-   - SchematicExporter.export_svg(root_only=True)
+   - SchematicExporter.export_svg(root_only=True)      # see SchematicExporter directory-output mechanics
    - SchematicExporter.export_pdf(all_sheets=True)
-   - IbomGenerator.generate()                # ADR 0008: direct script invocation via ibom_script
+   - IbomGenerator.generate()                          # ADR 0008: direct script invocation via ibom_script
    - FabPackager.package(resolved.project_dir / "production")
-   - SourcePackager.package(resolved.project_dir)
+   - SourcePackager.package(resolved.project_dir)      # writes source.zip + SOURCE_README.md inside it
    - Thumbnail recipe (Phase 6 deepening)
-8. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
-9. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run)
-   - On outcome ∈ {"publish", "refresh"}: journal-write _versions/<P>/<R>.md + pages/<P>.md (atomic via tempfile + os.replace)
-   - If not dry_run: git -C <site_repo> add <touched> ; git commit ; journal.mark_committed() ; (unless no_push) git push ; journal.mark_pushed()
-10. Close ChangeJournal cleanly. Return PublishResult.
+9. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
+10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run)
+    - On outcome ∈ {"publish", "refresh"}: journal-write _versions/<P>/<R>.md + pages/<P>.md (atomic via tempfile + os.replace)
+    - If not dry_run: git -C <site_repo> add <touched> ; git commit ; journal.mark_committed() ; (unless no_push) git push ; journal.mark_pushed()
+11. Close ChangeJournal cleanly. Return PublishResult.
 
-ADR 0005 rollback scope covers EVERY file produced under journal scope — artifact files written in step 7 are journaled the same as markdown files written in step 9. A mid-step exception during step 7 (e.g. iBOM subprocess returns non-zero, or SchematicExporter's discovered output is missing) leaves the site repo in the same state as before kproj ran.
+ADR 0005 rollback scope covers EVERY file produced under journal scope — artifact files written in step 8 are journaled the same as markdown files written in step 10. A mid-step exception during step 8 (e.g. iBOM subprocess returns non-zero, or SchematicExporter's discovered output is missing) leaves the site repo in the same state as before kproj ran.
 ```
 
 ## New-release detection
 
-`SitePublisher` reads `<site_repo>/_versions/<Project>/<board_rev>.md` if it exists, parses the front-matter, and compares to the front-matter kproj would emit (computed from the current `Publication`):
+No-op vs refresh vs publish is decided by comparing the **full rendered publication** to the on-disk site state, not just the front-matter. The reviewer's Phase 4 finding M4 caught the original front-matter-only comparison as too narrow.
 
-- File missing → new release. Full pipeline runs.
-- File present, parsed front-matter == new front-matter → no-op. Return without writes.
-- File present, parsed front-matter ≠ new front-matter → metadata refresh. Rewrite `_versions/<P>/<R>.md` only. Skip asset generation (renders, iBOM, fab.zip, source.zip).
+The comparison inputs:
 
-The status transition (e.g. `experimental` → `active`) is the canonical metadata-refresh case.
+1. **Front-matter** of `<site_repo>/_versions/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
+2. **Body markdown** of the same file vs the body kproj would emit (the audit/DRC/ERC tables).
+3. **Project page body** of `<site_repo>/pages/<P>.md` vs the project's current `README.md` content (per ADR 0002, the project page body is always rewritten from README.md).
+4. **Asset manifest** for `<site_repo>/versions/<P>/<R>/`:
+   - Every artifact listed in the front-matter `artifacts[]` and `images[]` must exist on disk.
+   - Each artifact's mtime is compared against the corresponding source mtime (e.g. `<P>-<R>.top.png` vs `<pcb>.kicad_pcb`; `<P>-<R>.ibom.html` vs `<pcb>.kicad_pcb`; `<P>-<R>.source.zip` vs the latest mtime in the project's source-include set; `<P>-<R>.fab.zip` vs the latest mtime in `<project_dir>/production/`).
+   - Any asset older than its source is treated as stale and forces `outcome="publish"`.
+
+Outcome decision:
+
+- All four inputs match → `outcome="noop"`. Return early. Exit 0 (or 1 if audit/DRC/ERC findings exist).
+- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite `_versions/<P>/<R>.md` + `pages/<P>.md`. Skip asset regeneration.
+- The target file is absent, OR any asset is missing, OR any asset is stale → `outcome="publish"`. Run the full artifact pipeline.
+
+The status transition (e.g. `experimental` → `active`) is the canonical metadata-refresh case. README edits that don't touch any artifact's source files are also refresh-only. Anything that touches a `.kicad_pcb`, `.kicad_sch`, or `production/` files forces a publish.
 
 ## Release asset set — filenames and subprocess commands
 
@@ -246,7 +260,27 @@ Why direct invocation rather than `kicad-cli jobset run`: see ADR 0008. The plan
 
 ## Per-service contracts
 
-Each service follows the **Producer Pattern** (per GLOSSARY): constructor takes config; single primary method returns typed result with `diagnostics: tuple[Finding, ...]`.
+Each service follows the **Producer Pattern** (per GLOSSARY): constructor takes config; single primary method returns typed result with `diagnostics: tuple[Finding, ...]`. Side-effect services (anything that writes to disk or invokes a subprocess) return an `ExportResult` so callers receive the produced artifact path + diagnostics + command + timing + skipped flag uniformly. Pure-analysis services (`KicadProjectReader.read`, `MetadataAnalyzer.analyze`, `DesignAnalyzer.analyze`) return their domain result + diagnostics.
+
+### `ExportResult` (common return type for side-effect services)
+
+```python path=null start=null
+@dataclass(frozen=True)
+class ExportResult:
+    """Uniform return type for any service that writes a file via subprocess or zip."""
+    path: Path | None                  # the produced artifact; None when skipped
+    diagnostics: tuple[Finding, ...]   # findings emitted during production
+    command: tuple[str, ...] | None    # invoked argv (subprocess services); None for pure-Python services
+    elapsed_seconds: float             # wall-clock time spent in the primary method
+    skipped: bool = False              # True when service intentionally produced no output (e.g. fab.zip omitted because production/ missing)
+```
+
+Fields:
+- `path` is `None` only when `skipped=True`. Successful producers always set `path` to the journaled artifact location.
+- `diagnostics` carries warnings/info Findings (errors are raised, not returned, per ADR 0004's audit-vs-mechanical-error split).
+- `command` is the argv given to the subprocess runner; useful for verbose-mode logging + contract-test assertions. `None` for services that don't invoke a subprocess (e.g. `ZipArchiver`).
+- `elapsed_seconds` supports the dry-run timing summary + the optional structured-status mode (Phase 6+ deepening).
+- `skipped=True` is for FabPackager when `production/` is empty, SourcePackager (never skips in v1 — it always emits source.zip), and any future opt-in artifact.
 
 ### `KicadProjectReader`
 
@@ -263,6 +297,24 @@ class KicadProjectReader:
         jBOM upstream PR lands; then thin-wraps jbom.services.pcb_reader."""
 ```
 
+#### Metadata precedence (per-field)
+
+The generic "PCB-precedence rule" from the original DESIGN draft was too coarse: PCB title-blocks routinely omit `comment2`/`comment3`/`comment9` even on fabricated boards, so a blanket PCB-wins rule would lose the SPCoast-convention status field. The Phase 4 reviewer (MAJOR M1) flagged this; the locked plan already specifies per-field rules. kproj implements those rules:
+
+| Field | Canonical source | Fallback | Notes |
+|---|---|---|---|
+| `title`    | PCB title-block | SCH title-block | Layout-complete projects may have empty PCB title; use SCH if blank. |
+| `company`  | PCB title-block | SCH title-block | Same fallback semantics. |
+| `rev`      | PCB title-block | SCH title-block | Where they differ legitimately (`pcb_rev` extends `sch_rev`), both are kept: PCB becomes `board_rev`, SCH becomes `design_rev`. |
+| `date`     | PCB title-block | SCH title-block | Where they differ legitimately (PCB date follows SCH date within 90 days), the PCB date is used in `date`/`fab_date` and the SCH date is audit-only. |
+| `comment1` (designer) | either side, must match | n/a | Audit warning if they disagree on a non-empty value; either non-empty value wins. |
+| `comment2` (tagline) | SCH title-block | PCB title-block | PCB rarely sets comment fields. |
+| `comment3` (overview continuation) | SCH title-block | PCB title-block | Same. |
+| `comment9` (status) | SCH title-block | PCB title-block | Same. SPCoast convention. |
+| `comment4..8` | unused | n/a | Reserved per locked SPCoast convention; ignored by kproj. |
+
+All raw SCH and PCB values are retained inside `ProjectInfo` for the audit layer (so `sch_pcb_disagree` findings can carry both sides in their `value` field). The canonical/fallback choice only determines what kproj emits into the Jekyll front-matter.
+
 ### `MetadataAnalyzer`
 
 ```python path=null start=null
@@ -277,14 +329,15 @@ class MetadataAnalyzer:
 
 ```python path=null start=null
 class DesignAnalyzer:
-    def __init__(self) -> None: ...
-    def analyze(self, project_path: Path) -> AnalysisInfo:
-        """Invoke kicad-cli pcb drc and sch erc, parse JSON outputs into Findings.
+    def __init__(self, kicad_cli: Path) -> None:
+        """kicad_cli is the discovered executable path from common.kicad_install.find_kicad_cli()."""
+    def analyze(self, resolved: ResolvedProject) -> AnalysisInfo:
+        """Invoke `<kicad_cli> pcb drc` and `<kicad_cli> sch erc`, parse JSON outputs into Findings.
         Preserves KiCad's exclusion severity via Severity.exclusion."""
 ```
 
-DRC subprocess: `kicad-cli pcb drc --format json --severity-all --output <tempfile> <pcb>`.
-ERC subprocess: `kicad-cli sch erc --format json --severity-all --output <tempfile> <sch>`.
+DRC subprocess: `<kicad_cli> pcb drc --format json --severity-all --output <tempfile> <resolved.pcb_file>`.
+ERC subprocess: `<kicad_cli> sch erc --format json --severity-all --output <tempfile> <resolved.root_schematic>`.
 
 JSON written to tempfile, read into memory, tempfile deleted. JSON parsed into `Finding` objects with `severity`, `field` (= violation type), `value` (= location string), `reason` (= violation message). No JSON files persist after the call.
 
@@ -292,22 +345,39 @@ JSON written to tempfile, read into memory, tempfile deleted. JSON parsed into `
 
 ```python path=null start=null
 class PcbExporter:
-    def __init__(self) -> None: ...
-    def export_render(self, pcb_path: Path, side: Literal["top", "bottom"], output: Path) -> Path: ...
-    def export_step(self, pcb_path: Path, output: Path) -> Path: ...
+    def __init__(self, kicad_cli: Path) -> None: ...
+    def export_render(self, pcb_path: Path, side: Literal["top", "bottom"], output: Path) -> ExportResult: ...
+    def export_step(self, pcb_path: Path, output: Path) -> ExportResult: ...
     # Future targets: export_svg, export_glb
 ```
 
-Each method invokes `kicad-cli pcb` with the appropriate subcommand. Default ray-tracing for renders; default settings everywhere (no per-project tuning in v1).
+Each method invokes `<kicad_cli> pcb` with the appropriate subcommand via the shared subprocess runner (see Subprocess runner section). Default ray-tracing for renders; default settings everywhere (no per-project tuning in v1).
 
 ### `SchematicExporter`
 
+`kicad-cli sch export svg`'s `--output` argument is an OUTPUT_DIR, not a single file path. KiCad writes one SVG per sheet into the directory, named from the sheet hierarchy. `kicad-cli sch export pdf` may differ (TBD verify in Phase 6 against the kicad-cli 9.x build the user has installed). Both methods therefore work in a temp output directory + post-process discover-and-move pattern:
+
 ```python path=null start=null
 class SchematicExporter:
-    def __init__(self) -> None: ...
-    def export_svg(self, sch_path: Path, output: Path, root_only: bool = True) -> Path: ...
-    def export_pdf(self, sch_path: Path, output: Path, all_sheets: bool = True) -> Path: ...
+    def __init__(self, kicad_cli: Path) -> None: ...
+    def export_svg(self, sch_path: Path, output_file: Path, root_only: bool = True) -> ExportResult:
+        """Run `<kicad_cli> sch export svg --output <tempdir> --pages 1 <sch_path>` (or omit
+        --pages and discover the root-sheet file when root_only=True).
+        Move the discovered root-sheet SVG from <tempdir> to output_file via the open
+        ChangeJournal. Returns ExportResult(path=output_file, command=<argv>, diagnostics=...)."""
+    def export_pdf(self, sch_path: Path, output_file: Path, all_sheets: bool = True) -> ExportResult:
+        """Run `<kicad_cli> sch export pdf --output <tempdir-or-file> <sch_path>`. KiCad's
+        pdf exporter may produce a single multi-sheet PDF directly to --output, or a directory
+        with one PDF per sheet; the implementation discovers and moves into place accordingly.
+        Returns ExportResult."""
 ```
+
+Key mechanics:
+
+1. Both methods create a private temp output directory under the ChangeJournal's staging area (so the temp files are journal-rollback-clean).
+2. Both methods invoke kicad-cli with `--output <tempdir>` and pass `--pages <root-sheet-selector>` for SVG when `root_only=True`. The exact root-sheet selector is verified against the local kicad-cli help in Phase 6's contract tests (see Testing strategy).
+3. After kicad-cli completes, the method discovers the produced file(s) (`*.svg` or `*.pdf` in the tempdir), validates exactly one matches the expected root sheet, and journal-moves it to `output_file`.
+4. If kicad-cli produces zero files or more than one when only one was expected, the method raises a `SchematicExportError`, which the workflow catches and converts into a `Finding(severity=error, ...)` + triggers ChangeJournal rollback.
 
 v1 emits only the root sheet as SVG (single file inline on version page) and the full multi-sheet PDF as a download. Per-sheet SVGs + hierarchical navigation are Phase 6+ deepening.
 
@@ -318,11 +388,11 @@ class IbomGenerator:
     def __init__(self, ibom_script: Path) -> None:
         """ibom_script is the discovered generate_interactive_bom.py path
         (from common.kicad_install.find_ibom_script(), run once in pre-flight)."""
-    def generate(self, pcb_path: Path, output_dir: Path, name_format: str) -> Path:
+    def generate(self, pcb_path: Path, output_dir: Path, name_format: str) -> ExportResult:
         """Invoke iBOM directly per ADR 0008:
-          subprocess.run([sys.executable, str(self.ibom_script), ...args..., str(pcb_path)])
+          common.subprocess_runner.run([sys.executable, str(self.ibom_script), ...args..., str(pcb_path)])
         Pre-flight already verified the script exists; this method assumes it does.
-        Returns the produced HTML file path."""
+        Returns ExportResult with path = produced HTML file."""
 ```
 
 ### `FabPackager`
@@ -330,7 +400,7 @@ class IbomGenerator:
 ```python path=null start=null
 class FabPackager:
     def __init__(self, zip_archiver: ZipArchiver) -> None: ...
-    def package(self, production_dir: Path, output: Path) -> tuple[Path, tuple[Finding, ...]]:
+    def package(self, production_dir: Path, output: Path) -> ExportResult:
         """Discover jBOM's gerber pack and assemble <P>-<R>.fab.zip.
 
         Gerber-zip discovery (per ADR 0003 / jBOM convention):
@@ -345,30 +415,76 @@ class FabPackager:
         Findings:
           - warn if production_dir missing or empty (fab.zip omitted from output)
           - warn if production_dir outputs older than <pcb>.kicad_pcb mtime (stale)
-          - warn if gerber-pack discovery is ambiguous (multiple *.zip candidates)"""
+          - warn if gerber-pack discovery is ambiguous (multiple *.zip candidates)
+
+        Returns ExportResult with skipped=True (and diagnostics) when production_dir is missing/empty."""
 ```
 
 ### `SourcePackager`
 
+The v1 source archive is **NOT self-contained**. External libraries the project references (the SPCoast shared library, KiCad's bundled standard libraries, vendor-specific symbol/footprint sets) are intentionally excluded; bundling them would relicense kproj's output and is out of v1 scope. `SourcePackager` documents the external dependencies via a `SOURCE_README.md` written into the zip alongside the project files.
+
 ```python path=null start=null
 class SourcePackager:
     def __init__(self, zip_archiver: ZipArchiver) -> None: ...
-    def package(self, project_dir: Path, output: Path) -> Path:
+    def package(self, project_dir: Path, output: Path) -> ExportResult:
         """Walk project_dir, collect non-derived KiCad files per the include/exclude rules.
-        Assemble via ZipArchiver."""
+        Scan fp-lib-table + sym-lib-table + *.kicad_pcb library refs + *.kicad_sch library
+        refs to enumerate external libraries the project depends on.
+        Write a SOURCE_README.md to a journal-staging temp path listing those dependencies.
+        Assemble project files + SOURCE_README.md into output via ZipArchiver.
+        Returns ExportResult with diagnostics for: any missing referenced library (warn),
+        any library outside project_dir (info, expected for external libs)."""
 ```
 
-**Include**: `*.kicad_pro`, `*.kicad_sch`, `*.kicad_pcb`, `*.kicad_sym`, `*.pretty/**/*.kicad_mod`, `*.kicad_dru`, `*.kicad_wks`, `fp-lib-table`, `sym-lib-table`, `README.md`, `LICENSE` (any extension), `CHANGELOG.md`.
+**Include**: `*.kicad_pro`, `*.kicad_sch`, `*.kicad_pcb`, `*.kicad_sym`, `*.pretty/**/*.kicad_mod`, `*.kicad_dru`, `*.kicad_wks`, `fp-lib-table`, `sym-lib-table`, `README.md`, `LICENSE` (any extension), `CHANGELOG.md`. Plus the kproj-generated `SOURCE_README.md`.
 
 **Exclude**: `*.kicad_prl`, `*-bak`, `*~`, `_autosave-*.kicad_*`, `*.kicad_lock`, `production/`, `gerbers/`, `bom/`, `*.ibom.html`, `*.step`, `*.svg`, `thumbnail.png`, render PNGs, `.git/`, `.github/`, `.vscode/`, `.idea/`, `.DS_Store`, `dist/`, `build/`, `node_modules/`, `venv/`, `__pycache__/`, `*.pyc`, `release.yaml`.
+
+**`SOURCE_README.md` shape** (auto-generated; bytewise stable across runs for the same input):
+
+```markdown path=null start=null
+# <Project> source archive
+
+This archive contains the non-derived KiCad source files for `<Project>` `<board_rev>`,
+generated by kproj on `<YYYY.MM>`. It is NOT self-contained — the project references
+external KiCad libraries that must be installed separately to open the project without
+missing-symbol errors.
+
+## External library dependencies
+
+The following libraries are referenced by `fp-lib-table` / `sym-lib-table` / project files
+but are NOT included in this archive:
+
+- `SPCoast_KiCad_Library` (https://github.com/plocher/SPCoast_KiCad_Library) — shared SPCoast symbols + footprints
+- `<library_name>` — <reference resolved from lib-table or KiCad bundled set>
+- ...
+
+## Opening this archive
+
+1. Install KiCad 9.x (https://www.kicad.org/download/).
+2. Install referenced external libraries above. Each library's own README explains its install steps.
+3. Unzip this archive and open `<Project>.kicad_pro` in KiCad.
+
+The empirical behavior of opening a project with missing libraries is not yet fully validated
+for v1; some projects may open with placeholder symbols/footprints and a warning, while others
+may raise errors. If you encounter problems, install the dependencies above and retry.
+```
+
+The external-library list is built by:
+
+1. Parsing the project's `fp-lib-table` and `sym-lib-table` for `(lib (name ...) (uri ...))` entries whose URIs resolve outside `project_dir`.
+2. Scanning `*.kicad_pcb` and `*.kicad_sch` files for `(lib_id "<lib>:<name>")` symbol references and emitting any `<lib>` not already accounted for.
+3. Stable-sorting the resulting set so the manifest is reproducible.
 
 ### `ZipArchiver`
 
 ```python path=null start=null
 class ZipArchiver:
-    def archive(self, source_paths: list[Path], output: Path) -> Path:
+    def archive(self, source_paths: list[Path], output: Path) -> ExportResult:
         """Create a zip at output containing source_paths.
-        Domain-agnostic. Used by FabPackager and SourcePackager."""
+        Domain-agnostic. Used by FabPackager and SourcePackager.
+        Returns ExportResult with path=output, command=None (no subprocess)."""
 ```
 
 ### `SitePublisher`
@@ -423,7 +539,7 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | warning | `sch_pcb_disagree` | non-legitimate string mismatch on a title-block field between SCH and PCB (excluding the legitimate `rev` and `date` patterns documented in CONTEXT history) |
 | warning | `date_format` | populated date doesn't match `^\d{4}\.\d{2}$` |
 | warning | `designer_format` | populated `comment1` doesn't match `^[A-Z][\w'-]+(\s+[A-Z][\w'-]+)+$` |
-| warning | `rev_relation` | `pcb_rev` doesn't start with `sch_rev` (board_rev not extending design_rev) |
+| warning | `rev_relation` | `pcb_rev` does not match `^<escaped sch_rev>[A-Z]+$` (board_rev must be design_rev + one or more uppercase-letter suffix). E.g. SCH `3.0` / PCB `3.0B` is OK; SCH `3.0` / PCB `3.0.1` or `3.0-beta` or `3.1` is a finding. |
 | warning | `replaced_by_target_missing` | `replaced-by:<X>` references nonexistent project under `~/Dropbox/KiCad/projects/` |
 | warning | `production_missing` | `<project_dir>/production/` missing or empty when fab artifacts expected |
 | warning | `production_stale` | `production/<gerber>.zip` mtime older than `<pcb>.kicad_pcb` mtime |
@@ -531,7 +647,11 @@ Combined `-v -d` is permitted; gives both.
 
 ## Testing strategy
 
-Per the user's hygiene rule ("Use Test Driven Development for all functionality"), Phase 6 implements tests first, then code (red-green-refactor via `tdd` skill).
+Per the user's hygiene rule ("Use Test Driven Development for all functionality"), Phase 6 implements tests first, then code (red-green-refactor via `tdd` skill). Tests are organized into three layers, matching the Phase 4 reviewer's MAJOR M9 finding that pure unit-mock coverage does not validate the external-tool contracts kproj depends on:
+
+1. **Unit tests** (mocked): per-service contract behavior with mocked subprocess + filesystem.
+2. **Contract tests** (real kicad-cli, tiny fixtures): validate that the actual local kicad-cli + iBOM produce the output shapes (file layout, JSON schema) that unit-test mocks assume.
+3. **Behave Gherkin features** (full pipeline against fixture projects): exercise `PublishWorkflow.run()` end-to-end on disk.
 
 ### Unit tests — `tests/unit/`, pytest
 
@@ -551,6 +671,24 @@ Test files:
 - ... (one per formatter)
 - `tests/unit/test_config.py`
 - `tests/unit/test_cli.py` (argparse plumbing + exit-code mapping)
+
+### Contract tests — `tests/contract/`, pytest
+
+Contract tests validate the *external surface* of every tool kproj invokes. They run real `kicad-cli` against tiny fixture projects and assert on the produced output shape — file names, directory layout, JSON schema, exit codes — not the file *contents*. The goal is to catch a kicad-cli version-skew that would otherwise only surface as a Phase 7 integration failure.
+
+Each contract test is `@pytest.mark.skipif` gated on `common.kicad_install.find_kicad_cli()` succeeding; CI environments without KiCad installed skip the layer rather than fail it. Local developer machines (and the Phase 7 validation host) always run them.
+
+Test files:
+- `tests/contract/test_kicad_cli_drc.py` — `kicad-cli pcb drc --format json` produces the expected top-level JSON keys (`source`, `coordinate_units`, `violations`); each violation has `severity`/`type`/`description`/`items[]`.
+- `tests/contract/test_kicad_cli_erc.py` — same shape for `kicad-cli sch erc --format json`.
+- `tests/contract/test_kicad_cli_sch_export_svg.py` — `--output <tempdir>` is OUTPUT_DIR; produces `*.svg` per sheet; `--pages` selector exists and selects single sheet.
+- `tests/contract/test_kicad_cli_sch_export_pdf.py` — verifies whether `--output` is a file or directory for the local kicad-cli build; locks the SchematicExporter implementation choice.
+- `tests/contract/test_kicad_cli_pcb_render.py` — `--side top|bottom --output <file>.png` produces a PNG.
+- `tests/contract/test_kicad_cli_pcb_step.py` — `pcb export step --output <file>.step` produces a STEP file.
+- `tests/contract/test_ibom.py` — the discovered `generate_interactive_bom.py` accepts `--no-browser --no-compression --dest-dir --name-format --extra-data-file --dnp-field --extra-fields --include-tracks` and produces a single HTML file named per `--name-format`.
+- `tests/contract/test_kicad_install_locator.py` — `common.kicad_install.{find_kicad_cli, find_ibom_script, find_plugins_dir, kicad_version}` return paths that exist and a sane version tuple.
+
+Fixtures for contract tests are minimal (a 1-component PCB with a 1-sheet schematic) so the layer is fast; the goal is shape validation, not project coverage.
 
 ### Behave Gherkin features — `tests/features/`
 
@@ -579,7 +717,7 @@ Stories 14–18 (visitor / consumer-facing) are Phase 7 manual validation agains
 
 ### Coverage expectations
 
-Per the hygiene rule, all unit + functional tests pass before any commit. Coverage target: 100% of public service methods + Workflow paths. Implementation modules whose only side effect is subprocess invocation (PcbExporter, SchematicExporter, IbomGenerator, DesignAnalyzer) have their subprocess calls mocked in unit tests; their integration with real `kicad-cli` is validated only in Behave scenarios against real fixture projects.
+Per the hygiene rule, all unit + functional tests pass before any commit. Coverage target: 100% of public service methods + Workflow paths. Implementation modules whose only side effect is subprocess invocation (PcbExporter, SchematicExporter, IbomGenerator, DesignAnalyzer) have their subprocess calls mocked in unit tests; their integration with real `kicad-cli` is validated in the contract test layer; full end-to-end use is validated in Behave scenarios against real fixture projects. The three layers together cover the failure modes the Phase 4 reviewer flagged.
 
 ## Cross-cutting concerns
 
@@ -597,8 +735,23 @@ None. kproj v1 does not call the GitHub API. The site-repo `git push` uses the u
 - Subprocess failures (non-zero exit from kicad-cli / iBOM / git) → captured, surfaced on stderr, trigger ChangeJournal rollback if mid-publish, exit 2.
 - File-system errors (permission, disk full) → trigger rollback, exit 2.
 - `git push` rejection → `git reset --hard HEAD^` to undo the local commit, exit 2.
+- Subprocess timeout (`subprocess.TimeoutExpired`) → captured by the shared subprocess runner (see Subprocess runner section below), surfaced on stderr, rollback, exit 2.
+- Signal interruption (`KeyboardInterrupt`, `SIGTERM` handler) → the open ChangeJournal's `__exit__` catches the `BaseException`, performs rollback, re-raises so the process exits with the standard signal-handling exit code.
 
 All exceptions bubble up to `cli.py`'s top-level handler, which formats and exits.
+
+### Subprocess runner
+
+All subprocess invocations (kicad-cli, iBOM script, git) go through a shared `common.subprocess_runner` utility that:
+
+- Wraps `subprocess.run` with per-step timeouts (default: 120s for kicad-cli + iBOM, 30s for git operations; both configurable via `~/.kproj.yaml`).
+- Captures stdout + stderr into the run's verbose-mode log.
+- Translates `subprocess.TimeoutExpired` into a kproj-level `SubprocessTimeoutError` carrying the command + elapsed time.
+- Translates non-zero return into a `SubprocessFailedError` carrying the command + stdout + stderr.
+- Re-raises `KeyboardInterrupt` after attempting to terminate the child process cleanly (SIGTERM, 5s grace, then SIGKILL).
+- Returns a `SubprocessResult` dataclass (`command`, `returncode`, `stdout`, `stderr`, `elapsed_seconds`) on success.
+
+This utility is the only place in kproj that calls `subprocess.run`; services depend on it via import. Mocking `common.subprocess_runner.run` in unit tests is sufficient to stub all external invocations.
 
 ### Python imports
 
