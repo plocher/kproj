@@ -15,9 +15,8 @@ MANIFEST
 venv/
 env/
 
-# uv
+# uv (commit uv.lock for application/dev reproducibility; only cache excluded)
 .uv-cache/
-uv.lock
 
 # Testing
 .coverage
