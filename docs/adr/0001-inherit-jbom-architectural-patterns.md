@@ -26,7 +26,7 @@ kproj adopts the following jBOM ADRs **by reference**. The source-of-truth lives
 ### Explicitly NOT adopted
 
 - **jBOM ADR 0008 — Unified Config Schema.** kproj's v1 config is intentionally simpler — a single `~/.kproj.yaml` with two keys (`site_repo`, `no_push`). No `extends:`, no `common.kproj.yaml`, no `policy.kproj.yaml`, no per-stanza id resolution. The complexity of jBOM's unified schema is unjustified for kproj's smaller config surface. If kproj's config surface ever grows past ~5 keys with composition needs, revisit.
-- **jBOM ADR 0007 — PCM Packaging.** kproj is not a KiCad plugin; it's a CLI tool. The PCM-archive build machinery does not apply. (A future PCM-distributed `kproj-interactive.kicad_jobset` is noted in CONTEXT.md as a Phase 6+ deepening, but that's a single resource, not a plugin.)
+- **jBOM ADR 0007 — PCM Packaging.** kproj is not a KiCad plugin; it's a CLI tool. The PCM-archive build machinery does not apply. (A future PCM-distributed `kproj-interactive.kicad_jobset` is noted in DESIGN.md as a Phase 6+ deepening, but that's a single resource, not a plugin.)
 
 ## Consequences
 

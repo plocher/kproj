@@ -29,7 +29,7 @@ Every finding appears in multiple surfaces simultaneously (per the Diagnostic Co
 - kproj v1 has **no `--force` flag** — nothing blocks, nothing to override.
 - DRC errors do NOT cause kproj to exit non-zero. The publish proceeds; the errors are visible.
 - Audit errors do NOT cause kproj to exit non-zero. Same.
-- Exit code 1 signals "findings present" (informational); exit code 2 signals "mechanical failure" (file missing, plugin not installed, git push rejected). See ADR on exit codes / CONTEXT.md.
+- Exit code 1 signals "findings present" (informational); exit code 2 signals "mechanical failure" (file missing, plugin not installed, git push rejected). See `docs/DESIGN.md` for the exit-code mapping spec.
 
 ### Severities are labels, not gates
 

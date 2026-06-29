@@ -46,4 +46,4 @@ New ADRs are added as part of feature work, on the relevant feature branch, and 
 2. **Surprising without context** — a future reader will wonder "why did they do it this way?"
 3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons.
 
-If any of the three is missing, the decision belongs in `docs/CONTEXT.md` (glossary), code comments, or the PRD — not as an ADR.
+If any of the three is missing, the decision belongs in `docs/GLOSSARY.md` (if it's a term), `docs/PRD.md` (if it's user-facing scope), `docs/DESIGN.md` (if it's an implementation choice), or code comments — not as an ADR.
