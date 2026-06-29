@@ -31,6 +31,8 @@ kproj follows the layered architecture inherited from jBOM ADR 0013 (referenced 
 
 Dependencies flow downward only. Domain Model has no dependencies beyond stdlib + a few jBOM library imports for parsing. ADR 0006 (library-shape boundary discipline) makes the layer boundaries crisp.
 
+Cross-cutting utilities live in `src/kproj/common/` (currently `kicad_install` per ADR 0009). These are pure-function modules consumed by services via dependency injection at construction time — not a separate layer, not Producer-Pattern services.
+
 ## Source layout
 
 ```text path=null start=null
@@ -58,6 +60,9 @@ src/kproj/
 │   ├── zip_archiver.py
 │   ├── site_publisher.py
 │   └── change_journal.py
+├── common/
+│   ├── __init__.py
+│   └── kicad_install.py     # KiCad install discovery (ADR 0009)
 ├── application/
 │   ├── __init__.py
 │   └── publish_workflow.py  # PublishWorkflow, PublishRequest, PublishResult
@@ -94,42 +99,68 @@ kproj [<project-or-dir-or-file>] [--dry-run] [--no-push] [-v|--verbose] [-d|--de
 
 ## Configuration layer
 
-`src/kproj/config.py`: `KprojConfig` dataclass + `load_config()` function.
+`src/kproj/config.py`: `KprojConfig` dataclass + `ConfigOverrides` dataclass + `load_config()` function. Per ADR 0006, `argparse` lives only inside `cli.py`; `cli.py` translates `argparse.Namespace` into a kproj-owned `ConfigOverrides` shape before calling `load_config()`. The config layer never imports `argparse`.
 
 ```python path=null start=null
+@dataclass(frozen=True)
+class ConfigOverrides:
+    """CLI-derived overrides constructed in cli.py.
+    None = field not provided by CLI; precedence falls through to env / yaml / default."""
+    site_repo: Path | None = None
+    no_push: bool | None = None
+    kicad_cli: Path | None = None
+
 @dataclass(frozen=True)
 class KprojConfig:
     site_repo: Path
     no_push: bool
+    kicad_cli: Path | None  # None → use common.kicad_install.find_kicad_cli() discovery
 
-def load_config(cli_args: argparse.Namespace) -> KprojConfig:
+def load_config(overrides: ConfigOverrides) -> KprojConfig:
     # Precedence (highest first):
-    #   1. CLI flag value (if argparse saw it)
-    #   2. Environment variable (KPROJ_SITE_REPO, KPROJ_NO_PUSH)
-    #   3. ~/.kproj.yaml key (site_repo, no_push)
-    #   4. Hardcoded fallback (~/Dropbox/eagle/SPCoast.github.io, false)
+    #   1. ConfigOverrides field (set by a CLI flag)
+    #   2. Environment variable (KPROJ_SITE_REPO, KPROJ_NO_PUSH, KPROJ_KICAD_CLI)
+    #   3. ~/.kproj.yaml key (site_repo, no_push, kicad_cli)
+    #   4. Hardcoded fallback (~/Dropbox/eagle/SPCoast.github.io, false, None)
     ...
 ```
 
-`~/.kproj.yaml` schema:
+`~/.kproj.yaml` schema (all keys optional):
 
 ```yaml path=null start=null
 site_repo: /Users/jplocher/Dropbox/eagle/SPCoast.github.io
 no_push: false
+kicad_cli: /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli   # optional override; locator probes default if absent
 ```
 
 Missing file is fine; defaults apply.
 
 ## Project resolution
 
-`KicadProjectReader.resolve(path: str | Path) -> Path` delegates to `jbom.application.pcb_project_loader.resolve_pcb_input()`. Behavior per jBOM ADR 0011:
+`KicadProjectReader.resolve(path: str | Path) -> ResolvedProject` wraps `jbom.application.pcb_project_loader.resolve_pcb_input()`. jBOM's resolver returns a `jbom.common.types.ResolvedPcbProject` dataclass with `pcb_path` + `project_context` + diagnostics; kproj wraps that in a kproj-owned `ResolvedProject` so downstream services accept a stable kproj shape and never see jBOM's internal types directly:
+
+```python path=null start=null
+@dataclass(frozen=True)
+class ResolvedProject:
+    """kproj-owned wrapper around jBOM's ResolvedPcbProject.
+    All downstream services accept this shape, never bare Path."""
+    project_file: Path                        # canonical .kicad_pro
+    project_dir: Path                         # parent dir of project_file
+    pcb_file: Path                            # .kicad_pcb
+    root_schematic: Path                      # root .kicad_sch
+    hierarchical_schematics: tuple[Path, ...] # all .kicad_sch files referenced by the root
+    jbom_resolved: ResolvedPcbProject         # underlying jBOM artifact (for advanced needs)
+    diagnostics: tuple[Finding, ...]          # resolution-time findings
+```
+
+Resolution behavior per jBOM ADR 0011:
 
 - `kproj` (CWD as positional) → `resolve_pcb_input(".")`
 - `kproj <dir>/` → `resolve_pcb_input(<dir>)`
 - `kproj <basename>` → `resolve_pcb_input(<basename>)` (jBOM walks common locations)
 - `kproj <path>/<file>.kicad_{pro,sch,pcb}` → `resolve_pcb_input(<file-path>)`
 
-Returns the canonical `.kicad_pro` path. If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, formats, exits with code 2.
+If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, formats, exits with code 2. On success, downstream services (`KicadProjectReader.read`, `MetadataAnalyzer.analyze`, `DesignAnalyzer.analyze`, `PcbExporter`, `SchematicExporter`, `IbomGenerator`, `FabPackager`, `SourcePackager`) accept the `ResolvedProject` rather than a generic `Path`.
 
 ## Pipeline orchestration sequence
 
@@ -137,40 +168,50 @@ Returns the canonical `.kicad_pro` path. If resolution fails (zero or multiple c
 
 ```text path=null start=null
 1. Pre-flight checks
-   - Resolve project (KicadProjectReader.resolve)
-   - If not dry_run: check site_repo cleanliness (git status --porcelain)
-   - Check iBOM plugin path (KICAD9_3RD_PARTY / .../generate_interactive_bom.py)
-   - Failure of any pre-flight → return PublishResult(outcome="failed", exit_code=2)
+   - Resolve project: KicadProjectReader.resolve(request.project_arg) → ResolvedProject
+   - Discover KiCad install (common.kicad_install):
+        kicad_cli      = config.kicad_cli or find_kicad_cli()
+        ibom_script    = find_ibom_script()    # required per ADR 0008; hard-fail exit 2 if missing
+        kicad_ver      = kicad_version(kicad_cli)
+      Report discovered paths + version to stderr at default verbosity (one line).
+      Enforce major version 9.x for v1; mismatch → exit 2.
+   - If not dry_run: check site_repo cleanliness (git -C <site_repo> status --porcelain)
+   - Any pre-flight failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
 2. Read project metadata
-   - KicadProjectReader.read(project_path) → ProjectInfo
+   - KicadProjectReader.read(resolved) → ProjectInfo + metadata findings
 3. Analyze
-   - MetadataAnalyzer.analyze(project_info, project_path) → metadata_findings
-   - DesignAnalyzer.analyze(project_path) → drc_erc_findings
+   - MetadataAnalyzer.analyze(project_info, resolved) → metadata findings
+   - DesignAnalyzer.analyze(resolved, kicad_cli) → DRC + ERC findings
    - Merge into AnalysisInfo
-4. New-release detection (consults site_repo)
+4. Status detection (early)
+   - project_info.status == "private" → outcome="private-skip", return without journal open or site writes
+5. New-release detection (consults site_repo)
    - Compute target path: <site_repo>/_versions/<P>/<board_rev>.md
-   - If exists and front-matter matches → outcome="noop", return early (exit 0 or 1 based on findings)
-   - If exists and front-matter would differ → outcome="refresh", continue to step 6 only
-   - If absent → outcome="publish", continue to step 5
-5. Status: private → outcome="private-skip", return without site writes
-6. Generate artifacts (only on outcome="publish"; skipped on "refresh"/"noop"/"private-skip")
-   - PcbExporter.export_render(side=top) → <site_repo>/versions/<P>/<R>/<P>-<R>.top.png
-   - PcbExporter.export_render(side=bottom) → ...bottom.png
-   - PcbExporter.export_step() → ...step
-   - SchematicExporter.export_svg(root_only=True) → ...sch.svg
-   - SchematicExporter.export_pdf(all_sheets=True) → ...sch.pdf
-   - IbomGenerator.generate() → ...ibom.html
-   - FabPackager.package(production_dir) → ...fab.zip
-   - SourcePackager.package(project_dir) → ...source.zip
-   - Compute thumbnail (Phase 6 recipe TBD)
-7. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
-8. SitePublisher.publish(publication, site_repo, no_push, dry_run)
-   - Atomic per-file writes via tempfile + os.replace under ChangeJournal supervision
-   - Writes _versions/<P>/<R>.md, pages/<P>.md, asset files
-   - If not dry_run: git add + git commit + (unless no_push) git push
-9. Return PublishResult with outcome, exit_code, diagnostics
+   - Compare rendered publication (front-matter + body + project page body + asset manifest) to on-disk state
+   - All match → outcome="noop", return early
+   - Front-matter or body differs, assets unchanged → outcome="refresh"
+   - Absent or assets out-of-date → outcome="publish"
+6. Open ChangeJournal scoped to the site_repo
+   - Journal lives across steps 7–9. Any unhandled exception triggers full rollback (ADR 0005).
+   - On dry_run, the journal is opened in dry-run mode: registers intent only, never writes.
+7. Generate artifacts (only on outcome=="publish"; skipped on outcome=="refresh"/"noop")
+   - Every artifact-producing service receives the open journal + kicad_cli + (for IbomGenerator) ibom_script.
+   - Each service writes to <site_repo>/versions/<P>/<R>/<file> via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 9.
+   - PcbExporter.export_render(side=top|bottom)
+   - PcbExporter.export_step()
+   - SchematicExporter.export_svg(root_only=True)
+   - SchematicExporter.export_pdf(all_sheets=True)
+   - IbomGenerator.generate()                # ADR 0008: direct script invocation via ibom_script
+   - FabPackager.package(resolved.project_dir / "production")
+   - SourcePackager.package(resolved.project_dir)
+   - Thumbnail recipe (Phase 6 deepening)
+8. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
+9. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run)
+   - On outcome ∈ {"publish", "refresh"}: journal-write _versions/<P>/<R>.md + pages/<P>.md (atomic via tempfile + os.replace)
+   - If not dry_run: git -C <site_repo> add <touched> ; git commit ; journal.mark_committed() ; (unless no_push) git push ; journal.mark_pushed()
+10. Close ChangeJournal cleanly. Return PublishResult.
 
-Mid-step exceptions trigger ChangeJournal rollback (per ADR 0005).
+ADR 0005 rollback scope covers EVERY file produced under journal scope — artifact files written in step 7 are journaled the same as markdown files written in step 9. A mid-step exception during step 7 (e.g. iBOM subprocess returns non-zero, or SchematicExporter's discovered output is missing) leaves the site repo in the same state as before kproj ran.
 ```
 
 ## New-release detection
@@ -194,12 +235,14 @@ Files emitted into `<site_repo>/versions/<Project>/<board_rev>/`. Filename token
 | `<P>-<R>.step` | `PcbExporter.export_step()` | `kicad-cli pcb export step --output <P>-<R>.step <pcb>` |
 | `<P>-<R>.sch.svg` | `SchematicExporter.export_svg(root_only=True)` | `kicad-cli sch export svg --output <P>-<R>.sch.svg <root.kicad_sch>` |
 | `<P>-<R>.sch.pdf` | `SchematicExporter.export_pdf(all_sheets=True)` | `kicad-cli sch export pdf --output <P>-<R>.sch.pdf <root.kicad_sch>` |
-| `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | `python <ibom-script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>` |
-| `<P>-<R>.fab.zip` | `FabPackager.package()` | reads `<project_dir>/production/{bom.csv, pos.csv, gerbers.zip}` → assembles via `ZipArchiver` |
+| `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | direct invocation per ADR 0008: `<python> <ibom_script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>`. `<python>` = `sys.executable`; `<ibom_script>` = `common.kicad_install.find_ibom_script()`. |
+| `<P>-<R>.fab.zip` | `FabPackager.package()` | reads jBOM-produced gerber pack from `<project_dir>/production/<title>_<rev>.zip` plus `bom.csv` + `pos.csv` → normalizes filenames inside the zip and assembles via `ZipArchiver` |
 | `<P>-<R>.source.zip` | `SourcePackager.package()` | walks `<project_dir>` per include/exclude rules → assembles via `ZipArchiver` |
 | `<P>-<R>.thumbnail.{png,svg}` | TBD Phase 6 | open: PIL crop of `top.png`, or PCB SVG outline |
 
-iBOM script path: `${KICAD9_3RD_PARTY}/plugins/org_openscopeproject_InteractiveHtmlBom/generate_interactive_bom.py`. Pre-flight checks the path exists; missing → exit 2 with message: `kproj: iBOM plugin not installed at <expected-path>. Install via KiCad's Plugin and Content Manager: org_openscopeproject_InteractiveHtmlBom.`
+iBOM script discovery is delegated to `common.kicad_install.find_ibom_script()` (ADR 0009). Pre-flight calls this once and injects the resolved path into `IbomGenerator`. Missing iBOM plugin → exit 2 with message: `kproj: iBOM plugin not installed at <probed-path>. Install via KiCad's Plugin and Content Manager: org_openscopeproject_InteractiveHtmlBom.`
+
+Why direct invocation rather than `kicad-cli jobset run`: see ADR 0008. The plan's Phase 1 closeout was based on the assumption that `kicad-cli jobset run` could run headless; in practice it requires a live KiCad instance, which contradicts ADR 0007's locked non-interactive Makefile/CI use case.
 
 ## Per-service contracts
 
@@ -210,12 +253,12 @@ Each service follows the **Producer Pattern** (per GLOSSARY): constructor takes 
 ```python path=null start=null
 class KicadProjectReader:
     def __init__(self) -> None: ...
-    def resolve(self, path_or_basename: str | Path) -> Path:
-        """Wrap jbom.application.pcb_project_loader.resolve_pcb_input.
-        Returns the canonical .kicad_pro path; raises on resolution failure."""
-    def read(self, project_path: Path) -> tuple[ProjectInfo, tuple[Finding, ...]]:
-        """Read title-block + ${COMMENT9} from .kicad_sch + .kicad_pcb.
-        Apply PCB-precedence rule for fields that differ between sides.
+    def resolve(self, path_or_basename: str | Path) -> ResolvedProject:
+        """Wrap jbom.application.pcb_project_loader.resolve_pcb_input().
+        Returns the kproj-owned ResolvedProject wrapper; raises on resolution failure."""
+    def read(self, resolved: ResolvedProject) -> tuple[ProjectInfo, tuple[Finding, ...]]:
+        """Read title-block + ${COMMENT9} from resolved.root_schematic + resolved.pcb_file.
+        Apply per-field metadata precedence (see Metadata precedence section below).
         Walks (comment N "...") via jbom.common.sexp_parser until the
         jBOM upstream PR lands; then thin-wraps jbom.services.pcb_reader."""
 ```
@@ -272,10 +315,14 @@ v1 emits only the root sheet as SVG (single file inline on version page) and the
 
 ```python path=null start=null
 class IbomGenerator:
-    def __init__(self) -> None: ...
+    def __init__(self, ibom_script: Path) -> None:
+        """ibom_script is the discovered generate_interactive_bom.py path
+        (from common.kicad_install.find_ibom_script(), run once in pre-flight)."""
     def generate(self, pcb_path: Path, output_dir: Path, name_format: str) -> Path:
-        """Pre-flight: check ${KICAD9_3RD_PARTY}/.../generate_interactive_bom.py exists.
-        Invoke iBOM via subprocess.run. Return path to the produced HTML."""
+        """Invoke iBOM directly per ADR 0008:
+          subprocess.run([sys.executable, str(self.ibom_script), ...args..., str(pcb_path)])
+        Pre-flight already verified the script exists; this method assumes it does.
+        Returns the produced HTML file path."""
 ```
 
 ### `FabPackager`
@@ -284,10 +331,21 @@ class IbomGenerator:
 class FabPackager:
     def __init__(self, zip_archiver: ZipArchiver) -> None: ...
     def package(self, production_dir: Path, output: Path) -> tuple[Path, tuple[Finding, ...]]:
-        """Read bom.csv, pos.csv, gerbers.zip from production_dir.
-        Assemble into output (the <P>-<R>.fab.zip) via ZipArchiver.
-        Findings: warn if production_dir missing or empty,
-                  warn if production_dir outputs older than *.kicad_pcb mtime."""
+        """Discover jBOM's gerber pack and assemble <P>-<R>.fab.zip.
+
+        Gerber-zip discovery (per ADR 0003 / jBOM convention):
+          1. <production_dir>/<title>_<rev>.zip when title + rev are known.
+          2. Otherwise: the single *.zip in production_dir (warn if zero or >1).
+        The discovered zip is added to <P>-<R>.fab.zip under the normalized
+        entry name `gerbers.zip` regardless of its source filename.
+
+        Also reads bom.csv + pos.csv from production_dir and adds them under
+        their canonical entry names.
+
+        Findings:
+          - warn if production_dir missing or empty (fab.zip omitted from output)
+          - warn if production_dir outputs older than <pcb>.kicad_pcb mtime (stale)
+          - warn if gerber-pack discovery is ambiguous (multiple *.zip candidates)"""
 ```
 
 ### `SourcePackager`
@@ -372,38 +430,51 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 
 ## Front-matter shape
 
-What `SitePublisher` writes into `_versions/<Project>/<board_rev>.md` (YAML front-matter, then body):
+What `SitePublisher` writes into `_versions/<Project>/<board_rev>.md` (YAML front-matter, then body). This shape is the contract with the live `_layouts/eagle.html` at `/Users/jplocher/Dropbox/eagle/SPCoast.github.io/_layouts/eagle.html` — every key here either feeds an existing Liquid expression in that layout, or is metadata reserved for the site-setup PR's layout extension (audit/drc/erc badges).
 
 ```yaml path=null start=null
-iskicad: true                      # or 'obsolete' for retired/replaced-by
-layout: kicad                      # thin wrapper around eagle.html in v1
+iskicad: true                      # Phase 1 closeout discriminator: true | 'obsolete'
+layout: eagle                      # reuse existing layout (ADR 0002 / Phase 1 closeout)
 sidebar: spcoast_sidebar
-project: <project-basename>
-title: <board_rev>                 # e.g. 1.0B — the per-version key
-date: <YYYY.MM>                    # from PCB title-block date
-design_rev: <sch_rev>              # e.g. 3.0
-board_rev: <board_rev>             # same as title; explicit for layout convenience
-designer: <comment1>
-tagline: <comment2>
-overview: <comment2 + comment3 joined>
-company: <company>
-tags: [<company>, kicad]           # if company contains "/", split into multiple tags
-status: <comment9>                 # one of the closed taxonomy values
-image_path: <P>-<R>.thumbnail.png
+project: <project-basename>        # consumed by eagle.html's site.versions | where: "project", page.project
+title: <board_rev>                 # e.g. 1.0B — per-version key; consumed by version tabs
+date: <YYYY.MM>                    # PCB title-block date
+design_rev: <sch_rev>              # kproj convention; not consumed by eagle.html
+board_rev: <board_rev>             # same as title; convenience for grep/audit
+designer: <comment1>               # consumed (informational)
+fabricated: <YYYY-MM>              # truthy date string when PCB has been fabbed; gates eagle.html's "First built" line
+fab_date: <YYYY-MM>                # optional explicit fab date (defaults to title-block date)
+tagline: <comment2>                # consumed (one-line description)
+overview: <comment2 + comment3>    # consumed via markdownify
+company: <company>                 # used to derive tags
+tags: [<company>, kicad]           # if company contains "/", split. v1 site-setup PR adds "kicad" to _data/tags.yml allowed-tags.
+status: <comment9>                 # emitted verbatim per locked taxonomy: experimental/active/retired/broken/replaced-by:<X>
+publish: true                      # REQUIRED gate — eagle.html only renders artifacts/version body inside {% if version.publish == true %}
+image_path: /versions/<P>/<R>/<P>-<R>.thumbnail.png   # ABSOLUTE site path (live site convention)
 images:
-  - {image_path: <P>-<R>.top.png, title: Top}
-  - {image_path: <P>-<R>.bottom.png, title: Bottom}
-  - {image_path: <P>-<R>.sch.svg, title: Schematic}
+  - {image_path: /versions/<P>/<R>/<P>-<R>.top.png,    title: Top}
+  - {image_path: /versions/<P>/<R>/<P>-<R>.bottom.png, title: Bottom}
+  - {image_path: /versions/<P>/<R>/<P>-<R>.sch.svg,    title: Schematic}
 artifacts:
-  - {path: <P>-<R>.sch.pdf, tag: schematic-pdf, type: download, post: Full schematic (all sheets)}
-  - {path: <P>-<R>.ibom.html, tag: interactive-bom, type: download, post: Interactive HTML BOM}
-  - {path: <P>-<R>.step, tag: step-model, type: download, post: 3D STEP model}
-  - {path: <P>-<R>.fab.zip, tag: fab-pack, type: download, post: Fab-house bundle (BOM + POS + gerbers)}
-  - {path: <P>-<R>.source.zip, tag: source-archive, type: download, post: KiCad source archive}
+  - {path: /versions/<P>/<R>/<P>-<R>.sch.pdf,    tag: schematic-pdf,   type: download, post: Full schematic (all sheets)}
+  - {path: /versions/<P>/<R>/<P>-<R>.ibom.html,  tag: interactive-bom, type: download, post: Interactive HTML BOM}
+  - {path: /versions/<P>/<R>/<P>-<R>.step,       tag: step-model,      type: download, post: 3D STEP model}
+  - {path: /versions/<P>/<R>/<P>-<R>.fab.zip,    tag: fab-pack,        type: download, post: Fab-house bundle (BOM + POS + gerbers)}
+  - {path: /versions/<P>/<R>/<P>-<R>.source.zip, tag: source-archive,  type: download, post: KiCad source archive}
+# kproj-emitted, not yet consumed by eagle.html (reserved for site-setup-PR layout enhancement):
 audit: {errors: N, warnings: M}
-drc: {errors: N, warnings: M, exclusions: K}
-erc: {errors: N, warnings: M, exclusions: K}
+drc:   {errors: N, warnings: M, exclusions: K}
+erc:   {errors: N, warnings: M, exclusions: K}
 ```
+
+For `status == "private"`: no file is written (private-skip outcome). For `status ∈ {"retired", "replaced-by:<X>"}`: `iskicad: 'obsolete'` instead of `true`.
+
+**Site-setup PR coupling** (mandatory Phase 5/6 prerequisite, NOT in kproj itself):
+
+1. Extend `_data/tags.yml` `allowed-tags` to include `kicad` (and any new company names emitted by kproj).
+2. Extend `_layouts/eagle.html`'s status-conditional block to recognize the v1 taxonomy values (`active`, `retired`, `replaced-by:<X>`) that don't currently match its `mature/released/replaced/broken/experimental` branches. v1 emits the locked taxonomy verbatim; the layout PR adds branches.
+3. Repurpose `electronics.html` (filter on `iskicad`), add `eagle-archive.html` (filter on `iseagle`), update sidebar TOC — already locked in Phase 1 closeout.
+4. Optionally add quality-badge rendering for `audit`/`drc`/`erc` front-matter (deferred deepening; not v1-blocking).
 
 Body content (below the `---` front-matter terminator): the audit + DRC/ERC findings rendered as two adjacent Markdown tables via `MarkdownTableFormatter`. Optionally followed by README.md content if the user wants verbose project documentation in the version body (Phase 6 decision; for v1, body is just the tables).
 

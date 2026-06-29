@@ -13,6 +13,8 @@ kproj's architectural decisions, recorded as ADRs (Architecture Decision Records
 | [0005](0005-writetracker-transactional-site-writes.md) | WriteTracker for Transactional Site-Repo Writes | Accepted |
 | [0006](0006-library-shape-boundary-discipline.md) | Library-Shape Boundary Discipline | Accepted |
 | [0007](0007-local-cli-v1-ci-deferred.md) | Local-CLI v1, CI Integration Deferred | Accepted |
+| [0008](0008-ibom-direct-script-invocation.md) | iBOM via Direct Script Invocation | Accepted |
+| [0009](0009-kicad-install-locator.md) | KicadInstallLocator Utility | Accepted |
 
 ## Inherited from jBOM (cited, not duplicated)
 
@@ -37,6 +39,7 @@ The kproj ADRs reference each other and jBOM ADRs in their `Related:` headers. R
 4. **ADR 0004** — for the "show what is provided" policy that shapes audit / DRC / ERC behaviour.
 5. **ADR 0006** — for the code-structure discipline that shapes every module.
 6. **ADR 0005**, **ADR 0007** — for the more focused decisions (transactional writes, local-CLI scope).
+7. **ADR 0008**, **ADR 0009** — for the iBOM invocation and KiCad install discovery (both adopted during Phase 4 resolution; ADR 0008 supersedes a plan-level decision).
 
 ## Process
 
