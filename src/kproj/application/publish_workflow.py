@@ -14,12 +14,28 @@ even before the full pipeline lands.
 
 from __future__ import annotations
 
+import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from ..common.kicad_install import (
+    KicadNotFoundError,
+    find_kicad_cli,
+    kicad_version,
+)
 from ..config import KprojConfig
 from ..model.finding import Finding
+from ..services.kicad_project_reader import (
+    KicadProjectReader,
+    ProjectResolutionError,
+)
+
+_log = logging.getLogger(__name__)
+
+_SUPPORTED_KICAD_MAJOR = 9
+"""v1 enforces KiCad major version 9.x per docs/DESIGN.md § Pipeline orchestration."""
 
 Outcome = Literal["published", "refreshed", "noop", "private-skip", "failed"]
 """Closed set of v1 PublishWorkflow outcomes per docs/DESIGN.md."""
@@ -72,19 +88,35 @@ class PublishResult:
 class PublishWorkflow:
     """Walking-skeleton publish pipeline orchestrator.
 
-    The full implementation per ``docs/DESIGN.md`` § *Pipeline
-    orchestration sequence* is built up across subsequent issues. The
-    foundation slice (this commit) executes only pre-flight — project
-    resolution + ``kicad-cli`` discovery + version check — and returns
-    ``PublishResult(outcome="failed", exit_code=2)`` for any
-    downstream pipeline state.
+    The foundation slice executes the pre-flight portion of the
+    pipeline described in ``docs/DESIGN.md`` § *Pipeline orchestration
+    sequence*:
+
+    1. Resolve the project via :class:`KicadProjectReader`.
+    2. Discover the ``kicad-cli`` executable (config override or
+       :func:`find_kicad_cli`) and verify its major version is 9.x.
+    3. Print a one-line "kproj: kicad-cli <version> at <path>" to
+       stderr for auditability.
+
+    On any pre-flight failure the workflow returns
+    ``PublishResult(outcome="failed", exit_code=2)`` with a clear
+    stderr-ready message. On pre-flight success, the workflow also
+    returns ``failed``/``2`` because the downstream services are still
+    stubs; the message indicates the walking-skeleton state.
+
+    Constructor accepts an optional :class:`KicadProjectReader` so
+    tests can inject a stand-in without monkeypatching imports.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, project_reader: KicadProjectReader | None = None) -> None:
         """Construct a workflow.
 
-        Downstream slices will accept injected service factories here.
+        Args:
+            project_reader: Optional custom :class:`KicadProjectReader`
+                instance. Defaults to a fresh one with the SPCoast
+                ``~/Dropbox/KiCad/projects/`` basename root.
         """
+        self._project_reader = project_reader or KicadProjectReader()
 
     def run(self, request: PublishRequest) -> PublishResult:
         """Run the publish pipeline against *request*.
@@ -93,19 +125,62 @@ class PublishWorkflow:
             request: The bundled inputs (project arg + config + flags).
 
         Returns:
-            A :class:`PublishResult` with the run's outcome + exit code.
+            A :class:`PublishResult` describing the run.
 
         Notes:
-            The foundation slice always returns
-            ``PublishResult(outcome="failed", exit_code=2)`` with a
-            ``NotImplementedError``-equivalent message. The real
-            pre-flight + pipeline land in slice (i) of issue #1.
+            Foundation-slice semantics: pre-flight is fully implemented;
+            steps 2+ (read / analyze / export / publish) are stubbed.
         """
+        try:
+            resolved = self._project_reader.resolve(request.project_arg)
+        except ProjectResolutionError as exc:
+            return PublishResult(
+                outcome="failed",
+                exit_code=2,
+                message=f"kproj: project resolution failed: {exc}",
+            )
+
+        try:
+            kicad_cli = self._resolve_kicad_cli(request.config)
+            major, minor, patch = kicad_version(kicad_cli)
+        except KicadNotFoundError as exc:
+            return PublishResult(
+                outcome="failed",
+                exit_code=2,
+                message=f"kproj: {exc}",
+            )
+
+        if major != _SUPPORTED_KICAD_MAJOR:
+            return PublishResult(
+                outcome="failed",
+                exit_code=2,
+                message=(
+                    f"kproj: unsupported kicad-cli version {major}.{minor}.{patch} "
+                    f"at {kicad_cli} (kproj v1 requires major version {_SUPPORTED_KICAD_MAJOR}.x)."
+                ),
+            )
+
+        print(
+            f"kproj: kicad-cli {major}.{minor}.{patch} at {kicad_cli}",
+            file=sys.stderr,
+        )
+
         return PublishResult(
             outcome="failed",
             exit_code=2,
             message=(
-                f"kproj: pipeline not yet implemented for {request.project_arg!r}; "
-                "this is the foundation walking-skeleton."
+                f"kproj: pre-flight succeeded for {resolved.basename!r}; the rest of "
+                "the publish pipeline is not yet implemented (foundation walking-skeleton)."
             ),
         )
+
+    @staticmethod
+    def _resolve_kicad_cli(config: KprojConfig) -> Path:
+        """Return the configured ``kicad-cli`` or probe via the locator."""
+        if config.kicad_cli is not None:
+            if not config.kicad_cli.exists():
+                raise KicadNotFoundError(
+                    f"configured kicad_cli={config.kicad_cli!r} does not exist."
+                )
+            return config.kicad_cli
+        return find_kicad_cli()
