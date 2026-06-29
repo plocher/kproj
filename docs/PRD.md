@@ -39,12 +39,15 @@ Stories are grouped by actor. Each carries Gherkin acceptance criteria — the u
 
 ```gherkin path=null start=null
 GIVEN a kicad_project at <path> with a populated title_block
+AND the project's `production/` directory contains fresh jBOM output (gerber pack + bom.csv + pos.csv)
 WHEN I run `kproj <path>`
 THEN the site repo has `_versions/<Project>/<board_rev>.md` with front-matter matching the project state
-AND the site repo has `versions/<Project>/<board_rev>/<P>-<R>.<asset>` files for the standard asset set
+AND the site repo has `versions/<Project>/<board_rev>/<P>-<R>.<asset>` files for the standard asset set (top.png, bottom.png, step, sch.svg, sch.pdf, ibom.html, fab.zip, source.zip, thumbnail.png)
 AND the site repo has `pages/<Project>.md` with content from the project's README.md
 AND the site repo is committed and pushed
 ```
+
+*Note*: when `production/` is missing or empty, `fab.zip` is omitted from the asset set and a warning Finding is surfaced. The rest of the publish proceeds. See ADR 0003 / docs/DESIGN.md § *FabPackager*.
 
 #### Story 2 — Preview without publishing
 *As a project author, I want to preview what kproj would publish without actually publishing, so that I can verify my project is ready.*
@@ -182,13 +185,19 @@ AND stderr contains the git command lines and their stdout/stderr
 *As a project author, I want kproj to recognize when nothing has changed and do no work, so that re-runs after a successful publish are cheap and silent.*
 
 ```gherkin path=null start=null
-GIVEN a kicad_project already published with current metadata
+GIVEN a kicad_project already published, where:
+  - the current front-matter kproj would emit matches the on-disk `_versions/<P>/<R>.md` front-matter
+  - the current body kproj would emit matches the on-disk body
+  - the project's README.md content matches the on-disk `pages/<P>.md` body
+  - every artifact referenced in the front-matter exists on disk and is not older than its source
 WHEN I run `kproj <path>`
 THEN no files are written
 AND no commit is made
 AND kproj exits with code 0
 AND stderr is silent at default verbosity
 ```
+
+*Note*: a README edit, a status change, or a stale artifact each force a re-run that is more than a no-op. See `docs/DESIGN.md` § *New-release detection* for the full comparison matrix.
 
 ### Project visitor — secondary actor, browsing the site
 
@@ -218,10 +227,12 @@ AND I see two adjacent Markdown tables in the body: metadata audit findings, DRC
 *As a project consumer, I want to download the fab pack from a published version, so that I can fabricate the board myself.*
 
 ```gherkin path=null start=null
-GIVEN a published version page
+GIVEN a published version page where the project's `production/` directory contained fresh jBOM output at publish time
 WHEN I click the fab.zip artifact link
 THEN I download a zip containing exactly three files: bom.csv, pos.csv, gerbers.zip
 ```
+
+*Note*: when `production/` was missing or stale at publish time, no `fab.zip` artifact is listed on the version page (the standard asset set is reduced). The publish still succeeds for the non-fab artifacts.
 
 #### Story 17 — Replicate the design in KiCad
 *As a project consumer, I want to download the source archive from a published version, so that I can iterate on the design in KiCad.*
@@ -266,7 +277,7 @@ The following are explicitly NOT part of kproj v1. Each is documented in an ADR 
 
 ## Further Notes
 
-- The user-facing CLI surface is intentionally minimal: `kproj [<project-or-dir-or-file>] [--dry-run] [--no-push] [-v|--verbose] [-d|--debug]`. Five flags, one positional. See `docs/DESIGN.md` for the parsing mechanics.
+- The user-facing CLI surface is intentionally minimal: `kproj [<project-or-dir-or-file>] [--site-repo PATH] [--dry-run] [--no-push] [-v|--verbose] [-d|--debug]`. Six flags, one positional. `--site-repo` is the highest-precedence site-repo override; `KPROJ_SITE_REPO` env var and `~/.kproj.yaml` `site_repo` key are the fallbacks. See `docs/DESIGN.md` for the parsing mechanics.
 - kproj is designed to compose with sibling tools (jBOM for fab artifact generation, a future `kproj rename` for multi-variant disambiguation, a future `kicad-meta` for bulk metadata edits) via Makefile recipes — see `templates/Makefile.kicad`.
 - The `ChangeJournal` transactional write model (ADR 0005) is the foundation for v1's batch-safety promise. Any future kproj features that touch the site repo must use the same pattern.
 - Phase 6+ deepening candidates (not committed; recorded for future scoping): two-phase architecture (extract → render with `--json` intermediate), PCM-package refresh for the user-facing interactive jobset, DRC visualization as an iBOM extension, richer per-project config, CI integration with cross-repo PAT.

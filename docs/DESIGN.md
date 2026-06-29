@@ -87,10 +87,11 @@ tests/
 Argparse setup in `src/kproj/cli.py`. Parses argv → builds `PublishRequest` → calls `PublishWorkflow().run(request)` → maps `PublishResult` to exit code.
 
 ```text path=null start=null
-kproj [<project-or-dir-or-file>] [--dry-run] [--no-push] [-v|--verbose] [-d|--debug]
+kproj [<project-or-dir-or-file>] [--site-repo PATH] [--dry-run] [--no-push] [-v|--verbose] [-d|--debug]
 ```
 
 - **Positional** — optional path; if absent, use CWD. Delegates to `KicadProjectReader.resolve(path or ".")` which wraps `jbom.application.pcb_project_loader.resolve_pcb_input()`.
+- **`--site-repo PATH`** — override the site repo location. Highest precedence in the config layer (above `KPROJ_SITE_REPO` env, `~/.kproj.yaml` `site_repo` key, and the hardcoded default). Useful for testing against a scratch site repo without editing the user's primary config (per ADR 0007).
 - **`--dry-run`** — boolean flag. Sets `PublishRequest.dry_run = True`.
 - **`--no-push`** — boolean flag. Sets `PublishRequest.no_push = True` (or env `KPROJ_NO_PUSH=1`, or `no_push: true` in `~/.kproj.yaml`).
 - **`-v` / `--verbose`** — count flag (`action="count"`). Sets `PublishRequest.verbose_level = 1` when `-v`, 2 when `-v -d` (combined).
@@ -532,7 +533,7 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | error | `kicad_sch_missing` | adjacent `.kicad_sch` doesn't exist |
 | error | `kicad_pcb_missing` | adjacent `.kicad_pcb` doesn't exist |
 | error | `placeholder_value` | field value is `${...}` literal, `DATE`, `Fab Date`, `Designer Name`, `Sheet Title Line N`, locale-default date |
-| error | `comment9_missing` | `${COMMENT9}` is empty or absent (after corpus bulk-populate; treat as warning during transition) |
+| warning | `comment9_missing` | `${COMMENT9}` is empty or absent. v1 emits `status: active` as the default in this case (per locked Phase 1 closeout) and surfaces the warning so the user can populate the field. Promotion to `error` is deferred until after corpus bulk-populate (future ADR). |
 | error | `comment9_taxonomy` | `${COMMENT9}` value not in `{experimental, active, retired, broken, replaced-by:<X>, private}` |
 | warning | `sch_titleblock_empty` | `.kicad_sch` has empty/missing `(title_block ...)` stanza |
 | warning | `pcb_titleblock_empty` | `.kicad_pcb` has empty/missing `(title_block ...)` stanza |
@@ -563,7 +564,7 @@ fab_date: <YYYY-MM>                # optional explicit fab date (defaults to tit
 tagline: <comment2>                # consumed (one-line description)
 overview: <comment2 + comment3>    # consumed via markdownify
 company: <company>                 # used to derive tags
-tags: [<company>, kicad]           # if company contains "/", split. v1 site-setup PR adds "kicad" to _data/tags.yml allowed-tags.
+tags: [<company>, kicad]           # if company contains "/", split. Only tags listed in _data/tags.yml allowed-tags render as buttons on the version page; v1 site-setup PR adds "kicad" and known company tags. Non-allowlisted tags are emitted to front-matter for grep/search but do not render — tracked as a discussable site-data sub-project.
 status: <comment9>                 # emitted verbatim per locked taxonomy: experimental/active/retired/broken/replaced-by:<X>
 publish: true                      # REQUIRED gate — eagle.html only renders artifacts/version body inside {% if version.publish == true %}
 image_path: /versions/<P>/<R>/<P>-<R>.thumbnail.png   # ABSOLUTE site path (live site convention)
@@ -633,7 +634,7 @@ Commit messages per pattern in *Per-service contracts › SitePublisher*. Push t
 - **Skip** all git operations on the site repo.
 - Log to stderr: pre-flight pass/fail, findings, would-be file paths, would-be commit message, would-be push target.
 
-`--dry-run` is read-only, idempotent, fast (milliseconds).
+`--dry-run` is read-only and idempotent. Wall-clock time is dominated by the DRC/ERC subprocess invocations (typically seconds per project, longer for boards with many violations).
 
 ## Verbosity
 
