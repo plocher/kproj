@@ -1,0 +1,672 @@
+[
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/AltmillSwitchController/AltmillSwitchController.kicad_pro",
+    "notes": [
+      "no title_block in AltmillSwitchController.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "AltmillSwitchController",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/AltmillSwitchController",
+    "sch_tb": {
+      "company": "SPCoast",
+      "date": "2025-12-03",
+      "rev": "A",
+      "title": "Altmill Remote Power Sequencer"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/AltmillSwitchRemote/AltmillSwitchRemote.kicad_pro",
+    "notes": [
+      "no title_block in AltmillSwitchRemote.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "AltmillSwitchRemote",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/AltmillSwitchRemote",
+    "sch_tb": {
+      "company": "SPCoast",
+      "date": "2025-12-03",
+      "rev": "A",
+      "title": "Altmill Power - Remote"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Brakeman-BLUE/Brakeman.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "company": "SPCoast / MRCS",
+      "date": "2024.09",
+      "rev": "A",
+      "title": "Safety Sam the Brakeman"
+    },
+    "project_basename": "Brakeman",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Brakeman-BLUE",
+    "sch_tb": {
+      "company": "SPCoast / MRCS",
+      "date": "2024,09",
+      "rev": "A",
+      "title": "Safety Sam the Brakeman"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Brakeman-RED/Brakeman.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "company": "SPCoast / MRCS",
+      "date": "2024.09",
+      "rev": "A",
+      "title": "Safety Sam the Brakeman"
+    },
+    "project_basename": "Brakeman",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Brakeman-RED",
+    "sch_tb": {
+      "company": "SPCoast / MRCS",
+      "date": "2024,09",
+      "rev": "A",
+      "title": "Safety Sam the Brakeman"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Core-ESP32/Core-ESP32.kicad_pro",
+    "notes": [
+      "no title_block in Core-ESP32.kicad_sch",
+      "no title_block in Core-ESP32.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "Core-ESP32",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Core-ESP32",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Core-ESP32-Devkit/Core-ESP32.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "SPCoast",
+      "date": "2026.04",
+      "rev": "3.2",
+      "title": "Core-ESP32-DEV"
+    },
+    "project_basename": "Core-ESP32",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Core-ESP32-Devkit",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "Breaks out 5v I2C, IO4 style headers and I2C OLED Display",
+      "comment3": "Processor carrier board for ESP32-DEV",
+      "company": "SPCoast",
+      "date": "2026-04-06",
+      "rev": "3.0",
+      "title": "I/O & I2C Adapter for ESP32-DEV"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Core-wt32-eth0/Core-wt32-eth0.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "Cambria",
+      "company": "FoMoCo",
+      "date": "2024.11",
+      "rev": "v1.0B",
+      "title": "Plexi Core"
+    },
+    "project_basename": "Core-wt32-eth0",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Core-wt32-eth0",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "Cambria",
+      "company": "FoMoCo",
+      "date": "2024-11-17",
+      "rev": "1.0",
+      "title": "WT32-ETH01 Processor"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/IOB-Baseboard/IOB-Baseboard.kicad_pro",
+    "notes": [
+      "no title_block in IOB-Baseboard.kicad_sch",
+      "no title_block in IOB-Baseboard.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "IOB-Baseboard",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/IOB-Baseboard",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/IOX-Darlington/IOX-Darlington/IOX-Darlington/IOX-Darlington.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "Designer Name",
+      "company": "MRCS",
+      "date": "Fab Date",
+      "rev": "A",
+      "title": "${PROJECTNAME}"
+    },
+    "project_basename": "IOX-Darlington",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/IOX-Darlington/IOX-Darlington/IOX-Darlington",
+    "sch_tb": {
+      "comment1": "Designer Name",
+      "comment2": "Sheet Title Line 1",
+      "comment3": "Sheet Title Line 2",
+      "comment4": "Sheet Title Line 3",
+      "company": "MRCS",
+      "date": "DATE",
+      "rev": "1.0",
+      "title": "${PROJECTNAME}"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/LEDStripDriver/I2C-LEDStripDriver.kicad_pro",
+    "notes": [
+      "no title_block in I2C-LEDStripDriver.kicad_sch",
+      "no title_block in I2C-LEDStripDriver.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "I2C-LEDStripDriver",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/LEDStripDriver",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightAdapter-6p6c/LightAdapter.kicad_pro",
+    "notes": [
+      "no title_block in LightAdapter.kicad_sch",
+      "no title_block in LightAdapter.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "LightAdapter",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightAdapter-6p6c",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightAdapter-8p8c/LightAdapter.kicad_pro",
+    "notes": [
+      "no title_block in LightAdapter.kicad_sch",
+      "no title_block in LightAdapter.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "LightAdapter",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightAdapter-8p8c",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightDimmer-v1/LightDimmer.kicad_pro",
+    "notes": [
+      "no title_block in LightDimmer.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "LightDimmer",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightDimmer-v1",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "company": "SPCoast",
+      "date": "2025-01-20",
+      "rev": "1.0",
+      "title": "Light Dimmer"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightDimmer-v1B/LightDimmer.kicad_pro",
+    "notes": [
+      "no title_block in LightDimmer.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "LightDimmer",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/LightDimmer/LightDimmer-v1B",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "company": "SPCoast",
+      "date": "2025-01-20",
+      "rev": "1.0",
+      "title": "Light Dimmer"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX-Darlington/IOX-Darlington.kicad_pro",
+    "notes": [
+      "no title_block in IOX-Darlington.kicad_sch"
+    ],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026.07",
+      "rev": "1.0A",
+      "title": "ULN2003 Driver"
+    },
+    "project_basename": "IOX-Darlington",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX-Darlington",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX_Blank/IOX_Blank.kicad_pro",
+    "notes": [
+      "no title_block in IOX_Blank.kicad_sch"
+    ],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026.07",
+      "rev": "1.0A",
+      "title": "IOX Blank Plugin"
+    },
+    "project_basename": "IOX_Blank",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX_Blank",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX_Monitor/IOX_Monitor.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026-07",
+      "rev": "1.0A",
+      "title": "IOX-Monitor"
+    },
+    "project_basename": "IOX_Monitor",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX_Monitor",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "IOX Plugin",
+      "company": "MRCS",
+      "date": "2026-07",
+      "rev": "1.0",
+      "title": "cpNode IOX Monitor"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX_Plugin_Footprint/IOX_Plugin_Footprint.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026.07",
+      "rev": "1.0A",
+      "title": "IOX Blank Plugin"
+    },
+    "project_basename": "IOX_Plugin_Footprint",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/IOX_Plugin_Footprint",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "PCB Layout for daughterboard connectors",
+      "company": "MRCS",
+      "date": "2026.07",
+      "rev": "1.0A",
+      "title": "IOX Plugin footprint"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-ProMini/cpNode-ProMini.kicad_pro",
+    "notes": [
+      "no title_block in cpNode-ProMini.kicad_sch",
+      "no title_block in cpNode-ProMini.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "cpNode-ProMini",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-ProMini",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-68x90/cpNode-Xiao-68x90.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026.05",
+      "rev": "1.0B",
+      "title": "cpNode-Xiao-68x90"
+    },
+    "project_basename": "cpNode-Xiao-68x90",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-68x90",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "Breaks out 5v I2C, IO4 style headers and I2C OLED Display",
+      "comment3": "Processor carrier board for ESP32-DEV",
+      "company": "SPCoast",
+      "date": "2026-04-06",
+      "rev": "3.0",
+      "title": "cpNode Xiao"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-80x70/cpNode-Xiao-80x70.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026.04",
+      "rev": "1.0",
+      "title": "cpNode-Xiao-80x70"
+    },
+    "project_basename": "cpNode-Xiao-80x70",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-80x70",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "Breaks out 5v I2C, IO4 style headers and I2C OLED Display",
+      "comment3": "Processor carrier board for ESP32-DEV",
+      "company": "SPCoast",
+      "date": "2026-04-06",
+      "rev": "3.0",
+      "title": "cpNode Xiao"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": false,
+    "has_sch": false,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-orig/cpNode-Xiao.kicad_pro",
+    "notes": [],
+    "pcb_tb": {},
+    "project_basename": "cpNode-Xiao",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-orig",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-expander-23017/cpNode-expander-23017.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "company": "MRCS",
+      "date": "2026.06",
+      "rev": "3.0A",
+      "title": "${PROJECTNAME}"
+    },
+    "project_basename": "cpNode-expander-23017",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-expander-23017",
+    "sch_tb": {
+      "comment1": "John Plocher",
+      "comment2": "IOX-16",
+      "comment3": "Updated for use with",
+      "comment4": "cpNode Xiao",
+      "company": "MRCS",
+      "date": "2026-07",
+      "rev": "3.0",
+      "title": "${PROJECTNAME}"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": true,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/testfoot/testfoot.kicad_pro",
+    "notes": [
+      "no title_block in testfoot.kicad_sch",
+      "no title_block in testfoot.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "testfoot",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/testfoot",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/OneOfAll/Untitled/Untitled.kicad_pro",
+    "notes": [
+      "no title_block in Untitled.kicad_sch",
+      "no title_block in Untitled.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "Untitled",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/OneOfAll/Untitled",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/OneOfAll/allSPCoast-test/allSPCoast-test.kicad_pro",
+    "notes": [
+      "no title_block in allSPCoast-test.kicad_sch",
+      "no title_block in allSPCoast-test.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "allSPCoast-test",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/OneOfAll/allSPCoast-test",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Dual/SignalMast-ColorLight-DualHead.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "John Plocher",
+      "comment2": "Panel by JLC, White Silk with Black Soldermask",
+      "company": "SPCoast",
+      "date": "2025-04-06",
+      "rev": "2.0",
+      "title": "Signalmast-ColorLight-DualHead"
+    },
+    "project_basename": "SignalMast-ColorLight-DualHead",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Dual",
+    "sch_tb": {
+      "comment1": "JPlocher",
+      "comment2": "Panel by JLC, White Silk with Black Soldermask",
+      "company": "SPCoast",
+      "date": "2025-04-07",
+      "rev": "2.0",
+      "title": "Simple Signal - Dual Head Color Light"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Dwarf/SignalMast-ColorLight-Dwarf.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "JPlocher",
+      "comment2": "Fabrication Drawing",
+      "company": "MRCS / SPCoast",
+      "date": "2024-09-14",
+      "rev": "1.0-A",
+      "title": "Low Cost Signal Mast - single head color light dwarf"
+    },
+    "project_basename": "SignalMast-ColorLight-Dwarf",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Dwarf",
+    "sch_tb": {
+      "comment1": "JPlocher",
+      "company": "MRCS / SPCoast",
+      "date": "2024-09-14",
+      "rev": "1.0",
+      "title": "Low Cost Signal Mast - single head color light dwarf"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Single/SignalMast-ColorLight-SingleHead.kicad_pro",
+    "notes": [
+      "no title_block in SignalMast-ColorLight-SingleHead.kicad_sch",
+      "no title_block in SignalMast-ColorLight-SingleHead.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "SignalMast-ColorLight-SingleHead",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Single",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/cpNode-expander-23017/cpNode-expander-23017/cpNode-expander-23017/cpNode-expander-23017.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "comment1": "Designer Name",
+      "company": "MRCS",
+      "date": "Fab Date",
+      "rev": "A",
+      "title": "${PROJECTNAME}"
+    },
+    "project_basename": "cpNode-expander-23017",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/cpNode-expander-23017/cpNode-expander-23017/cpNode-expander-23017",
+    "sch_tb": {
+      "comment1": "Designer Name",
+      "comment2": "Sheet Title Line 1",
+      "comment3": "Sheet Title Line 2",
+      "comment4": "Sheet Title Line 3",
+      "company": "MRCS",
+      "date": "DATE",
+      "rev": "1.0",
+      "title": "${PROJECTNAME}"
+    },
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/cpOD/cpOD.kicad_pro",
+    "notes": [
+      "no title_block in cpOD.kicad_sch",
+      "no title_block in cpOD.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "cpOD",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/cpOD",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/cpOD-updated/cpOD.kicad_pro",
+    "notes": [
+      "no title_block in cpOD.kicad_sch",
+      "no title_block in cpOD.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "cpOD",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/cpOD-updated",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/templates/empty_project/empty/empty.kicad_pro",
+    "notes": [
+      "no title_block in empty.kicad_sch",
+      "no title_block in empty.kicad_pcb"
+    ],
+    "pcb_tb": {},
+    "project_basename": "empty",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/templates/empty_project/empty",
+    "sch_tb": {},
+    "text_variables": {}
+  },
+  {
+    "has_pcb": true,
+    "has_sch": true,
+    "is_mrcs": false,
+    "kicad_pro": "/Users/jplocher/Dropbox/KiCad/projects/zzz/zzz/zzz.kicad_pro",
+    "notes": [],
+    "pcb_tb": {
+      "date": "sam. 04 avril 2015"
+    },
+    "project_basename": "zzz",
+    "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/zzz/zzz",
+    "sch_tb": {
+      "date": "sam. 04 avril 2015"
+    },
+    "text_variables": {}
+  }
+]

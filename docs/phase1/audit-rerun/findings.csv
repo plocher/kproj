@@ -1,0 +1,51 @@
+severity,project,side,field,value,reason
+warning,AltmillSwitchController,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,AltmillSwitchController,sch,date,2025-12-03,date not in YYYY.MM convention
+warning,AltmillSwitchRemote,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,AltmillSwitchRemote,sch,date,2025-12-03,date not in YYYY.MM convention
+warning,Brakeman,sch≠pcb,rev,sch='3.0' / pcb='3.0A',SCH and PCB disagree on this field
+warning,Brakeman,sch≠pcb,rev,sch='3.0' / pcb='3.0A',SCH and PCB disagree on this field
+warning,Core-ESP32,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,Core-ESP32,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,Core-ESP32,sch≠pcb,rev,sch='3.0' / pcb='3.0C',SCH and PCB disagree on this field
+warning,Core-wt32-eth0,sch≠pcb,rev,sch='1.0' / pcb='1.0B',SCH and PCB disagree on this field
+warning,IOB-Baseboard,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,IOB-Baseboard,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,I2C-LEDStripDriver,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,I2C-LEDStripDriver,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,LightAdapter,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,LightAdapter,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,LightAdapter,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,LightAdapter,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,LightDimmer,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,LightDimmer,sch,date,2025-01-20,date not in YYYY.MM convention
+warning,LightDimmer,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,LightDimmer,sch,date,2025-01-20,date not in YYYY.MM convention
+warning,IOX-Darlington,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,IOX_Blank,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,IOX_Monitor,sch≠pcb,rev,sch='1.0' / pcb='1.0A',SCH and PCB disagree on this field
+warning,IOX_Plugin_Footprint,sch≠pcb,rev,sch='1.0' / pcb='1.0A',SCH and PCB disagree on this field
+warning,cpNode-ProMini,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,cpNode-ProMini,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,cpNode-Xiao-68x90,sch≠pcb,date,sch='2026.04' / pcb='2026.05',SCH and PCB disagree on this field
+warning,cpNode-Xiao-68x90,sch≠pcb,rev,sch='3.0' / pcb='3.0B',SCH and PCB disagree on this field
+warning,cpNode-Xiao-80x70,sch≠pcb,rev,sch='3.0' / pcb='3.0A',SCH and PCB disagree on this field
+warning,cpNode-expander-23017,sch≠pcb,rev,sch='3.0' / pcb='3.0A',SCH and PCB disagree on this field
+warning,testfoot,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,testfoot,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,SignalMast-ColorLight-DualHead,sch≠pcb,rev,sch='2.0' / pcb='2.0A',SCH and PCB disagree on this field
+warning,SignalMast-ColorLight-DualHead,sch≠pcb,title,sch='Simple Signal - Dual Head Color Light' / pcb='Signalmast-ColorLight-DualHead',SCH and PCB disagree on this field
+warning,SignalMast-ColorLight-Dwarf,sch≠pcb,rev,sch='1.0' / pcb='1.0A',SCH and PCB disagree on this field
+warning,SignalMast-ColorLight-SingleHead,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,SignalMast-ColorLight-SingleHead,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,cpOD,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,cpOD,sch,date,2015.03.28,date not in YYYY.MM convention
+warning,cpOD,sch,comment1,MKS,designer not in 'FirstName LastName' convention
+warning,cpOD,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,cpOD,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,Untitled,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,Untitled,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,allSPCoast-test,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,allSPCoast-test,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)
+warning,empty,sch,title_block,(empty),schematic metadata incomplete (title_block empty)
+warning,empty,pcb,title_block,(empty),PCB metadata incomplete (title_block empty)

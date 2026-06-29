@@ -1,0 +1,192 @@
+{
+  "date_histogram": {
+    "OTHER": 8,
+    "YYYY-MM": 3,
+    "YYYY-MM-DD": 12,
+    "YYYY.MM": 11
+  },
+  "incomplete_projects": [
+    {
+      "has_pcb": false,
+      "has_sch": false,
+      "notes": [],
+      "project": "cpNode-Xiao",
+      "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-Xiao-orig"
+    }
+  ],
+  "mrcs_total": 10,
+  "population": {
+    "comment1": 15,
+    "comment2": 11,
+    "comment3": 6,
+    "comment4": 3,
+    "comment5": 0,
+    "comment6": 0,
+    "comment7": 0,
+    "comment8": 0,
+    "comment9": 0,
+    "company": 19,
+    "date": 20,
+    "rev": 19,
+    "title": 19
+  },
+  "population_mrcs": {
+    "comment1": 7,
+    "comment2": 5,
+    "comment3": 3,
+    "comment4": 1,
+    "comment5": 0,
+    "comment6": 0,
+    "comment7": 0,
+    "comment8": 0,
+    "comment9": 0,
+    "company": 7,
+    "date": 7,
+    "rev": 7,
+    "title": 7
+  },
+  "spcoast": {
+    "designer": {
+      "empty": 19,
+      "fit": 11,
+      "partial": 4
+    },
+    "deviations": [
+      {
+        "flags": [
+          "comment1=partial: \"sch='John Plocher' pcb='Cambria'\"",
+          "comment2=partial: 'Cambria'"
+        ],
+        "project": "Core-wt32-eth0",
+        "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Core-wt32-eth0"
+      },
+      {
+        "flags": [
+          "comment1=partial: 'Designer Name'"
+        ],
+        "project": "IOX-Darlington",
+        "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/IOX-Darlington/IOX-Darlington/IOX-Darlington"
+      },
+      {
+        "flags": [
+          "comment2=partial: 'IOX-16'"
+        ],
+        "project": "cpNode-expander-23017",
+        "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/MRCS/cpNode-expander-23017"
+      },
+      {
+        "flags": [
+          "comment1=partial: \"sch='JPlocher' pcb='John Plocher'\""
+        ],
+        "project": "SignalMast-ColorLight-DualHead",
+        "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/Signal-ColorLight-Dual"
+      },
+      {
+        "flags": [
+          "comment1=partial: 'Designer Name'"
+        ],
+        "project": "cpNode-expander-23017",
+        "project_dir": "/Users/jplocher/Dropbox/KiCad/projects/cpNode-expander-23017/cpNode-expander-23017/cpNode-expander-23017"
+      }
+    ],
+    "overview": {
+      "empty": 28,
+      "fit": 6
+    },
+    "samples": {
+      "comment1": [
+        {
+          "project": "Core-ESP32",
+          "value": "John Plocher"
+        },
+        {
+          "project": "Core-wt32-eth0",
+          "value": "sch='John Plocher' pcb='Cambria'"
+        },
+        {
+          "project": "IOX-Darlington",
+          "value": "Designer Name"
+        },
+        {
+          "project": "SignalMast-ColorLight-DualHead",
+          "value": "sch='JPlocher' pcb='John Plocher'"
+        },
+        {
+          "project": "SignalMast-ColorLight-Dwarf",
+          "value": "JPlocher"
+        }
+      ],
+      "comment2": [
+        {
+          "project": "Core-ESP32",
+          "value": "Breaks out 5v I2C, IO4 style headers and I2C OLED Display"
+        },
+        {
+          "project": "Core-wt32-eth0",
+          "value": "Cambria"
+        },
+        {
+          "project": "IOX-Darlington",
+          "value": "Sheet Title Line 1"
+        },
+        {
+          "project": "IOX_Monitor",
+          "value": "IOX Plugin"
+        },
+        {
+          "project": "IOX_Plugin_Footprint",
+          "value": "PCB Layout for daughterboard connectors"
+        },
+        {
+          "project": "cpNode-expander-23017",
+          "value": "IOX-16"
+        },
+        {
+          "project": "SignalMast-ColorLight-DualHead",
+          "value": "Panel by JLC, White Silk with Black Soldermask"
+        },
+        {
+          "project": "SignalMast-ColorLight-Dwarf",
+          "value": "Fabrication Drawing"
+        }
+      ],
+      "comment3": [
+        {
+          "project": "Core-ESP32",
+          "value": "Processor carrier board for ESP32-DEV"
+        },
+        {
+          "project": "IOX-Darlington",
+          "value": "Sheet Title Line 2"
+        },
+        {
+          "project": "cpNode-expander-23017",
+          "value": "Updated for use with"
+        }
+      ]
+    },
+    "tagline": {
+      "empty": 23,
+      "fit": 9,
+      "partial": 2
+    }
+  },
+  "split_sch_pcb": {
+    "comment1": 2,
+    "comment2": 0,
+    "comment3": 0,
+    "comment4": 0,
+    "comment5": 0,
+    "comment6": 0,
+    "comment7": 0,
+    "comment8": 0,
+    "comment9": 0,
+    "company": 2,
+    "date": 10,
+    "rev": 9,
+    "title": 7
+  },
+  "text_variable_keys": {},
+  "text_variable_samples": {},
+  "total": 34
+}

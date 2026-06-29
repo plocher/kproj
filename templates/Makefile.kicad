@@ -1,0 +1,60 @@
+# Makefile.kicad — kproj-aware composition for a KiCad project
+#
+# Symlink this into a KiCad project directory:
+#     ln -s ~/Dropbox/KiCad/kproj/templates/Makefile.kicad Makefile
+#
+# Then `make publish` to fab, render, audit, and publish to the SPCoast site.
+# `make release` adds the (B) release-lifecycle layer (tag + gh release).
+
+PROJECT   = $(shell basename $$PWD)
+PCB       = $(PROJECT).kicad_pcb
+SCH       = $(PROJECT).kicad_sch
+BOARD_REV = $(shell python3 -c "import re; t=open('$(PCB)').read(); m=re.search(r'\(rev \"([^\"]+)\"\)', t); print(m.group(1) if m else '')")
+FAB       ?= generic
+SITE_REPO ?= $(KPROJ_SITE_REPO)
+SITE_REPO ?= $(HOME)/Dropbox/eagle/SPCoast.github.io
+
+.PHONY: audit fab publish release clean status help
+
+help:
+	@echo "kproj-aware Makefile for KiCad project $(PROJECT)"
+	@echo ""
+	@echo "  make audit        kproj --dry-run (side-effect-free preview)"
+	@echo "  make fab          jbom fab --fabricator $(FAB) (generates ./production/)"
+	@echo "  make publish      kproj (publishes snapshot to SPCoast site)"
+	@echo "  make release      (B) release: tag the project repo + gh release create"
+	@echo "  make status       brief audit + dry-run output"
+	@echo "  make clean        rm -rf production/"
+	@echo ""
+	@echo "  Current board_rev: $(BOARD_REV)"
+	@echo "  Fabricator:        $(FAB)"
+	@echo "  Site repo:         $(SITE_REPO)"
+
+# ----- v1 kproj workflow -----
+
+audit:
+	kproj --dry-run
+
+publish: fab
+	kproj
+
+fab:
+	jbom fab --fabricator $(FAB)
+
+clean:
+	rm -rf production/
+
+status:
+	@kproj --dry-run 2>&1 | grep -v '^$$' || true
+
+# ----- (B) release lifecycle — out of kproj v1 scope; composed here -----
+
+release: publish
+	git tag -a "release/$(BOARD_REV)" -m "Release $(BOARD_REV) — $(PROJECT)"
+	git push origin "release/$(BOARD_REV)"
+	gh release create "release/$(BOARD_REV)" \
+		--title "$(PROJECT) $(BOARD_REV)" \
+		--notes-file CHANGELOG.md \
+		$(SITE_REPO)/versions/$(PROJECT)/$(BOARD_REV)/*.fab.zip \
+		$(SITE_REPO)/versions/$(PROJECT)/$(BOARD_REV)/*.source.zip \
+		$(SITE_REPO)/versions/$(PROJECT)/$(BOARD_REV)/*.ibom.html
