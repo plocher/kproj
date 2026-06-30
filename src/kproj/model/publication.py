@@ -49,6 +49,12 @@ class Publication:
         analysis_info: Audit + DRC/ERC findings.
         body_md: The pre-rendered Markdown body (audit + DRC/ERC
             tables) written below the YAML front-matter terminator.
+        readme_md: The project's ``README.md`` content.  Written as the
+            body of ``pages/<P>.md`` (the per-project aggregator page).
+            Also used in new-release detection: if the on-disk
+            ``pages/<P>.md`` body differs, a ``"refresh"`` outcome is
+            triggered.  Defaults to an empty string when the project has
+            no README.
         images: Asset references emitted into the front-matter
             ``images:`` list (renders, schematic SVG).
         artifacts: Asset references emitted into the front-matter
@@ -67,6 +73,7 @@ class Publication:
     project_info: ProjectInfo
     analysis_info: AnalysisInfo
     body_md: str
+    readme_md: str = ""
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
     libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)
