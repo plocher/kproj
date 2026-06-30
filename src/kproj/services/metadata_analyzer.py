@@ -13,6 +13,7 @@ are consumed by the exit-code mapping in
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -95,7 +96,9 @@ class MetadataAnalyzer:
 
         Returns:
             An :class:`AnalysisInfo` collecting every produced finding
-            in insertion order.
+            in insertion order.  Every emitted finding carries
+            ``source="audit"`` (wave-3 M2 fix-up) so downstream
+            consumers can split audit/drc/erc counts by origin.
         """
         findings: list[Finding] = []
         findings.extend(self._file_existence_rules(project_info, project_path))
@@ -107,7 +110,11 @@ class MetadataAnalyzer:
         findings.extend(self._rev_relation_rule(project_info))
         findings.extend(self._replaced_by_target_rule(project_info))
         findings.extend(self._production_rules(project_info, project_path))
-        return AnalysisInfo(findings=tuple(findings))
+        # Stamp source="audit" on every emitted finding so
+        # FrontMatterSummaryFormatter can render source-specific counts
+        # without the per-rule constructors having to repeat the kwarg.
+        stamped = tuple(dataclasses.replace(f, source="audit") for f in findings)
+        return AnalysisInfo(findings=stamped)
 
     # ----- rule implementations -----
     def _file_existence_rules(self, info: ProjectInfo, project_path: Path) -> Iterable[Finding]:

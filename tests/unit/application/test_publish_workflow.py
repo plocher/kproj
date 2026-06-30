@@ -695,10 +695,9 @@ def test_schematic_export_error_converts_to_failed_outcome(
         result = workflow.run(request)
 
     assert result.outcome == "failed", (
-        f"BLOCKER 5: SchematicExportError must convert to outcome=failed; "
-        f"got {result.outcome!r}"
+        f"BLOCKER 5: SchematicExportError must convert to outcome=failed; got {result.outcome!r}"
     )
     assert result.exit_code == 2
-    assert (
-        "svg" in result.message.lower() or "schematic" in result.message.lower()
-    ), f"expected schematic context in failure message; got {result.message!r}"
+    assert "svg" in result.message.lower() or "schematic" in result.message.lower(), (
+        f"expected schematic context in failure message; got {result.message!r}"
+    )

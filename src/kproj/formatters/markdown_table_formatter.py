@@ -62,6 +62,17 @@ class MarkdownTableFormatter:
     def render(self, findings: Sequence[Finding]) -> str:
         """Render *findings* as two adjacent Markdown tables.
 
+        Section discrimination (wave-3 M3 fix-up):
+
+        - DRC/ERC table: any finding whose :attr:`Finding.source` is
+          ``"drc"`` or ``"erc"``.
+        - Metadata Audit table: every other finding (covers ``audit``,
+          ``read``, and legacy empty-source findings).  Legacy callers
+          that did not set ``source`` but used a non-audit ``field``
+          name still fall through to the audit table; the optional
+          :data:`AUDIT_FIELDS` heuristic is preserved as a safety net
+          for hand-shaped fixtures.
+
         Args:
             findings: The findings to render.  May be empty.
 
@@ -70,8 +81,19 @@ class MarkdownTableFormatter:
             **DRC / ERC Findings**.  Both sections are always present;
             empty sections show an italicised "no findings" row.
         """
-        audit = [f for f in findings if f.field in AUDIT_FIELDS]
-        design = [f for f in findings if f.field not in AUDIT_FIELDS]
+        audit: list[Finding] = []
+        design: list[Finding] = []
+        for f in findings:
+            if f.source in {"drc", "erc"}:
+                design.append(f)
+            elif f.source in {"audit", "read"} or f.field in AUDIT_FIELDS:
+                audit.append(f)
+            else:
+                # Default for legacy / hand-constructed findings: keep
+                # the historical "unknown field name → design table"
+                # behaviour from the pre-source contract so existing
+                # test fixtures remain valid.
+                design.append(f)
 
         audit_table = _render_audit_table(audit)
         drc_table = _render_drc_table(design)
@@ -102,18 +124,28 @@ def _render_audit_table(findings: Sequence[Finding]) -> str:
 
 
 def _render_drc_table(findings: Sequence[Finding]) -> str:
-    """Render the DRC/ERC section."""
+    """Render the DRC/ERC section.
+
+    Wave-3 M3 fix-up: the Location column now renders
+    :attr:`Finding.value` (the actual KiCad coordinate / uuid /
+    sheet from kicad-cli) rather than :attr:`Finding.location_hint`
+    (which previously held the ``"drc"`` / ``"erc"`` source token,
+    showing the source in every Location cell).  A new Source column
+    surfaces ``drc`` / ``erc`` from :attr:`Finding.source` for users
+    who want to group violations by origin.
+    """
     header = "## DRC / ERC Findings"
-    col_headers = "| Severity | Type | Location | Message |"
-    separator = "|----------|------|----------|----------|"
+    col_headers = "| Severity | Source | Type | Location | Message |"
+    separator = "|----------|--------|------|----------|----------|"
 
     if not findings:
-        return f"{header}\n\n{col_headers}\n{separator}\n| | | | _No DRC/ERC findings._ |"
+        return f"{header}\n\n{col_headers}\n{separator}\n| | | | | _No DRC/ERC findings._ |"
 
     rows = [
         f"| {f.severity.value.lower()} "
+        f"| {_escape_pipe(f.source)} "
         f"| {_escape_pipe(f.field)} "
-        f"| {_escape_pipe(f.location_hint)} "
+        f"| {_escape_pipe(f.value or f.location_hint)} "
         f"| {_escape_pipe(f.reason)} |"
         for f in findings
     ]

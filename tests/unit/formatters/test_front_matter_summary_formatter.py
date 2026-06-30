@@ -172,6 +172,70 @@ class TestAuditDrcCounts:
         parsed = _parse(_pub())
         assert "erc" in parsed
 
+    def test_drc_error_does_not_inflate_audit_or_erc_counts(self) -> None:
+        """M2 regression: a DRC finding counts only in the drc block.
+
+        Pre-fix the audit / drc / erc counts were all the same merged
+        total of every error/warning in the AnalysisInfo, so a single
+        DRC error appeared three times.  After the fix-up, each block
+        counts only findings whose :attr:`Finding.source` matches.
+        """
+        ai = AnalysisInfo(
+            findings=(
+                Finding(
+                    severity=Severity.ERROR,
+                    field="silk_overlap",
+                    value="(10, 20)",
+                    reason="silk over pad",
+                    source="drc",
+                ),
+            )
+        )
+        parsed = _parse(_pub(analysis_info=ai))
+        assert parsed["drc"]["errors"] == 1
+        assert parsed["audit"]["errors"] == 0, (
+            "M2: DRC error must not inflate audit.errors. "
+            f"audit={parsed['audit']}, drc={parsed['drc']}, erc={parsed['erc']}"
+        )
+        assert parsed["erc"]["errors"] == 0, (
+            "M2: DRC error must not inflate erc.errors. "
+            f"audit={parsed['audit']}, drc={parsed['drc']}, erc={parsed['erc']}"
+        )
+
+    def test_audit_drc_erc_counts_each_from_own_source(self) -> None:
+        """M2 regression: counts come from per-source partitioning."""
+        ai = AnalysisInfo(
+            findings=(
+                Finding(
+                    severity=Severity.WARNING,
+                    field="comment9_missing",
+                    value="",
+                    reason="absent",
+                    source="audit",
+                ),
+                Finding(
+                    severity=Severity.ERROR,
+                    field="track_clearance",
+                    value="(1, 2)",
+                    reason="clearance",
+                    source="drc",
+                ),
+                Finding(
+                    severity=Severity.WARNING,
+                    field="unconnected_pin",
+                    value="U1.1",
+                    reason="floating",
+                    source="erc",
+                ),
+            )
+        )
+        parsed = _parse(_pub(analysis_info=ai))
+        assert parsed["audit"] == {"errors": 0, "warnings": 1}
+        assert parsed["drc"]["errors"] == 1
+        assert parsed["drc"]["warnings"] == 0
+        assert parsed["erc"]["warnings"] == 1
+        assert parsed["erc"]["errors"] == 0
+
 
 class TestLibrariesSection:
     def test_three_bucket_libraries_rendered(self) -> None:

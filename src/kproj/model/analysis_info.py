@@ -37,6 +37,23 @@ class AnalysisInfo:
         """
         return sum(1 for f in self.findings if f.severity is severity)
 
+    def count_by_source(self, severity: Severity, *, sources: frozenset[str]) -> int:
+        """Count findings of *severity* whose :attr:`Finding.source` is in *sources*.
+
+        Wave-3 fix-up (M2): the front-matter ``audit:`` / ``drc:`` /
+        ``erc:`` blocks each need source-specific counts so a single
+        DRC error does not appear in every block.
+
+        Args:
+            severity: The severity level to count.
+            sources: Closed set of accepted ``Finding.source`` values
+                (e.g. ``{"audit", "read", ""}`` for the audit block).
+
+        Returns:
+            The integer count of matching findings.
+        """
+        return sum(1 for f in self.findings if f.severity is severity and f.source in sources)
+
     @property
     def has_findings(self) -> bool:
         """Return ``True`` iff at least one error or warning exists.

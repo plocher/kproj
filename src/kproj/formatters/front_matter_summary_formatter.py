@@ -106,7 +106,10 @@ class FrontMatterSummaryFormatter:
             for ref in publication.artifacts
         ]
 
-        # Audit / DRC / ERC count summaries.
+        # Audit / DRC / ERC count summaries.  Each block is counted
+        # from its own Finding.source dimension (wave-3 M2 fix-up); a
+        # DRC error therefore appears under drc.errors only, not under
+        # audit.errors and erc.errors as well.
         data["audit"] = self.render_audit(ai)
         data["drc"] = _count_design_findings(ai, kind="drc")
         data["erc"] = _count_design_findings(ai, kind="erc")
@@ -121,6 +124,10 @@ class FrontMatterSummaryFormatter:
     def render_audit(self, analysis_info: AnalysisInfo) -> dict[str, int]:
         """Render the ``audit:`` count summary as a plain dict.
 
+        Wave-3 M2 fix-up: counts only findings whose
+        :attr:`Finding.source` is in :data:`_AUDIT_SOURCES` so a DRC
+        or ERC finding does not double-count under ``audit:``.
+
         Args:
             analysis_info: The merged findings collection.
 
@@ -129,35 +136,46 @@ class FrontMatterSummaryFormatter:
             counting the metadata-audit findings.
         """
         return {
-            "errors": analysis_info.count(Severity.ERROR),
-            "warnings": analysis_info.count(Severity.WARNING),
+            "errors": analysis_info.count_by_source(Severity.ERROR, sources=_AUDIT_SOURCES),
+            "warnings": analysis_info.count_by_source(Severity.WARNING, sources=_AUDIT_SOURCES),
         }
 
 
 # ----- module-level helpers -----
 
 
+_AUDIT_SOURCES: frozenset[str] = frozenset({"audit", "read", ""})
+"""Closed set of :attr:`Finding.source` values counted in the audit block.
+
+Empty string covers legacy / hand-constructed findings that pre-date
+the source field; ``"read"`` covers KicadProjectReader diagnostics
+which are also audit-style metadata findings.
+"""
+
+
 def _count_design_findings(ai: AnalysisInfo, *, kind: str) -> dict[str, int]:
     """Return error / warning / exclusion counts for DRC or ERC findings.
 
-    v1 keeps a single merged :class:`AnalysisInfo`; all design findings
-    (errors + warnings + exclusions) from both DRC and ERC are merged.
-    The ``kind`` parameter is retained for forward-compatibility once
-    wave-3 splits them, but in v1 we report the merged counts for both.
+    Wave-3 M2 fix-up: counts are now source-specific.  ``kind="drc"``
+    counts only findings whose ``Finding.source == "drc"`` (and likewise
+    for ERC).  Pre-fix the kind parameter was ignored and both blocks
+    reported the merged total of every error/warning in the analysis
+    — a single DRC error appeared simultaneously in audit, drc, AND
+    erc blocks, contradicting PRD Story 5.
 
     Args:
         ai: The merged analysis findings.
-        kind: ``"drc"`` or ``"erc"`` (currently both see the same data).
+        kind: ``"drc"`` or ``"erc"`` (drives the source filter).
 
     Returns:
         A dict with ``"errors"``, ``"warnings"``, and ``"exclusions"``
         integer keys.
     """
-    del kind  # reserved; used for forward-compatibility in v1.1+
+    sources = frozenset({kind})
     return {
-        "errors": ai.count(Severity.ERROR),
-        "warnings": ai.count(Severity.WARNING),
-        "exclusions": ai.count(Severity.EXCLUSION),
+        "errors": ai.count_by_source(Severity.ERROR, sources=sources),
+        "warnings": ai.count_by_source(Severity.WARNING, sources=sources),
+        "exclusions": ai.count_by_source(Severity.EXCLUSION, sources=sources),
     }
 
 

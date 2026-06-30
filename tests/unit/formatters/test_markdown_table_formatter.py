@@ -117,8 +117,43 @@ def test_value_appears_in_table_row_when_non_empty() -> None:
     assert "PLACEHOLDER" in result
 
 
-def test_location_hint_appears_for_drc() -> None:
-    """A non-empty location_hint appears for a DRC finding."""
+def test_location_column_renders_finding_value_for_drc() -> None:
+    """M3 regression: DRC Location column comes from Finding.value.
+
+    Pre-fix the column rendered ``Finding.location_hint``, which the
+    DesignAnalyzer used to stash the source token (``"drc"`` /
+    ``"erc"``).  After the fix, ``value`` (the actual KiCad
+    coordinate / uuid / sheet) lands in the Location cell and
+    ``source`` gets its own column.
+    """
     fmt = MarkdownTableFormatter()
-    result = fmt.render([_drc_finding(location_hint="(50, 75)")])
-    assert "(50, 75)" in result
+    finding = Finding(
+        severity=Severity.WARNING,
+        field="silk_overlap",
+        value="(50.5, 75.0)",  # KiCad position from items.pos
+        reason="Silkscreen overlap",
+        source="drc",
+    )
+    result = fmt.render([finding])
+    assert "(50.5, 75.0)" in result, (
+        f"DRC Location column must render Finding.value; got:\n{result}"
+    )
+    # The Source column must surface the origin.
+    assert "| drc " in result or "|drc " in result or "| drc|" in result
+
+
+def test_drc_table_has_source_column_after_m3_fix() -> None:
+    """The DRC/ERC table includes a Source column header."""
+    fmt = MarkdownTableFormatter()
+    result = fmt.render(
+        [
+            Finding(
+                severity=Severity.WARNING,
+                field="silk_overlap",
+                value="(1, 2)",
+                reason="silk",
+                source="drc",
+            )
+        ]
+    )
+    assert "Source" in result, f"missing Source column header in DRC table:\n{result}"

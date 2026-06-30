@@ -119,17 +119,25 @@ class DesignAnalyzer:
     ) -> Sequence[Finding]:
         """Execute one ``kicad-cli`` subcommand and parse its JSON output.
 
+        Wave-3 fix-up (M2 + M4):
+
+        - Each emitted :class:`Finding` carries ``source=origin`` so
+          the front-matter formatter can split audit/drc/erc counts.
+        - When kicad-cli exits non-zero AND produces no JSON, we emit
+          a mechanical-failure error finding instead of returning the
+          empty tuple (pre-fix bug: a kicad-cli crash silently passed).
+
         Args:
             subcommand: e.g. ``("pcb", "drc")`` or ``("sch", "erc")``.
             target_file: The ``.kicad_pcb`` / ``.kicad_sch`` to analyse.
             project: Project basename used to stamp Findings.
-            origin: ``"drc"`` or ``"erc"`` - surfaces in the Finding's
-                ``location_hint`` so downstream formatters can group by
-                source.
+            origin: ``"drc"`` or ``"erc"`` - drives ``Finding.source``
+                on every emitted finding.
 
         Returns:
-            The parsed sequence of :class:`Finding` objects; empty when
-            no violations are reported.
+            The parsed sequence of :class:`Finding` objects; possibly
+            containing a single ``<origin>_mechanical_failure`` entry
+            when kicad-cli failed without producing JSON.
         """
         with tempfile.TemporaryDirectory(prefix=f"kproj-{origin}-") as tmpdir:
             output_path = Path(tmpdir) / f"{origin}.json"
@@ -146,9 +154,9 @@ class DesignAnalyzer:
             # check=False because KiCad's DRC/ERC return non-zero when
             # violations exist; that's a finding to surface, not a kproj
             # mechanical failure.
-            self._run(command, check=False)
+            result = self._run(command, check=False)
             if not output_path.exists():
-                return ()
+                return _mechanical_failure_findings(result=result, origin=origin, project=project)
             try:
                 payload = json.loads(output_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
@@ -159,7 +167,7 @@ class DesignAnalyzer:
                         value=str(output_path),
                         reason=f"could not parse {origin.upper()} JSON: {exc}",
                         project=project,
-                        location_hint=origin,
+                        source=origin,
                     ),
                 )
         return tuple(_findings_from_payload(payload, origin=origin, project=project))
@@ -188,7 +196,14 @@ def _findings_from_payload(payload: Any, *, origin: str, project: str) -> Sequen
 
 
 def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Sequence[Finding]:
-    """Convert one violation dict into one or more :class:`Finding` objects."""
+    """Convert one violation dict into one or more :class:`Finding` objects.
+
+    Wave-3 fix-up (M2 + M3): the KiCad-side location goes in
+    :attr:`Finding.value` and ``origin`` (``"drc"`` or ``"erc"``)
+    goes in :attr:`Finding.source` so the markdown formatter renders
+    the Location column from ``value`` and front-matter counts use
+    ``source`` rather than overloading ``location_hint``.
+    """
     if not isinstance(violation, dict):
         return ()
     severity = _SEVERITY_BY_TOKEN.get(str(violation.get("severity", "")).lower(), Severity.WARNING)
@@ -203,7 +218,7 @@ def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Se
                 value=_item_location(item),
                 reason=_item_reason(item, base_reason),
                 project=project,
-                location_hint=origin,
+                source=origin,
             )
             for item in items
         )
@@ -214,7 +229,52 @@ def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Se
             value="",
             reason=base_reason,
             project=project,
-            location_hint=origin,
+            source=origin,
+        ),
+    )
+
+
+def _mechanical_failure_findings(
+    *,
+    result: SubprocessResult,
+    origin: str,
+    project: str,
+) -> tuple[Finding, ...]:
+    """Emit a mechanical-failure :class:`Finding` when kicad-cli wrote no JSON.
+
+    Wave-3 fix-up (M4): pre-fix the analyzer silently returned ``()``
+    when kicad-cli failed mechanically and wrote no JSON, so a real
+    kicad-cli crash slipped through as "no findings".  This helper
+    distinguishes three cases:
+
+    1. ``returncode == 0`` and no stderr: kicad-cli genuinely produced
+       nothing actionable.  Return ``()`` (no findings, no failure).
+    2. ``returncode != 0`` or stderr non-empty: surface an error
+       :class:`Finding` so the workflow's exit-code mapping bumps to
+       1 (or 2 if the workflow chooses to treat the field as
+       mechanical) and the user sees a clear message on stderr.
+
+    Args:
+        result: The captured :class:`SubprocessResult` from kicad-cli.
+        origin: ``"drc"`` or ``"erc"``.
+        project: Project basename to stamp on the finding.
+
+    Returns:
+        A 0- or 1-tuple of :class:`Finding`.
+    """
+    rc = result.returncode
+    stderr = (result.stderr or "").strip()
+    if rc == 0 and not stderr:
+        return ()
+    detail = stderr or f"kicad-cli {origin} exited {rc} with no JSON output"
+    return (
+        Finding(
+            severity=Severity.ERROR,
+            field=f"{origin}_mechanical_failure",
+            value="",
+            reason=(f"kicad-cli {origin} failed without producing JSON (rc={rc}): {detail}"),
+            project=project,
+            source=origin,
         ),
     )
 

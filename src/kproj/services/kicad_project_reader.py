@@ -303,6 +303,7 @@ def _diagnostic_to_finding(diagnostic: Diagnostic, *, basename: str) -> Finding:
         value="",
         reason=diagnostic.message,
         project=basename,
+        source="read",
     )
 
 
@@ -329,6 +330,7 @@ def _read_metadata_safely(
             value=str(path),
             reason=f"failed to read {label} title-block at {path}: {exc}",
             project=project,
+            source="read",
         )
         return TitleBlockMetadata(), (finding,)
     return metadata, ()

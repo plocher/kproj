@@ -86,7 +86,7 @@ def test_drc_violation_with_items_emits_per_item_finding(tmp_path: Path) -> None
     runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    drc_findings = [f for f in result.findings if f.location_hint == "drc"]
+    drc_findings = [f for f in result.findings if f.source == "drc"]
     assert len(drc_findings) == 2
     assert {f.field for f in drc_findings} == {"silk_overlap"}
     assert {f.severity for f in drc_findings} == {Severity.WARNING}
@@ -108,7 +108,7 @@ def test_erc_exclusion_severity_preserved(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    erc_findings = [f for f in result.findings if f.location_hint == "erc"]
+    erc_findings = [f for f in result.findings if f.source == "erc"]
     assert erc_findings and erc_findings[0].severity is Severity.EXCLUSION
     # Exclusions must NOT mark the analysis as "has_findings" per ADR 0004.
     assert result.has_findings is False
@@ -128,12 +128,52 @@ def test_runner_receives_severity_all_and_format_json(tmp_path: Path) -> None:
         assert "--severity-all" in cmd
 
 
-def test_no_output_file_returns_empty_findings(tmp_path: Path) -> None:
-    """When kicad-cli writes nothing, the analyzer returns no findings."""
+def test_no_output_file_and_clean_exit_returns_empty_findings(tmp_path: Path) -> None:
+    """M4 fix-up: kicad-cli rc=0 with empty stderr + no JSON → no findings.
+
+    This is the genuine "kicad-cli ran but produced nothing actionable"
+    path.  The mechanical-failure detector (rc != 0 OR stderr non-empty)
+    is exercised by ``test_no_output_file_with_failure_emits_mechanical_finding``.
+    """
     runner, _ = _fake_runner(write_drc=False, write_erc=False)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
     assert result.findings == ()
+
+
+def test_no_output_file_with_failure_emits_mechanical_finding(tmp_path: Path) -> None:
+    """M4 regression: kicad-cli rc!=0 with no JSON must surface as a finding.
+
+    Pre-fix the analyzer returned ``()`` whenever JSON was absent,
+    silently passing real kicad-cli crashes.  After the fix, a non-
+    zero return code (or non-empty stderr) emits an error
+    :class:`Finding` whose ``field`` ends in ``_mechanical_failure``.
+    """
+
+    def runner(command: Sequence[str], **_kwargs: Any) -> SubprocessResult:
+        # No JSON file written; nonzero return + stderr context.
+        return SubprocessResult(
+            command=tuple(command),
+            returncode=2,
+            stdout="",
+            stderr="kicad-cli: segfault probing board\n",
+            elapsed_seconds=0.0,
+        )
+
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    result = analyzer.analyze(_resolved(tmp_path))
+    mech = [f for f in result.findings if f.field.endswith("_mechanical_failure")]
+    assert mech, (
+        "M4: kicad-cli failed without producing JSON; expected a "
+        f"*_mechanical_failure finding. Got fields={[f.field for f in result.findings]}"
+    )
+    drc_mech = [f for f in mech if f.source == "drc"]
+    erc_mech = [f for f in mech if f.source == "erc"]
+    assert drc_mech and erc_mech, (
+        "M4: each subcommand must report its own mechanical failure; got "
+        f"sources={[f.source for f in mech]}"
+    )
+    assert all(f.severity is Severity.ERROR for f in mech)
 
 
 def test_violation_without_items_emits_single_finding(tmp_path: Path) -> None:
@@ -150,7 +190,7 @@ def test_violation_without_items_emits_single_finding(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    drc_findings = [f for f in result.findings if f.location_hint == "drc"]
+    drc_findings = [f for f in result.findings if f.source == "drc"]
     assert len(drc_findings) == 1
     assert drc_findings[0].field == "drc_mismatch"
     assert drc_findings[0].severity is Severity.ERROR
@@ -172,7 +212,7 @@ def test_erc_reads_unconnected_items_array(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    erc_findings = [f for f in result.findings if f.location_hint == "erc"]
+    erc_findings = [f for f in result.findings if f.source == "erc"]
     assert erc_findings and erc_findings[0].field == "unconnected_pin"
 
 
