@@ -19,7 +19,6 @@ from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.publication import Publication
 from kproj.services.change_journal import ChangeJournal
-from kproj.services.fab_packager import FabPackager
 from kproj.services.site_publisher import SitePublisher
 from kproj.services.source_packager import SourcePackager
 from kproj.services.zip_archiver import ZipArchiver
@@ -38,14 +37,6 @@ def _project_info() -> ProjectInfo:
         overview="o",
         status=Status.ACTIVE,
     )
-
-
-def test_fab_packager_stub_raises(tmp_path: Path) -> None:
-    """``FabPackager.package`` is unimplemented in the foundation slice."""
-    with pytest.raises(NotImplementedError):
-        FabPackager(zip_archiver=ZipArchiver()).package(
-            production_dir=tmp_path, output=tmp_path / "out.zip"
-        )
 
 
 def test_source_packager_stub_raises(tmp_path: Path) -> None:

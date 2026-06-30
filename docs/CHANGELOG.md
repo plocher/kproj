@@ -104,6 +104,18 @@ versioning per [SemVer](https://semver.org).
   the iBOM staging-dir convention.
 - Contract test against the locally-installed iBOM PCM plugin
   (skipif when not present).
+- `services/fab_packager.py`: `FabPackager.package(production_dir,
+  output, title, rev, pcb_path)` per `docs/DESIGN.md` § FabPackager +
+  ADR 0003. Discovers the gerber pack as
+  `<production_dir>/<title>_<rev>.zip` first, falling back to the
+  single `*.zip` in production. Produces a fab.zip containing exactly
+  three entries: `bom.csv`, `pos.csv`, `gerbers.zip` (the discovered
+  gerber pack, renamed to the normalized name regardless of source
+  filename). Returns `ExportResult(skipped=True)` when `production/`
+  is missing/empty, BOM or POS files are absent, or gerber-zip
+  discovery is ambiguous. Emits a `production_stale` warning when
+  production files are older than the PCB. Atomic via sibling-
+  tempfile + `os.replace`; optional ChangeJournal injection.
 
 ### Added - issue #1 (Phase 6 foundation)
 
