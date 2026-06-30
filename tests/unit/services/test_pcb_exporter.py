@@ -177,6 +177,43 @@ def test_export_render_registers_with_change_journal(
         assert output in set(journal.all_paths())
 
 
+def test_export_render_journals_as_modify_when_output_exists(
+    kicad_cli: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKER 3 regression: pre-existing output must register as modify.
+
+    When re-publishing a project whose previous version was already
+    committed to the site repo, the producer overwrites an existing
+    asset.  ChangeJournal must therefore record the path as a
+    ``will_modify`` so a mid-pipeline rollback restores the prior
+    committed bytes via ``git checkout``.  Pre-fix the producer
+    unconditionally registered every output as ``will_create``, so
+    rollback unlinked an already-published asset — violating ADR 0005
+    § "modified files are restored to the pre-kproj state".
+    """
+    fake_run, _ = _make_fake_run()
+    monkeypatch.setattr(pcb_exporter_module, "subprocess_run", fake_run)
+
+    site_repo = tmp_path / "site"
+    site_repo.mkdir()
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    # Pre-existing committed asset on disk.
+    output = site_repo / "versions" / "demo" / "1.0" / "demo-1.0.top.png"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"previously-committed-bytes")
+
+    with ChangeJournal(site_repo) as journal:
+        PcbExporter(kicad_cli=kicad_cli).export_render(pcb, "top", output, journal=journal)
+        modified = list(journal._modified)
+        created = list(journal._created)
+    assert output in modified, (
+        f"output existed before write but was journaled as create, not modify. "
+        f"created={created}, modified={modified}"
+    )
+    assert output not in created
+
+
 def test_export_render_rolls_back_when_journal_raises(
     kicad_cli: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

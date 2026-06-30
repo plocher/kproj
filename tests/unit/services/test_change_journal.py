@@ -210,3 +210,24 @@ def test_change_journal_all_paths_deduplicates(site_repo: Path) -> None:
         journal.will_create(target)
         journal.will_modify(target)  # idempotent / overrides nothing
         assert list(journal.all_paths()) == [target]
+
+
+def test_register_output_dispatches_create_when_path_absent(site_repo: Path) -> None:
+    """BLOCKER 3 helper: a path that does not exist registers as create."""
+    target = site_repo / "_versions" / "demo" / "1.0B.md"
+    with ChangeJournal(site_repo) as journal:
+        journal.register_output(target)
+
+        assert target in journal._created  # type: ignore[attr-defined]
+        assert target not in journal._modified  # type: ignore[attr-defined]
+
+
+def test_register_output_dispatches_modify_when_path_exists(site_repo: Path) -> None:
+    """BLOCKER 3 helper: a pre-existing path registers as modify."""
+    target = site_repo / "_versions" / "demo" / "1.0B.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("existing content")
+    with ChangeJournal(site_repo) as journal:
+        journal.register_output(target)
+        assert target in journal._modified  # type: ignore[attr-defined]
+        assert target not in journal._created  # type: ignore[attr-defined]
