@@ -128,6 +128,28 @@ versioning per [SemVer](https://semver.org).
   UI surfaces missing libraries on project open - so no per-archive
   manifest is needed. PRD Story 17 + DESIGN § SourcePackager +
   `docs/phase4-resolutions.md` M7 row updated to match.
+- Restore the library-enumeration logic that was over-rolled-back
+  with the SOURCE_README drop, and extend it with per-entry
+  classification per user feedback during PR#9 amendment.  New
+  `src/kproj/model/library_ref.py` introduces `LibraryRef(name,
+  source)` (frozen, orderable) where `source` is
+  `Literal["internal", "external", "ambiguous"]`.  New utility
+  `src/kproj/common/kicad_libraries.py::enumerate_libraries(
+  project_dir) -> tuple[LibraryRef, ...]` scans `fp-lib-table` +
+  `sym-lib-table` + every `(lib_id "lib:name")` / `(footprint
+  "lib:name")` reference in `.kicad_sch` / `.kicad_pcb` /
+  `.kicad_sym` files; classifies each library as `internal`
+  (`${KIPRJMOD}` URI that does not escape), `external` (any other
+  URI), or `ambiguous` (referenced but no lib-table entry).
+  Lib-table entries win over bare lib_id refs for the same name.
+  Output is stable-sorted by `(name, source)` and reproducible.
+  New `Publication.libraries: tuple[LibraryRef, ...]` field carries
+  the result; `PublishWorkflow.build_publication(resolved,
+  project_info, analysis_info)` (DESIGN step 8) populates it today.
+  `SitePublisher` rendering of the field is tracked by kproj#4.
+  PRD Story 17 + DESIGN § Library enumeration +
+  `docs/phase4-resolutions.md` M7 second follow-up capture the
+  design.
 
 ### Design decisions (Wave 2 architect-review carry-forwards)
 

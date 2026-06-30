@@ -246,6 +246,8 @@ AND I can unzip the archive and open `<Project>.kicad_pro` in KiCad 9 with the s
 
 *Scope*: the source archive captures **project artifacts**, not the larger KiCad-install context (libraries, plugins, etc.). KiCad 6.0+ embeds all symbols and footprints used in the design inside the project's `.kicad_sch` and `.kicad_pcb` files, so the archive is sufficient for opening + viewing + editing + generating manufacturing files. When a referenced external library is genuinely missing on the consumer's machine, KiCad's own UI surfaces the gap on open; v1 does not vendor a manifest file describing it.
 
+*Companion info on the version page* (separate from the source archive): the project's version page surfaces the list of libraries the project references, sourced from a per-project scan of `fp-lib-table` + `sym-lib-table` + `*.kicad_sch` / `*.kicad_pcb` `(lib_id ...)` references. Each entry carries a classification - `internal` (bundled inside the source archive), `external` (consumer needs to install separately), `ambiguous` (referenced in the design but not declared in a lib-table). The rendering itself is layered by kproj#4; the v1 data layer (`Publication.libraries`) is populated by the publish workflow today.
+
 #### Story 18 — Inspect the BOM interactively
 *As a project consumer planning a build, I want to view the interactive HTML BOM, so that I can plan component sourcing without unzipping anything.*
 

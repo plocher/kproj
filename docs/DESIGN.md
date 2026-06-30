@@ -440,6 +440,24 @@ class SourcePackager:
 
 **Exclude**: `*.kicad_prl`, `*-bak`, `*~`, `_autosave-*.kicad_*`, `*.kicad_lock`, `production/`, `gerbers/`, `bom/`, `*.ibom.html`, `*.step`, `*.svg`, `thumbnail.png`, render PNGs, `.git/`, `.github/`, `.vscode/`, `.idea/`, `.DS_Store`, `dist/`, `build/`, `node_modules/`, `venv/`, `__pycache__/`, `*.pyc`, `release.yaml`.
 
+### Library enumeration
+
+The per-project library list moved out of `SourcePackager` (and out of the source.zip) when the `SOURCE_README.md` manifest was dropped, but the *enumeration data* remains a v1 deliverable: the project's version page surfaces "this project uses the following libraries: ..." sourced from a per-project scan. The data layer is wired today; the rendering layer lands with kproj#4.
+
+Each enumerated library is tagged with a `LibrarySource` discriminator so the version page can render the three buckets distinctly:
+
+- `internal` - the library ships inside the source.zip via the include rules (lib-table entry with `${KIPRJMOD}` URI that does not contain a `..` escaping the project root). Informational for the consumer: "this is in your download."
+- `external` - the library lives outside the project (absolute paths, `${KISYSMOD}`-prefixed, URLs, or `${KIPRJMOD}/../...` URIs that escape the project root). Actionable for the consumer: "clone or install this before all references resolve."
+- `ambiguous` - the library is referenced by a `(lib_id "lib:name")` or `(footprint "lib:name")` somewhere in the design but has no matching `fp-lib-table` / `sym-lib-table` entry, so we cannot authoritatively classify it. Surfaced as a third bucket (not silently collapsed into `external`) because the information is real - the site can render it as a distinct callout to warn the consumer that something the design references isn't declared anywhere.
+
+Classification precedence: a `fp-lib-table` / `sym-lib-table` entry wins over a bare `(lib_id ...)` reference for the same library name. A project that ships a lib-table entry for a lib and also references it from a schematic reports that lib once, with the lib-table's `source`.
+
+- **Utility**: `common.kicad_libraries.enumerate_libraries(project_dir) -> tuple[LibraryRef, ...]`. Scans `fp-lib-table` + `sym-lib-table` + every `.kicad_sch` / `.kicad_pcb` / `.kicad_sym` under `project_dir`. Returns a stable-sorted (by `(name, source)`) tuple. Reproducible for a given `project_dir`.
+- **Value object**: `model.library_ref.LibraryRef(name: str, source: LibrarySource)` - frozen, orderable.
+- **Field**: `Publication.libraries: tuple[LibraryRef, ...]` (frozen; defaults to `()`).
+- **Workflow**: `PublishWorkflow.build_publication(resolved, project_info, analysis_info)` calls the utility and threads the result onto the constructed `Publication`. This is DESIGN step 8.
+- **Rendering**: `SitePublisher` consumes `Publication.libraries` when emitting the version-page front-matter / body. Tracked by kproj#4 - not modified in this PR.
+
 ### `ZipArchiver`
 
 ```python path=null start=null

@@ -25,11 +25,14 @@ from ..common.kicad_install import (
     find_kicad_cli,
     kicad_version,
 )
+from ..common.kicad_libraries import enumerate_libraries
 from ..config import KprojConfig
 from ..model.analysis_info import AnalysisInfo
-from ..model.project_info import Status
+from ..model.project_info import ProjectInfo, Status
+from ..model.publication import AssetRef, Publication
 from ..model.publish_request import PublishRequest
 from ..model.publish_result import Outcome, PublishResult
+from ..model.resolved_project import ResolvedProject
 from ..services.design_analyzer import DesignAnalyzer
 from ..services.kicad_project_reader import (
     KicadProjectReader,
@@ -198,3 +201,49 @@ class PublishWorkflow:
                 )
             return config.kicad_cli
         return find_kicad_cli()
+
+    @staticmethod
+    def build_publication(
+        resolved: ResolvedProject,
+        project_info: ProjectInfo,
+        analysis_info: AnalysisInfo,
+        *,
+        body_md: str = "",
+        images: tuple[AssetRef, ...] = (),
+        artifacts: tuple[AssetRef, ...] = (),
+    ) -> Publication:
+        """Build the site-emission-ready :class:`Publication` for a project.
+
+        This is DESIGN step 8 (build Publication).  It calls
+        :func:`kproj.common.kicad_libraries.enumerate_libraries`
+        against ``resolved.project_dir`` and threads the resulting
+        ``tuple[LibraryRef, ...]`` (each entry tagged ``internal`` /
+        ``external`` / ``ambiguous``) onto
+        :attr:`Publication.libraries`.  The wave-3 worker (kproj#4)
+        consumes the field when wiring SitePublisher rendering; until
+        then the field is populated by this helper and validated by
+        unit tests.
+
+        Args:
+            resolved: The resolved project (provides ``project_dir`` for
+                the library scan).
+            project_info: Title-block + audit-ready facts about the
+                project.
+            analysis_info: Audit + DRC/ERC findings already merged.
+            body_md: Pre-rendered Markdown body (audit + DRC/ERC
+                tables).  Empty by default since rendering belongs to
+                kproj#4.
+            images: Optional pre-built image asset refs.
+            artifacts: Optional pre-built artifact asset refs.
+
+        Returns:
+            A populated :class:`Publication`.
+        """
+        return Publication(
+            project_info=project_info,
+            analysis_info=analysis_info,
+            body_md=body_md,
+            images=images,
+            artifacts=artifacts,
+            libraries=enumerate_libraries(resolved.project_dir),
+        )
