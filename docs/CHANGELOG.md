@@ -81,6 +81,17 @@ versioning per [SemVer](https://semver.org).
 - Contract tests against the local kicad-cli for `pcb render top` +
   `pcb render bottom` (PNG magic bytes) + `pcb export step`
   (`ISO-10303-21` header).
+- `services/schematic_exporter.py`: `SchematicExporter.export_svg(
+  root_only=True)` + `export_pdf(all_sheets=True)` per
+  `docs/DESIGN.md` § SchematicExporter. SVG uses a private temp
+  directory + `--pages 1` selector + discover-and-move pattern
+  (kicad-cli's SVG `--output` is OUTPUT_DIR per the locally-installed
+  build's help text). PDF is direct-file output through a sibling
+  tempfile (`--output` is OUTPUT_FILE in the same build). Adds a
+  `SchematicExportError` raised when kicad-cli emits zero or (in
+  `root_only=True` mode) multiple SVGs.
+- Contract tests against the local kicad-cli for `sch export svg`
+  (root-only, XML/SVG header) + `sch export pdf` (`%PDF-` header).
 
 ### Added - issue #1 (Phase 6 foundation)
 

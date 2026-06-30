@@ -21,7 +21,6 @@ from kproj.model.publication import Publication
 from kproj.services.change_journal import ChangeJournal
 from kproj.services.fab_packager import FabPackager
 from kproj.services.ibom_generator import IbomGenerator
-from kproj.services.schematic_exporter import SchematicExporter
 from kproj.services.site_publisher import SitePublisher
 from kproj.services.source_packager import SourcePackager
 from kproj.services.zip_archiver import ZipArchiver
@@ -40,15 +39,6 @@ def _project_info() -> ProjectInfo:
         overview="o",
         status=Status.ACTIVE,
     )
-
-
-def test_schematic_exporter_stub_raises(tmp_path: Path) -> None:
-    """``SchematicExporter`` methods are unimplemented in the foundation slice."""
-    exporter = SchematicExporter(kicad_cli=tmp_path / "kicad-cli")
-    with pytest.raises(NotImplementedError):
-        exporter.export_svg(tmp_path / "x.kicad_sch", tmp_path / "out.svg")
-    with pytest.raises(NotImplementedError):
-        exporter.export_pdf(tmp_path / "x.kicad_sch", tmp_path / "out.pdf")
 
 
 def test_ibom_generator_stub_raises(tmp_path: Path) -> None:
