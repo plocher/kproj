@@ -627,3 +627,78 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         f"artifact generator received board_rev={captured['board_rev']!r}; "
         "BLOCKER 1: must be the PCB-derived board_rev, not the project stem."
     )
+
+
+def test_schematic_export_error_converts_to_failed_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKER 5 regression: SchematicExportError → failed/exit 2.
+
+    The pre-fix workflow caught only ``SubprocessFailedError``,
+    ``SubprocessTimeoutError``, and ``OSError``.  A real output-shape
+    mismatch (zero SVGs or multiple root-only SVGs) raised
+    ``SchematicExportError`` which escaped as a Python traceback
+    instead of becoming ``PublishResult(outcome="failed",
+    exit_code=2)`` with a clean stderr message.
+    """
+    from kproj.services.schematic_exporter import SchematicExportError
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+
+    def _exploding_gen(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        _site_repo: Path,
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+        # Simulate the schematic-export shape-mismatch path: register
+        # one output then raise.  The workflow must convert this into
+        # outcome=failed/exit 2 rather than letting it propagate.
+        bogus_asset = _site_repo / "versions" / "demo" / "1.0" / "demo-1.0.sch.svg"
+        bogus_asset.parent.mkdir(parents=True, exist_ok=True)
+        journal.will_create(bogus_asset)
+        raise SchematicExportError(
+            "kicad-cli sch export svg produced no SVG files in the staging dir"
+        )
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        artifact_generator=_exploding_gen,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+
+    with patch("kproj.services.site_publisher._git_run"):
+        result = workflow.run(request)
+
+    assert result.outcome == "failed", (
+        f"BLOCKER 5: SchematicExportError must convert to outcome=failed; "
+        f"got {result.outcome!r}"
+    )
+    assert result.exit_code == 2
+    assert (
+        "svg" in result.message.lower() or "schematic" in result.message.lower()
+    ), f"expected schematic context in failure message; got {result.message!r}"

@@ -64,7 +64,7 @@ from ..services.kicad_project_reader import (
 )
 from ..services.metadata_analyzer import MetadataAnalyzer
 from ..services.pcb_exporter import PcbExporter
-from ..services.schematic_exporter import SchematicExporter
+from ..services.schematic_exporter import SchematicExporter, SchematicExportError
 from ..services.site_publisher import SitePublisher
 from ..services.source_packager import SourcePackager
 from ..services.zip_archiver import ZipArchiver
@@ -334,6 +334,28 @@ class PublishWorkflow:
                 # Step 11: ChangeJournal closed via context-manager __exit__
                 return result
 
+        except SchematicExportError as exc:
+            # BLOCKER 5: a schematic-export shape mismatch (zero SVGs,
+            # or multiple root-only SVGs) is a mechanical failure, not
+            # an audit finding.  ChangeJournal.__exit__ has already
+            # rolled back any files produced by earlier steps within
+            # the `with` block above; convert the exception into
+            # outcome=failed/exit 2 with a stderr-ready message.
+            return PublishResult.build(
+                "failed",
+                message=f"kproj: schematic export failed: {exc}",
+                findings=analysis.findings,
+            )
+        except FileNotFoundError as exc:
+            # IbomGenerator raises FileNotFoundError when iBOM exits 0
+            # but produces no HTML.  Treat the same as the other
+            # mechanical-failure shapes so callers get exit 2 with a
+            # tidy stderr message rather than a traceback.
+            return PublishResult.build(
+                "failed",
+                message=f"kproj: artifact generation failed: {exc}",
+                findings=analysis.findings,
+            )
         except (SubprocessFailedError, SubprocessTimeoutError, OSError) as exc:
             return PublishResult.build(
                 "failed",
