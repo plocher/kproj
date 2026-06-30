@@ -65,19 +65,36 @@ versioning per [SemVer](https://semver.org).
 - `tests/features/private_status.feature` + steps: PRD Story 7
   (private-skip) Behave scenario.
 
+### Added - issue #3 (Phase 6 wave-3: producer services)
+
+- `services/pcb_exporter.py`: `PcbExporter.export_render(side)` +
+  `export_step()` per `docs/DESIGN.md` section PcbExporter. Atomic via
+  sibling-tempfile + `os.replace`; optional `ChangeJournal` injection
+  registers the artifact for ADR-0005 rollback before kicad-cli runs.
+  Argv: `<kicad_cli> pcb render --side {top|bottom} --output <file>
+  <pcb>` and `<kicad_cli> pcb export step --force --output <file>
+  <pcb>` (the `--force` is needed by KiCad 9/10 to overwrite the
+  staging tempfile path).
+- `tests/fixtures/minimal/minimal.kicad_{sch,pcb}`: tiny hand-written
+  v8+ KiCad files for contract-test bootstrap (one rectangle on
+  Edge.Cuts, empty schematic).
+- Contract tests against the local kicad-cli for `pcb render top` +
+  `pcb render bottom` (PNG magic bytes) + `pcb export step`
+  (`ISO-10303-21` header).
+
 ### Added - issue #1 (Phase 6 foundation)
 
 - Walking-skeleton package layout under `src/kproj/` matching
-  `docs/DESIGN.md` § Source layout — `model/`, `services/`, `common/`,
+  `docs/DESIGN.md` section Source layout - `model/`, `services/`, `common/`,
   `application/`, `formatters/`.
 - Frozen domain dataclasses: `Severity`, `Finding`, `ProjectInfo`,
   `AnalysisInfo`, `Publication`, `ResolvedProject`, `ExportResult`.
 - Configuration layer: `ConfigOverrides`, `KprojConfig`,
   `load_config()` with precedence CLI flag > env > `~/.kproj.yaml` >
-  default per `docs/DESIGN.md` § Configuration layer.
+  default per `docs/DESIGN.md` section Configuration layer.
 - CLI surface: `kproj [<project-or-dir-or-file>] [--site-repo PATH] [--dry-run] [--no-push] [-v] [-d]`
   with argparse confined to `cli.py` (ADR 0006) and exit-code mapping
-  0 / 1 / 2 per § Exit code mapping.
+  0 / 1 / 2 per section Exit code mapping.
 - `common/kicad_install.py` per ADR 0009: `find_kicad_cli`,
   `find_plugins_dir`, `find_ibom_script`, `kicad_version` with
   per-platform probes (macOS / Linux / Windows) plus env + PATH fallback.

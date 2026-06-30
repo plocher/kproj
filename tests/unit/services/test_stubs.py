@@ -2,10 +2,11 @@
 
 Wave-2 retires the ``MetadataAnalyzer`` / ``DesignAnalyzer`` /
 ``KicadProjectReader`` stub assertions - those services are
-implemented now and have their own test modules.  The exporters,
-packagers, iBOM generator, and site publisher remain wave-1 stubs
-until wave-3 wires them in; their NotImplementedError contract is
-still pinned here.
+implemented now and have their own test modules.  Wave-3 (this
+slice) retires the ``PcbExporter`` stub.  The remaining services
+(schematic exporter, iBOM generator, fab + source packagers, site
+publisher) stay wave-1 stubs until later slices wire them in;
+their NotImplementedError contract is still pinned here.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from kproj.model.publication import Publication
 from kproj.services.change_journal import ChangeJournal
 from kproj.services.fab_packager import FabPackager
 from kproj.services.ibom_generator import IbomGenerator
-from kproj.services.pcb_exporter import PcbExporter
 from kproj.services.schematic_exporter import SchematicExporter
 from kproj.services.site_publisher import SitePublisher
 from kproj.services.source_packager import SourcePackager
@@ -40,15 +40,6 @@ def _project_info() -> ProjectInfo:
         overview="o",
         status=Status.ACTIVE,
     )
-
-
-def test_pcb_exporter_stub_raises(tmp_path: Path) -> None:
-    """``PcbExporter`` methods are unimplemented in the foundation slice."""
-    exporter = PcbExporter(kicad_cli=tmp_path / "kicad-cli")
-    with pytest.raises(NotImplementedError):
-        exporter.export_render(tmp_path / "x.kicad_pcb", "top", tmp_path / "out.png")
-    with pytest.raises(NotImplementedError):
-        exporter.export_step(tmp_path / "x.kicad_pcb", tmp_path / "out.step")
 
 
 def test_schematic_exporter_stub_raises(tmp_path: Path) -> None:
