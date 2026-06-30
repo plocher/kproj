@@ -19,10 +19,21 @@ classifiers = [
 ]
 dependencies = [
     "PyYAML>=6.0",
+    # jBOM is consumed as a library-only dependency per ADR 0003.  v7.3.0
+    # added the title-block ``comments`` mapping + ``ResolvedPcbProject``
+    # ``text_variables`` that kproj's KicadProjectReader.read thin-wraps;
+    # bumping the pin below 7.3.0 will break the read pipeline.
+    "jbom>=7.3.0",
     # Phase 6 will add additional runtime deps as the implementation lands:
-    #   "jbom" (for jbom.application.pcb_project_loader + parsing services)
     #   "Pillow" (for thumbnail crop, if PNG-render approach wins over SVG-outline)
 ]
+
+[tool.uv.sources]
+# Local editable path during development — jBOM is the sibling repo on the
+# user's machine.  Released kproj wheels will resolve ``jbom`` from PyPI once
+# both projects publish there; until then the path source pins us to the
+# checked-out tree.
+jbom = { path = "../jBOM", editable = true }
 
 [project.optional-dependencies]
 dev = [
@@ -92,3 +103,11 @@ show_error_codes = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+# jBOM does not publish a ``py.typed`` marker; its types resolve to ``Any``.
+# This is acceptable for v1: kproj's KicadProjectReader is the only consumer
+# and wraps every jBOM call in a kproj-owned dataclass.  Re-evaluate when
+# jBOM ships type stubs.
+module = "jbom.*"
+ignore_missing_imports = true

@@ -4,7 +4,7 @@ Per ``docs/GLOSSARY.md`` § *Publication*, this is the bundle ready for
 site emission. It carries the project metadata, audit findings, asset
 references, and pre-rendered Markdown body that ``SitePublisher`` consumes.
 
-The dataclass is pure data — no I/O, no Jekyll-specific YAML rendering
+The dataclass is pure data - no I/O, no Jekyll-specific YAML rendering
 (that lives inside ``SitePublisher``).
 """
 

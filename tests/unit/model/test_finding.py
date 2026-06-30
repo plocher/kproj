@@ -23,7 +23,7 @@ def _sample_finding(**overrides: object) -> Finding:
 
 
 def test_finding_is_frozen() -> None:
-    """``Finding`` must be a frozen dataclass — assignment fails."""
+    """``Finding`` must be a frozen dataclass - assignment fails."""
     finding = _sample_finding()
     with pytest.raises(dataclasses.FrozenInstanceError):
         finding.field = "tag"  # type: ignore[misc]

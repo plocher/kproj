@@ -1,21 +1,18 @@
 """Stub :class:`SitePublisher` (docs/DESIGN.md § SitePublisher).
 
-The ``publish`` method's declared return type is
-:class:`kproj.application.publish_workflow.PublishResult`; the import
-is done lazily under ``TYPE_CHECKING`` to avoid a circular import
-(``application`` imports from ``services`` for the project reader).
+The ``PublishResult`` return type lives in :mod:`kproj.model.publish_result`
+so this service can import it directly without the circular dependency
+that existed when the dataclass lived in ``application/``.  See the
+wave-2 carry-forward note in ``docs/CHANGELOG.md``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ..model.publication import Publication
+from ..model.publish_result import PublishResult
 from .change_journal import ChangeJournal
-
-if TYPE_CHECKING:
-    from ..application.publish_workflow import PublishResult
 
 
 class SitePublisher:

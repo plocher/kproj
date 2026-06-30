@@ -13,6 +13,9 @@ from .export_result import ExportResult
 from .finding import Finding
 from .project_info import ProjectInfo, Status
 from .publication import AssetRef, Publication
+from .publish_request import PublishRequest
+from .publish_result import Outcome, PublishResult, compute_exit_code
+from .raw_title_block import RawTitleBlock
 from .resolved_project import ResolvedProject
 from .severity import Severity
 
@@ -21,9 +24,14 @@ __all__ = [
     "AssetRef",
     "ExportResult",
     "Finding",
+    "Outcome",
     "ProjectInfo",
     "Publication",
+    "PublishRequest",
+    "PublishResult",
+    "RawTitleBlock",
     "ResolvedProject",
     "Severity",
     "Status",
+    "compute_exit_code",
 ]

@@ -21,13 +21,10 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .application.publish_workflow import (
-    PublishRequest,
-    PublishResult,
-    PublishWorkflow,
-)
+from .application.publish_workflow import PublishWorkflow
 from .config import ConfigOverrides, load_config
-from .model.severity import Severity
+from .model.publish_request import PublishRequest
+from .model.publish_result import PublishResult, compute_exit_code
 
 _DEFAULT_YAML_FILENAME = ".kproj.yaml"
 
@@ -113,7 +110,7 @@ def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
 
     Returns:
         A :class:`ConfigOverrides` with ``None`` for any flag the user
-        did not explicitly pass — preserving the precedence semantics
+        did not explicitly pass - preserving the precedence semantics
         in :func:`kproj.config.load_config`.
     """
     return ConfigOverrides(
@@ -153,34 +150,25 @@ def build_request(
     )
 
 
-_TERMINAL_SUCCESS_OUTCOMES = {"published", "refreshed", "noop", "private-skip"}
-
-
 def resolve_exit_code(result: PublishResult) -> int:
-    """Map a :class:`PublishResult` to a process exit code.
+    """Return the process exit code for *result*.
 
-    Implements ``docs/DESIGN.md`` § *Exit code mapping*:
-
-    - ``0`` — terminal-success outcome AND no error/warning findings.
-    - ``1`` — terminal-success outcome AND at least one error/warning
-      finding (exclusions do not count).
-    - ``2`` — ``outcome == "failed"``.
+    Wave-2 carry-forward: the workflow now populates
+    :attr:`PublishResult.exit_code` authoritatively via
+    :func:`kproj.model.publish_result.compute_exit_code`, so this
+    function is effectively a single-line re-derivation.  It is kept
+    as a stable seam so the CLI surface evolves independently of how
+    the workflow constructs its result - if a future refactor stops
+    populating ``exit_code`` for any reason, the CLI still maps
+    correctly via :func:`compute_exit_code`.
 
     Args:
         result: The :class:`PublishResult` returned by the workflow.
 
     Returns:
-        The integer exit code.
+        The integer exit code per ``docs/DESIGN.md`` § *Exit code mapping*.
     """
-    if result.outcome == "failed":
-        return 2
-    if result.outcome in _TERMINAL_SUCCESS_OUTCOMES:
-        has_findings = any(
-            f.severity in {Severity.ERROR, Severity.WARNING} for f in result.findings
-        )
-        return 1 if has_findings else 0
-    # Unknown outcome: treat as mechanical failure (defensive default).
-    return 2
+    return compute_exit_code(result.outcome, result.findings)
 
 
 def _default_yaml_path() -> Path:
