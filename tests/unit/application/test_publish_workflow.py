@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -16,9 +17,13 @@ from kproj.application import publish_workflow as workflow_module
 from kproj.application.publish_workflow import PublishWorkflow
 from kproj.common.kicad_install import KicadNotFoundError
 from kproj.config import KprojConfig
+from kproj.model.analysis_info import AnalysisInfo
+from kproj.model.publication import AssetRef
 from kproj.model.publish_request import PublishRequest
 from kproj.model.publish_result import PublishResult
+from kproj.services.change_journal import ChangeJournal
 from kproj.services.kicad_project_reader import KicadProjectReader
+from kproj.services.site_publisher import SitePublisher
 
 _TESTS_ROOT = Path(__file__).resolve().parents[2]
 if str(_TESTS_ROOT) not in sys.path:
@@ -186,13 +191,14 @@ def test_private_project_short_circuits_with_private_skip(
     assert "kicad-cli 9.0.4" in err
 
 
-def test_active_project_reaches_walking_skeleton_boundary(
+def test_active_project_fails_preflight_without_ibom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An active project surfaces ``outcome=failed`` past step 4 (steps 5+ not impl).
+    """An active project with missing iBOM plugin fails at step 5a pre-flight.
 
-    The ``failed`` here documents the wave-2 walking-skeleton boundary,
-    NOT a mechanical failure - wave-3 wires the remaining steps.
+    Wave-4 (kproj#4) wires steps 5-11.  Without the iBOM plugin installed
+    the pipeline fails at step 5a (iBOM pre-flight) and returns
+    ``outcome="failed"``, ``exit_code=2``.
     """
     proj_dir = make_minimal_project(
         tmp_path / "demo",
@@ -212,13 +218,22 @@ def test_active_project_reaches_walking_skeleton_boundary(
     fake_cli = tmp_path / "kicad-cli"
     fake_cli.write_text("")
     _stub_kicad_version(monkeypatch, (9, 0, 4))
-    workflow = _workflow(tmp_path)
+
+    # Patch ibom script locator to raise KicadNotFoundError.
+    from kproj.common.kicad_install import KicadNotFoundError
+
+    def _no_ibom() -> Path:
+        raise KicadNotFoundError("iBOM plugin not installed")
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_no_ibom,
+    )
     result = workflow.run(_make_request(str(proj_dir), fake_cli))
     assert result.outcome == "failed"
-    assert "walking-skeleton" in result.message or "not yet implemented" in result.message
-    # exit_code == 2 because outcome is "failed" - that's mechanical-failure
-    # signal until wave-3 finishes the rest of the pipeline.
     assert result.exit_code == 2
+    assert "iBOM" in result.message or "ibom" in result.message.lower()
 
 
 def test_workflow_threads_findings_into_result(
@@ -301,3 +316,224 @@ def test_result_is_instance_of_publish_result(
     workflow = _workflow(tmp_path)
     result = workflow.run(_make_request(str(tmp_path / "absent"), fake_cli))
     assert isinstance(result, PublishResult)
+
+
+# ----- full-pipeline helpers (steps 5-11) -----
+
+
+def _stub_ibom_locator(fake_script: Path) -> object:
+    """Return an iBOM locator that returns *fake_script* without probing."""
+    return lambda: fake_script
+
+
+def _stub_artifact_generator(
+    site_repo: Path,
+) -> object:
+    """Return an artifact generator that writes placeholder files."""
+
+    def _gen(
+        resolved: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        _site_repo: Path,
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+        from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
+        # resolved is a ResolvedProject; grab basename
+        basename = getattr(resolved, "basename", "demo")
+        R = "1.0"
+        PR = f"{basename}-{R}"
+        base_site = f"/versions/{basename}/{R}"
+        asset_dir = _site_repo / "versions" / basename / R
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        # Write placeholder files so detect_outcome's asset check passes.
+        for filename in [
+            f"{PR}.top.png", f"{PR}.bottom.png", f"{PR}.sch.svg",
+            f"{PR}.sch.pdf", f"{PR}.ibom.html", f"{PR}.step", f"{PR}.source.zip",
+        ]:
+            f = asset_dir / filename
+            f.write_bytes(b"placeholder")
+            journal.will_create(f)
+        images: tuple[AssetRef, ...] = (
+            AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),
+            AssetRef(path=f"{base_site}/{PR}.bottom.png", tag="render-bottom", title="Bottom"),
+            AssetRef(path=f"{base_site}/{PR}.sch.svg", tag="schematic-svg", title="Schematic"),
+        )
+        artifacts: tuple[AssetRef, ...] = (
+            AssetRef(path=f"{base_site}/{PR}.sch.pdf", tag="schematic-pdf",
+                     post="Full schematic (all sheets)"),
+            AssetRef(path=f"{base_site}/{PR}.ibom.html", tag="interactive-bom",
+                     post="Interactive HTML BOM"),
+            AssetRef(path=f"{base_site}/{PR}.step", tag="step-model", post="3D STEP model"),
+            AssetRef(path=f"{base_site}/{PR}.source.zip", tag="source-archive",
+                     post="KiCad source archive"),
+        )
+        return images, artifacts
+
+    return _gen
+
+
+def _stub_site_publisher_factory(
+    site_repo: Path,
+) -> object:
+    """Return a SitePublisher factory that patches _git_run to a no-op."""
+
+    def _factory(journal: ChangeJournal) -> SitePublisher:
+        return SitePublisher(journal)
+
+    return _factory
+
+
+def _full_pipeline_workflow(
+    tmp_path: Path,
+    site_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> PublishWorkflow:
+    """Build a workflow with all external side-effects stubbed out."""
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+    return PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        artifact_generator=_stub_artifact_generator(site_repo),
+        site_publisher_factory=_stub_site_publisher_factory(site_repo),
+    )
+
+
+def _make_site_repo(tmp_path: Path, *, name: str = "site") -> Path:
+    """Initialise a bare git repo as a fixture site repo."""
+    import os
+
+    site = tmp_path / name
+    site.mkdir()
+    os.system(f"git -C '{site}' init -q")
+    os.system(f"git -C '{site}' config user.email 'test@test.com'")
+    os.system(f"git -C '{site}' config user.name 'Test'")
+    return site
+
+
+def _make_full_request(
+    project_arg: str,
+    kicad_cli: Path,
+    site_repo: Path,
+    *,
+    dry_run: bool = False,
+    no_push: bool = True,
+) -> PublishRequest:
+    config = KprojConfig(
+        site_repo=site_repo,
+        no_push=no_push,
+        kicad_cli=kicad_cli,
+    )
+    return PublishRequest(
+        project_arg=project_arg,
+        config=config,
+        dry_run=dry_run,
+    )
+
+
+# ----- full-pipeline tests -----
+
+
+def test_active_project_publishes_successfully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An active project with all services stubbed returns outcome='published'."""
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            company="MRCS",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+
+    with patch("kproj.services.site_publisher._git_run"):
+        result = workflow.run(request)
+
+    assert result.outcome in ("published", "refreshed", "noop")
+    assert result.exit_code in (0, 1)  # may have warnings
+
+
+def test_dry_run_does_not_write_site_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """dry_run=True skips artifact generation and site writes."""
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site, dry_run=True)
+
+    with patch("kproj.services.site_publisher._git_run"):
+        result = workflow.run(request)
+
+    # No version file should be written
+    version_files = list((site / "_versions").rglob("*.md")) if (site / "_versions").exists() else []
+    assert not version_files, f"dry-run wrote files: {version_files}"
+    assert result.outcome in ("published", "refreshed", "noop")
+
+
+def test_site_repo_dirty_fails_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dirty site repo (uncommitted changes) fails at step 5b."""
+    site = _make_site_repo(tmp_path)
+    # Create an uncommitted file in the site repo
+    (site / "dirty.md").write_text("uncommitted")
+
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+    result = workflow.run(request)
+    assert result.outcome == "failed"
+    assert result.exit_code == 2
+    assert "uncommitted" in result.message or "dirty" in result.message.lower() or "changes" in result.message
