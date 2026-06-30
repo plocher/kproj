@@ -15,12 +15,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from .raw_title_block import RawTitleBlock
+
 
 class Status(Enum):
     """A release's lifecycle attribute (closed taxonomy).
 
     Sourced from ``${COMMENT9}`` per ``docs/GLOSSARY.md`` § *status*.
-    ``REPLACED_BY`` is parameterised — the actual target directory name
+    ``REPLACED_BY`` is parameterised - the actual target directory name
     lives in :attr:`ProjectInfo.replaced_by_target`.
     """
 
@@ -59,6 +61,8 @@ class ProjectInfo:
         replaced_by_target: When ``status == REPLACED_BY``, the
             successor project directory name; ``None`` otherwise.
         tags: Tag set kproj will emit into front-matter ``tags:``.
+        raw_sch: Raw schematic title-block snapshot (audit input).
+        raw_pcb: Raw PCB title-block snapshot (audit input).
     """
 
     project: str
@@ -75,3 +79,5 @@ class ProjectInfo:
     fab_date: str = ""
     replaced_by_target: str | None = None
     tags: tuple[str, ...] = field(default_factory=tuple)
+    raw_sch: RawTitleBlock = field(default_factory=RawTitleBlock)
+    raw_pcb: RawTitleBlock = field(default_factory=RawTitleBlock)
