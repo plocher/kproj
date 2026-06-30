@@ -206,7 +206,7 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - SchematicExporter.export_pdf(all_sheets=True)
    - IbomGenerator.generate()                          # ADR 0008: direct script invocation via ibom_script
    - FabPackager.package(resolved.project_dir / "production")
-   - SourcePackager.package(resolved.project_dir)      # writes source.zip + SOURCE_README.md inside it
+   - SourcePackager.package(resolved.project_dir)      # writes source.zip (project artifacts only)
    - Thumbnail recipe (Phase 6 deepening)
 9. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
 10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run)
@@ -425,81 +425,38 @@ class FabPackager:
 
 The v1 source archive captures the **project artifacts** — the non-derived KiCad files for the project itself. It does NOT vendor external libraries (the SPCoast shared library, KiCad's bundled standard libraries, vendor-specific symbol/footprint sets); those are KiCad-install context, not project context.
 
-**This is sufficient for opening + editing the project.** KiCad 6.0+ embeds all schematic symbols and PCB footprints used in the design directly inside the `.kicad_sch` and `.kicad_pcb` files. A consumer who unzips the archive and opens `<Project>.kicad_pro` in KiCad 9 will see the schematic and the board render correctly without needing to install any external libraries.
-
-The known limits of opening someone else's project this way:
-
-- **3D viewer shows the bare PCB.** KiCad links 3D models by absolute filesystem path, not by embedding; without the source 3D library on disk, the 3D viewer renders the board without component shapes. The PCB itself is unaffected.
-- **Library updates do not work.** Tools like "Update Symbols from Library" require the source libraries to pull from; the consumer has the embedded copies, not the originals.
-- **Reusing parts in other projects is awkward.** Pulling a custom symbol out of this project into a new design requires the source library, not just the embedded copy.
-
-`SourcePackager` emits a `SOURCE_README.md` into the zip that documents these limits and lists the external libraries the project references (for users who want full library access).
+This is sufficient for opening + editing the project: KiCad 6.0+ embeds all schematic symbols and PCB footprints used in the design directly inside the `.kicad_sch` and `.kicad_pcb` files, so a consumer who unzips the archive and opens `<Project>.kicad_pro` will see the schematic and the board render correctly without needing to install any external libraries. When a referenced library is genuinely missing on the consumer's machine KiCad's own UI surfaces the gap on open; v1 does not vendor a manifest file describing it.
 
 ```python path=null start=null
 class SourcePackager:
     def __init__(self, zip_archiver: ZipArchiver) -> None: ...
     def package(self, project_dir: Path, output: Path) -> ExportResult:
-        """Walk project_dir, collect non-derived KiCad files per the include/exclude rules.
-        Scan fp-lib-table + sym-lib-table + *.kicad_pcb library refs + *.kicad_sch library
-        refs to enumerate external libraries the project depends on.
-        Write a SOURCE_README.md to a journal-staging temp path listing those dependencies.
-        Assemble project files + SOURCE_README.md into output via ZipArchiver.
-        Returns ExportResult with diagnostics for: any missing referenced library (warn),
-        any library outside project_dir (info, expected for external libs)."""
+        """Walk project_dir per include/exclude rules and assemble project
+        files into output via ZipArchiver.
+        Returns ExportResult with path=output and command=None."""
 ```
 
-**Include**: `*.kicad_pro`, `*.kicad_sch`, `*.kicad_pcb`, `*.kicad_sym`, `*.pretty/**/*.kicad_mod`, `*.kicad_dru`, `*.kicad_wks`, `fp-lib-table`, `sym-lib-table`, `README.md`, `LICENSE` (any extension), `CHANGELOG.md`. Plus the kproj-generated `SOURCE_README.md`.
+**Include**: `*.kicad_pro`, `*.kicad_sch`, `*.kicad_pcb`, `*.kicad_sym`, `*.pretty/**/*.kicad_mod`, `*.kicad_dru`, `*.kicad_wks`, `fp-lib-table`, `sym-lib-table`, `README.md`, `LICENSE` (any extension), `CHANGELOG.md`.
 
 **Exclude**: `*.kicad_prl`, `*-bak`, `*~`, `_autosave-*.kicad_*`, `*.kicad_lock`, `production/`, `gerbers/`, `bom/`, `*.ibom.html`, `*.step`, `*.svg`, `thumbnail.png`, render PNGs, `.git/`, `.github/`, `.vscode/`, `.idea/`, `.DS_Store`, `dist/`, `build/`, `node_modules/`, `venv/`, `__pycache__/`, `*.pyc`, `release.yaml`.
 
-**`SOURCE_README.md` shape** (auto-generated; bytewise stable across runs for the same input):
+### Library enumeration
 
-```markdown path=null start=null
-# <Project> source archive
+The per-project library list moved out of `SourcePackager` (and out of the source.zip) when the `SOURCE_README.md` manifest was dropped, but the *enumeration data* remains a v1 deliverable: the project's version page surfaces "this project uses the following libraries: ..." sourced from a per-project scan. The data layer is wired today; the rendering layer lands with kproj#4.
 
-This archive contains the non-derived KiCad source files for `<Project>` `<board_rev>`,
-generated by kproj on `<YYYY.MM>`.
+Each enumerated library is tagged with a `LibrarySource` discriminator so the version page can render the three buckets distinctly:
 
-## Opening this archive
+- `internal` - the library ships inside the source.zip via the include rules (lib-table entry with `${KIPRJMOD}` URI that does not contain a `..` escaping the project root). Informational for the consumer: "this is in your download."
+- `external` - the library lives outside the project (absolute paths, `${KISYSMOD}`-prefixed, URLs, or `${KIPRJMOD}/../...` URIs that escape the project root). Actionable for the consumer: "clone or install this before all references resolve."
+- `ambiguous` - the library is referenced by a `(lib_id "lib:name")` or `(footprint "lib:name")` somewhere in the design but has no matching `fp-lib-table` / `sym-lib-table` entry, so we cannot authoritatively classify it. Surfaced as a third bucket (not silently collapsed into `external`) because the information is real - the site can render it as a distinct callout to warn the consumer that something the design references isn't declared anywhere.
 
-1. Install KiCad 9.x (https://www.kicad.org/download/).
-2. Unzip this archive.
-3. Open `<Project>.kicad_pro` in KiCad.
+Classification precedence: a `fp-lib-table` / `sym-lib-table` entry wins over a bare `(lib_id ...)` reference for the same library name. A project that ships a lib-table entry for a lib and also references it from a schematic reports that lib once, with the lib-table's `source`.
 
-The schematic and PCB will load correctly without needing the original
-libraries because KiCad 6.0+ embeds all symbols and footprints used in the
-design inside the project files. You can view, edit, and generate
-manufacturing files immediately.
-
-## Known limits without the original libraries
-
-- **3D viewer shows bare PCB.** KiCad links 3D models by absolute path,
-  not by embedding. Without the source 3D library on disk, the 3D viewer
-  renders the board without component shapes. The 2D PCB view and
-  fabrication output are unaffected.
-- **"Update Symbols from Library" does not work.** That action requires
-  the source libraries; you have the embedded copies, not the originals.
-- **Reusing components in other projects is awkward.** Pulling a custom
-  symbol out of this project into a new design requires the source
-  library, not just the embedded copy.
-
-## External library references (for users who want full access)
-
-The following libraries are referenced by `fp-lib-table` / `sym-lib-table`
-or by project files. Installing them is optional for opening this project;
-required only if you want full library functionality (updates, parts reuse,
-3D models).
-
-- `SPCoast_KiCad_Library` (https://github.com/plocher/SPCoast_KiCad_Library) — shared SPCoast symbols + footprints + 3D models
-- `<library_name>` — <reference resolved from lib-table or KiCad bundled set>
-- ...
-```
-
-The external-library list is built by:
-
-1. Parsing the project's `fp-lib-table` and `sym-lib-table` for `(lib (name ...) (uri ...))` entries whose URIs resolve outside `project_dir`.
-2. Scanning `*.kicad_pcb` and `*.kicad_sch` files for `(lib_id "<lib>:<name>")` symbol references and emitting any `<lib>` not already accounted for.
-3. Stable-sorting the resulting set so the manifest is reproducible.
+- **Utility**: `common.kicad_libraries.enumerate_libraries(project_dir) -> tuple[LibraryRef, ...]`. Scans `fp-lib-table` + `sym-lib-table` + every `.kicad_sch` / `.kicad_pcb` / `.kicad_sym` under `project_dir`. Returns a stable-sorted (by `(name, source)`) tuple. Reproducible for a given `project_dir`.
+- **Value object**: `model.library_ref.LibraryRef(name: str, source: LibrarySource)` - frozen, orderable.
+- **Field**: `Publication.libraries: tuple[LibraryRef, ...]` (frozen; defaults to `()`).
+- **Workflow**: `PublishWorkflow.build_publication(resolved, project_info, analysis_info)` calls the utility and threads the result onto the constructed `Publication`. This is DESIGN step 8.
+- **Rendering**: `SitePublisher` consumes `Publication.libraries` when emitting the version-page front-matter / body. Tracked by kproj#4 - not modified in this PR.
 
 ### `ZipArchiver`
 

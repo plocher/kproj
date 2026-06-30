@@ -14,7 +14,7 @@ from .ibom_generator import IbomGenerator
 from .kicad_project_reader import KicadProjectReader, ProjectResolutionError
 from .metadata_analyzer import MetadataAnalyzer
 from .pcb_exporter import PcbExporter
-from .schematic_exporter import SchematicExporter
+from .schematic_exporter import SchematicExporter, SchematicExportError
 from .site_publisher import SitePublisher
 from .source_packager import SourcePackager
 from .zip_archiver import ZipArchiver
@@ -28,6 +28,7 @@ __all__ = [
     "MetadataAnalyzer",
     "PcbExporter",
     "ProjectResolutionError",
+    "SchematicExportError",
     "SchematicExporter",
     "SitePublisher",
     "SourcePackager",

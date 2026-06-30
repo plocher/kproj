@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .analysis_info import AnalysisInfo
+from .library_ref import LibraryRef
 from .project_info import ProjectInfo
 
 
@@ -53,6 +54,14 @@ class Publication:
         artifacts: Asset references emitted into the front-matter
             ``artifacts:`` list (schematic PDF, iBOM HTML, STEP,
             fab.zip, source.zip).
+        libraries: Stable-sorted tuple of :class:`LibraryRef` entries
+            naming every library the project references, each tagged
+            with its ``source`` classification (``internal`` /
+            ``external`` / ``ambiguous``) per
+            :func:`kproj.common.kicad_libraries.enumerate_libraries`.
+            The site-emission layer renders these on the version page;
+            see ``docs/DESIGN.md`` § *Library enumeration*. Rendering
+            itself is tracked by kproj#4.
     """
 
     project_info: ProjectInfo
@@ -60,3 +69,4 @@ class Publication:
     body_md: str
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
+    libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)

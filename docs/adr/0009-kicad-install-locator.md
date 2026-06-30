@@ -83,9 +83,26 @@ The function-style API is intentional: locator results are pure values, idempote
 
 The `kicad_install` module is internal to kproj. If a better approach emerges (e.g. a dedicated `kicad-installation-locator` PyPI package), the function signatures stay stable and only the bodies change. Services depend only on the function signatures.
 
+## Version support (addendum, kproj#3 wave-3 follow-up)
+
+KiCad 10 shipped while v1 was in design. The user's lived environment runs KiCad 10 today, and the original probe order (KiCad 9 only) caused `find_plugins_dir()` to miss PCM plugin installs under `~/Documents/KiCad/10.0/3rdparty/` - which manifested as the `tests/contract/test_ibom_generator.py` contract test silently skipping with "iBOM plugin not installed locally" on a host where the iBOM plugin was, in fact, installed (just under the v10 layout).
+
+The probe tables now try **KiCad 10 first, falling back to KiCad 9** (newest-first):
+
+- `KICAD10_3RD_PARTY` env var, then `KICAD9_3RD_PARTY`.
+- macOS plugins dir: `~/Documents/KiCad/10.0/3rdparty/`, then `~/Documents/KiCad/9.0/3rdparty/`.
+- Linux plugins dir: `~/.local/share/kicad/10.0/3rdparty/`, then `~/.local/share/kicad/9.0/3rdparty/`.
+- Windows plugins dir: `%APPDATA%\kicad\10.0\3rdparty\`, then `%APPDATA%\kicad\9.0\3rdparty\`.
+- Windows `kicad-cli.exe`: `C:\Program Files\KiCad\10.0\bin\kicad-cli.exe`, then `C:\Program Files\KiCad\9.0\bin\kicad-cli.exe`. macOS and Linux paths are stable across major versions (same `KiCad.app` bundle, same `/usr/bin/kicad-cli` symlink) so no v10-specific path is needed there.
+
+The accepted-major set is `SUPPORTED_KICAD_MAJORS = frozenset({9, 10})`, exposed as a module-level constant in `common/kicad_install.py` so the workflow's version-gate (`PublishWorkflow.run` step 1.2) reads the same source of truth as the locator. The workflow rejects any other major with `outcome="failed", exit_code=2`.
+
+If KiCad 11 ships during v1's life, the fallthrough is mechanical: prepend the v11 paths to the two `_candidates_for_*` tuples, add `KICAD11_3RD_PARTY` to `_PLUGINS_DIR_ENV_VARS`, add `11` to `SUPPORTED_KICAD_MAJORS`. A future ADR or this one's third addendum should pin the moment we commit to v11 support so the deprecation timeline for v9 is explicit; for now v1 supports both 9.x and 10.x equally.
+
 ## References
 
 - ADR 0006 — Library-shape boundary discipline. `kicad_install` is a `common/` utility (allowed); services depend on it via injection at construction, not import.
 - ADR 0008 — iBOM direct script invocation depends on `find_ibom_script()`.
 - jBOM `src/jbom/services/gerber_service.py` `_find_kicad_cli()` — the prior art kproj's `find_kicad_cli()` mirrors.
 - Phase 4 review finding: MAJOR M6 — "kicad-cli locator/version preflight is incomplete".
+- kproj#3 PR#9 wave-3 follow-up commit: the Version support addendum above.

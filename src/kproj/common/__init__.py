@@ -14,6 +14,7 @@ from .kicad_install import (
     find_plugins_dir,
     kicad_version,
 )
+from .kicad_libraries import enumerate_libraries
 from .subprocess_runner import (
     DEFAULT_GIT_TIMEOUT,
     DEFAULT_KICAD_TIMEOUT,
@@ -30,6 +31,7 @@ __all__ = [
     "SubprocessFailedError",
     "SubprocessResult",
     "SubprocessTimeoutError",
+    "enumerate_libraries",
     "find_ibom_script",
     "find_kicad_cli",
     "find_plugins_dir",

@@ -42,3 +42,6 @@ htmlcov/
 
 # kproj-specific
 .kproj-staging/
+
+# KiCad per-user local state (regenerated on demand by kicad-cli)
+*.kicad_prl

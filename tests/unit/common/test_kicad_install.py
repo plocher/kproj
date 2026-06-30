@@ -18,6 +18,7 @@ import pytest
 
 from kproj.common import kicad_install
 from kproj.common.kicad_install import (
+    SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
     find_ibom_script,
     find_kicad_cli,
@@ -93,22 +94,58 @@ def test_find_kicad_cli_raises_when_no_candidate_resolves(
 # ----------------------------------------------------------------------
 
 
-def test_find_plugins_dir_returns_explicit_env_path(
+def test_find_plugins_dir_returns_explicit_kicad9_env_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``KICAD9_3RD_PARTY`` env var wins when the directory exists."""
     plugins = tmp_path / "3rdparty"
     plugins.mkdir()
+    monkeypatch.delenv("KICAD10_3RD_PARTY", raising=False)
     monkeypatch.setenv("KICAD9_3RD_PARTY", str(plugins))
     assert find_plugins_dir() == plugins
+
+
+def test_find_plugins_dir_returns_explicit_kicad10_env_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``KICAD10_3RD_PARTY`` env var wins when the directory exists."""
+    plugins = tmp_path / "3rdparty-v10"
+    plugins.mkdir()
+    monkeypatch.delenv("KICAD9_3RD_PARTY", raising=False)
+    monkeypatch.setenv("KICAD10_3RD_PARTY", str(plugins))
+    assert find_plugins_dir() == plugins
+
+
+def test_find_plugins_dir_prefers_kicad10_env_over_kicad9_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When both env vars resolve, ``KICAD10_3RD_PARTY`` wins (newest-first)."""
+    plugins10 = tmp_path / "3rdparty-v10"
+    plugins10.mkdir()
+    plugins9 = tmp_path / "3rdparty-v9"
+    plugins9.mkdir()
+    monkeypatch.setenv("KICAD10_3RD_PARTY", str(plugins10))
+    monkeypatch.setenv("KICAD9_3RD_PARTY", str(plugins9))
+    assert find_plugins_dir() == plugins10
+
+
+def test_find_plugins_dir_falls_through_kicad10_env_when_missing_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A set-but-non-existent ``KICAD10_3RD_PARTY`` raises before trying KICAD9."""
+    monkeypatch.setenv("KICAD10_3RD_PARTY", str(tmp_path / "no-such-v10"))
+    monkeypatch.delenv("KICAD9_3RD_PARTY", raising=False)
+    with pytest.raises(KicadNotFoundError, match="KICAD10_3RD_PARTY"):
+        find_plugins_dir()
 
 
 def test_find_plugins_dir_falls_back_to_platform_defaults(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Platform defaults are tried in declared order."""
+    """Platform defaults are tried in declared order (v10 before v9)."""
     plugins = tmp_path / "plugins"
     plugins.mkdir()
+    monkeypatch.delenv("KICAD10_3RD_PARTY", raising=False)
     monkeypatch.delenv("KICAD9_3RD_PARTY", raising=False)
     monkeypatch.setattr(
         kicad_install, "_PLATFORM_PLUGINS_DIR_CANDIDATES", (tmp_path / "nope", plugins)
@@ -120,6 +157,7 @@ def test_find_plugins_dir_raises_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No env, no platform default → ``KicadNotFoundError``."""
+    monkeypatch.delenv("KICAD10_3RD_PARTY", raising=False)
     monkeypatch.delenv("KICAD9_3RD_PARTY", raising=False)
     monkeypatch.setattr(kicad_install, "_PLATFORM_PLUGINS_DIR_CANDIDATES", ())
     with pytest.raises(KicadNotFoundError):
@@ -232,3 +270,25 @@ def test_platform_default_tables_are_non_empty_for_current_platform() -> None:
     assert sys.platform in {"darwin", "linux", "win32"}
     assert len(kicad_install._PLATFORM_KICAD_CLI_CANDIDATES) >= 1
     assert len(kicad_install._PLATFORM_PLUGINS_DIR_CANDIDATES) >= 1
+
+
+def test_plugins_dir_defaults_probe_kicad10_before_kicad9_on_macos_and_linux() -> None:
+    """On macOS / Linux the default probe order must list a v10 path first.
+
+    The fix that landed this test exists specifically because KiCad 10 plugin
+    installs were being missed by the v9-only probe.  Reordering or removing
+    the v10 path would silently regress us; pin the order here.
+    """
+    if sys.platform not in {"darwin", "linux"}:
+        pytest.skip("order pin only applies to macOS / Linux defaults")
+    paths = [str(p) for p in kicad_install._PLATFORM_PLUGINS_DIR_CANDIDATES]
+    assert any("10.0" in p for p in paths)
+    assert any("9.0" in p for p in paths)
+    first_v10 = next(i for i, p in enumerate(paths) if "10.0" in p)
+    first_v9 = next(i for i, p in enumerate(paths) if "9.0" in p)
+    assert first_v10 < first_v9
+
+
+def test_supported_kicad_majors_covers_9_and_10() -> None:
+    """v1 supports KiCad 9.x and 10.x; the set is the canonical authority."""
+    assert frozenset({9, 10}) == SUPPORTED_KICAD_MAJORS

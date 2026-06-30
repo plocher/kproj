@@ -241,19 +241,12 @@ THEN I download a zip containing exactly three files: bom.csv, pos.csv, gerbers.
 GIVEN a published version page
 WHEN I click the source.zip artifact link
 THEN I download a zip containing the project's non-derived KiCad files (*.kicad_pro/sch/pcb/sym/pretty/dru/wks plus library tables + README.md + LICENSE + CHANGELOG.md)
-AND the zip contains a top-level `SOURCE_README.md` documenting the (small) limits of opening the project without the original external libraries
 AND I can unzip the archive and open `<Project>.kicad_pro` in KiCad 9 with the schematic and PCB rendering correctly
 ```
 
-*Scope*: the source archive captures **project artifacts**, not the larger KiCad-install context (libraries, plugins, etc.). KiCad 6.0+ embeds all symbols and footprints used in the design inside the project's `.kicad_sch` and `.kicad_pcb` files, so the archive is sufficient for opening + viewing + editing + generating manufacturing files.
+*Scope*: the source archive captures **project artifacts**, not the larger KiCad-install context (libraries, plugins, etc.). KiCad 6.0+ embeds all symbols and footprints used in the design inside the project's `.kicad_sch` and `.kicad_pcb` files, so the archive is sufficient for opening + viewing + editing + generating manufacturing files. When a referenced external library is genuinely missing on the consumer's machine, KiCad's own UI surfaces the gap on open; v1 does not vendor a manifest file describing it.
 
-*Known limits without the original libraries* (documented in `SOURCE_README.md`):
-
-- **3D viewer shows the bare PCB.** 3D models are linked by absolute filesystem path, not embedded; the 3D viewer renders the board without component shapes. 2D PCB view and fabrication output are unaffected.
-- **"Update Symbols from Library" does not work.** Requires the source libraries; the consumer has the embedded copies, not the originals.
-- **Reusing parts in other projects is awkward.** Pulling a custom symbol into a new design requires the source library.
-
-For users who want full library access, `SOURCE_README.md` lists the external libraries referenced by the project (e.g. `SPCoast_KiCad_Library`) with install pointers. See `docs/DESIGN.md` § *SourcePackager*.
+*Companion info on the version page* (separate from the source archive): the project's version page surfaces the list of libraries the project references, sourced from a per-project scan of `fp-lib-table` + `sym-lib-table` + `*.kicad_sch` / `*.kicad_pcb` `(lib_id ...)` references. Each entry carries a classification - `internal` (bundled inside the source archive), `external` (consumer needs to install separately), `ambiguous` (referenced in the design but not declared in a lib-table). The rendering itself is layered by kproj#4; the v1 data layer (`Publication.libraries`) is populated by the publish workflow today.
 
 #### Story 18 — Inspect the BOM interactively
 *As a project consumer planning a build, I want to view the interactive HTML BOM, so that I can plan component sourcing without unzipping anything.*
