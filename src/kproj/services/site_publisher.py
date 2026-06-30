@@ -193,11 +193,19 @@ class SitePublisher:
         _atomic_write(pages_file, would_be_pages)
 
         # ── git add + commit + push ──
-        touched = [
-            str(version_file.relative_to(site_repo)),
-            str(pages_file.relative_to(site_repo)),
-        ]
-        _git_run(["add", *touched], site_repo=site_repo)
+        # BLOCKER 2 fix: stage EVERY path the journal knows about (assets
+        # written by upstream producers + the two markdown files we just
+        # wrote).  Pre-fix the publisher staged only the markdown, leaving
+        # generated renders/STEP/iBOM/fab/source archives untracked while
+        # the committed markdown linked to them - violating PRD Story 1's
+        # "standard asset set" commit/push expectation and ADR 0005's
+        # guarantee that ``journal.all_paths()`` is the tracked publish set.
+        touched_paths = self._collect_paths_to_stage(
+            site_repo=site_repo,
+            version_file=version_file,
+            pages_file=pages_file,
+        )
+        _git_run(["add", *touched_paths], site_repo=site_repo)
         _git_run(["commit", "-m", commit_msg], site_repo=site_repo)
         self._journal.mark_committed()
 
@@ -216,6 +224,54 @@ class SitePublisher:
             message=f"kproj: refreshed {PR}.",
             findings=findings,
         )
+
+    def _collect_paths_to_stage(
+        self,
+        *,
+        site_repo: Path,
+        version_file: Path,
+        pages_file: Path,
+    ) -> list[str]:
+        """Return the deduplicated set of paths (relative to *site_repo*) to ``git add``.
+
+        Includes:
+
+        - Every path registered with :class:`ChangeJournal` (created or
+          modified) via :meth:`ChangeJournal.all_paths`. This is the
+          authoritative tracked publish set per ADR 0005.
+        - The version-page and project-page markdown files written by
+          this publisher (defensively included even though they are
+          already journalled - belt-and-braces against a future change
+          that registers them after staging).
+
+        Paths outside *site_repo* are skipped defensively; the journal
+        validates at intake but the safety net keeps a stray test path
+        from generating a confusing ``git add`` error.
+
+        Args:
+            site_repo: Local site-repo checkout.
+            version_file: ``_versions/<P>/<R>.md`` path just written.
+            pages_file: ``pages/<P>.md`` path just written.
+
+        Returns:
+            A list of repo-relative path strings in insertion order,
+            with duplicates removed.
+        """
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for absolute in (
+            *self._journal.all_paths(),
+            version_file,
+            pages_file,
+        ):
+            try:
+                rel = str(absolute.relative_to(site_repo))
+            except ValueError:
+                continue
+            if rel not in seen:
+                seen.add(rel)
+                ordered.append(rel)
+        return ordered
 
     # ----- static detection helper -----
 

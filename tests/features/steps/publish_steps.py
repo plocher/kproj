@@ -38,7 +38,6 @@ from kproj.services.change_journal import ChangeJournal  # noqa: E402
 from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: E402
 from kproj.services.site_publisher import SitePublisher  # noqa: E402
 
-
 # ─────────────────────────── infrastructure helpers ──────────────────────────
 
 
@@ -78,8 +77,12 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
         asset_dir = site_repo / "versions" / basename / R
         asset_dir.mkdir(parents=True, exist_ok=True)
         for filename in [
-            f"{PR}.top.png", f"{PR}.bottom.png", f"{PR}.sch.svg",
-            f"{PR}.sch.pdf", f"{PR}.ibom.html", f"{PR}.step",
+            f"{PR}.top.png",
+            f"{PR}.bottom.png",
+            f"{PR}.sch.svg",
+            f"{PR}.sch.pdf",
+            f"{PR}.ibom.html",
+            f"{PR}.step",
             f"{PR}.source.zip",
         ]:
             p = asset_dir / filename
@@ -87,20 +90,26 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
             journal.will_create(p)
         images: tuple[AssetRef, ...] = (
             AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),
-            AssetRef(path=f"{base_site}/{PR}.bottom.png", tag="render-bottom",
-                     title="Bottom"),
-            AssetRef(path=f"{base_site}/{PR}.sch.svg", tag="schematic-svg",
-                     title="Schematic"),
+            AssetRef(path=f"{base_site}/{PR}.bottom.png", tag="render-bottom", title="Bottom"),
+            AssetRef(path=f"{base_site}/{PR}.sch.svg", tag="schematic-svg", title="Schematic"),
         )
         artifacts: tuple[AssetRef, ...] = (
-            AssetRef(path=f"{base_site}/{PR}.sch.pdf", tag="schematic-pdf",
-                     post="Full schematic (all sheets)"),
-            AssetRef(path=f"{base_site}/{PR}.ibom.html", tag="interactive-bom",
-                     post="Interactive HTML BOM"),
-            AssetRef(path=f"{base_site}/{PR}.step", tag="step-model",
-                     post="3D STEP model"),
-            AssetRef(path=f"{base_site}/{PR}.source.zip", tag="source-archive",
-                     post="KiCad source archive"),
+            AssetRef(
+                path=f"{base_site}/{PR}.sch.pdf",
+                tag="schematic-pdf",
+                post="Full schematic (all sheets)",
+            ),
+            AssetRef(
+                path=f"{base_site}/{PR}.ibom.html",
+                tag="interactive-bom",
+                post="Interactive HTML BOM",
+            ),
+            AssetRef(path=f"{base_site}/{PR}.step", tag="step-model", post="3D STEP model"),
+            AssetRef(
+                path=f"{base_site}/{PR}.source.zip",
+                tag="source-archive",
+                post="KiCad source archive",
+            ),
         )
         return images, artifacts
 
@@ -114,9 +123,7 @@ def _build_workflow(context: Any) -> PublishWorkflow:
         fake_ibom.write_text("")
     site_repo = context.site_repo
     return PublishWorkflow(
-        project_reader=KicadProjectReader(
-            projects_root=Path(context.tmpdir)
-        ),
+        project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
         design_analyzer_factory=_SilentDesignAnalyzer,
         ibom_script_locator=lambda: fake_ibom,
         artifact_generator=_stub_artifact_generator(site_repo),
@@ -278,9 +285,7 @@ def step_then_version_page_exists(context: Any) -> None:
     """Assert the _versions/<P>/<R>.md file was created."""
     P = getattr(context, "project_name", "MyProject")
     version_file = context.site_repo / "_versions" / P / "1.0.md"
-    assert version_file.exists(), (
-        f"_versions/{P}/1.0.md not found in {context.site_repo}"
-    )
+    assert version_file.exists(), f"_versions/{P}/1.0.md not found in {context.site_repo}"
 
 
 @then("the project page exists in the site repo")
@@ -288,21 +293,23 @@ def step_then_project_page_exists(context: Any) -> None:
     """Assert the pages/<P>.md file was created."""
     P = getattr(context, "project_name", "MyProject")
     pages_file = context.site_repo / "pages" / f"{P}.md"
-    assert pages_file.exists(), (
-        f"pages/{P}.md not found in {context.site_repo}"
-    )
+    assert pages_file.exists(), f"pages/{P}.md not found in {context.site_repo}"
 
 
 @then("no files are written to the site repo")
 def step_then_no_files_written(context: Any) -> None:
     """Assert the site repo has no version/pages files (dry-run guard)."""
-    versions = list((context.site_repo / "_versions").rglob("*.md")) \
-        if (context.site_repo / "_versions").exists() else []
-    pages = list((context.site_repo / "pages").rglob("*.md")) \
-        if (context.site_repo / "pages").exists() else []
-    assert not versions and not pages, (
-        f"dry-run wrote files: versions={versions}, pages={pages}"
+    versions = (
+        list((context.site_repo / "_versions").rglob("*.md"))
+        if (context.site_repo / "_versions").exists()
+        else []
     )
+    pages = (
+        list((context.site_repo / "pages").rglob("*.md"))
+        if (context.site_repo / "pages").exists()
+        else []
+    )
+    assert not versions and not pages, f"dry-run wrote files: versions={versions}, pages={pages}"
 
 
 @then("the version page contains the audit findings table")
@@ -346,7 +353,6 @@ def step_then_exit_1(context: Any) -> None:
 @then("the version page has updated status")
 def step_then_version_has_updated_status(context: Any) -> None:
     """Assert the version page front-matter has status: active."""
-    P = getattr(context, "project_name", "MyProject")
     for version_file in (context.site_repo / "_versions").rglob("*.md"):
         content = version_file.read_text()
         assert "status: active" in content, (
@@ -369,7 +375,6 @@ def step_then_commit_exists(context: Any) -> None:
     """Assert the site repo now has at least one commit (via file existence)."""
     # We mock _git_run so we can't check git log directly.
     # Instead, verify the version file was written.
-    P = getattr(context, "project_name", "MyProject")
     version_files = list((context.site_repo / "_versions").rglob("*.md"))
     assert version_files, "Expected at least one version file after publish"
 
@@ -377,10 +382,16 @@ def step_then_commit_exists(context: Any) -> None:
 @then("no partial files remain in the site repo")
 def step_then_no_partial_files(context: Any) -> None:
     """Assert the site repo is clean (rollback worked)."""
-    version_files = list((context.site_repo / "_versions").rglob("*.md")) \
-        if (context.site_repo / "_versions").exists() else []
-    pages_files = list((context.site_repo / "pages").rglob("*.md")) \
-        if (context.site_repo / "pages").exists() else []
+    version_files = (
+        list((context.site_repo / "_versions").rglob("*.md"))
+        if (context.site_repo / "_versions").exists()
+        else []
+    )
+    pages_files = (
+        list((context.site_repo / "pages").rglob("*.md"))
+        if (context.site_repo / "pages").exists()
+        else []
+    )
     assert not version_files and not pages_files, (
         f"Partial files remain: {version_files + pages_files}"
     )
