@@ -17,7 +17,6 @@ from kproj.formatters.stderr_formatter import StderrFormatter
 from kproj.model.finding import Finding
 from kproj.model.severity import Severity
 
-
 # ──────────────────────────── helpers ────────────────────────────
 
 

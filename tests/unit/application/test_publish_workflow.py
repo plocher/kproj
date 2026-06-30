@@ -66,7 +66,6 @@ def _silent_design_analyzer_factory() -> object:
         def __init__(self, _cli: Path) -> None: ...
 
         def analyze(self, _resolved: object) -> object:
-            from kproj.model.analysis_info import AnalysisInfo
 
             return AnalysisInfo(findings=())
 
@@ -294,7 +293,6 @@ def test_workflow_uses_injected_design_analyzer_factory(
             seen.append(cli)
 
         def analyze(self, _resolved: object) -> object:
-            from kproj.model.analysis_info import AnalysisInfo
 
             return AnalysisInfo(findings=())
 
@@ -333,23 +331,31 @@ def _stub_artifact_generator(
 
     def _gen(
         resolved: object,
+        project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
         from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
-        # resolved is a ResolvedProject; grab basename
-        basename = getattr(resolved, "basename", "demo")
-        R = "1.0"
+
+        # Use the canonical project + board_rev from project_info per the
+        # post-BLOCKER-1 generator contract.
+        basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
+        R = getattr(project_info, "board_rev", None) or "1.0"
         PR = f"{basename}-{R}"
         base_site = f"/versions/{basename}/{R}"
         asset_dir = _site_repo / "versions" / basename / R
         asset_dir.mkdir(parents=True, exist_ok=True)
         # Write placeholder files so detect_outcome's asset check passes.
         for filename in [
-            f"{PR}.top.png", f"{PR}.bottom.png", f"{PR}.sch.svg",
-            f"{PR}.sch.pdf", f"{PR}.ibom.html", f"{PR}.step", f"{PR}.source.zip",
+            f"{PR}.top.png",
+            f"{PR}.bottom.png",
+            f"{PR}.sch.svg",
+            f"{PR}.sch.pdf",
+            f"{PR}.ibom.html",
+            f"{PR}.step",
+            f"{PR}.source.zip",
         ]:
             f = asset_dir / filename
             f.write_bytes(b"placeholder")
@@ -360,13 +366,22 @@ def _stub_artifact_generator(
             AssetRef(path=f"{base_site}/{PR}.sch.svg", tag="schematic-svg", title="Schematic"),
         )
         artifacts: tuple[AssetRef, ...] = (
-            AssetRef(path=f"{base_site}/{PR}.sch.pdf", tag="schematic-pdf",
-                     post="Full schematic (all sheets)"),
-            AssetRef(path=f"{base_site}/{PR}.ibom.html", tag="interactive-bom",
-                     post="Interactive HTML BOM"),
+            AssetRef(
+                path=f"{base_site}/{PR}.sch.pdf",
+                tag="schematic-pdf",
+                post="Full schematic (all sheets)",
+            ),
+            AssetRef(
+                path=f"{base_site}/{PR}.ibom.html",
+                tag="interactive-bom",
+                post="Interactive HTML BOM",
+            ),
             AssetRef(path=f"{base_site}/{PR}.step", tag="step-model", post="3D STEP model"),
-            AssetRef(path=f"{base_site}/{PR}.source.zip", tag="source-archive",
-                     post="KiCad source archive"),
+            AssetRef(
+                path=f"{base_site}/{PR}.source.zip",
+                tag="source-archive",
+                post="KiCad source archive",
+            ),
         )
         return images, artifacts
 
@@ -472,9 +487,7 @@ def test_active_project_publishes_successfully(
     assert result.exit_code in (0, 1)  # may have warnings
 
 
-def test_dry_run_does_not_write_site_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dry_run_does_not_write_site_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """dry_run=True skips artifact generation and site writes."""
     site = _make_site_repo(tmp_path)
     proj_dir = make_minimal_project(
@@ -501,14 +514,14 @@ def test_dry_run_does_not_write_site_files(
         result = workflow.run(request)
 
     # No version file should be written
-    version_files = list((site / "_versions").rglob("*.md")) if (site / "_versions").exists() else []
+    version_files = (
+        list((site / "_versions").rglob("*.md")) if (site / "_versions").exists() else []
+    )
     assert not version_files, f"dry-run wrote files: {version_files}"
     assert result.outcome in ("published", "refreshed", "noop")
 
 
-def test_site_repo_dirty_fails_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_site_repo_dirty_fails_preflight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A dirty site repo (uncommitted changes) fails at step 5b."""
     site = _make_site_repo(tmp_path)
     # Create an uncommitted file in the site repo
@@ -536,4 +549,81 @@ def test_site_repo_dirty_fails_preflight(
     result = workflow.run(request)
     assert result.outcome == "failed"
     assert result.exit_code == 2
-    assert "uncommitted" in result.message or "dirty" in result.message.lower() or "changes" in result.message
+    assert (
+        "uncommitted" in result.message
+        or "dirty" in result.message.lower()
+        or "changes" in result.message
+    )
+
+
+def test_artifact_generator_receives_project_info_with_canonical_board_rev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKER 1 regression: generator must be invoked with the real board_rev.
+
+    The pre-fix default generator derived ``board_rev`` from the
+    ``.kicad_pro`` stem (i.e. the project basename), so a project
+    ``demo`` with PCB ``rev=1.0B`` produced asset paths under
+    ``versions/demo/demo/`` named ``demo-demo.*``.  After the fix, the
+    workflow threads :class:`ProjectInfo` (and therefore the canonical
+    PCB-derived ``board_rev``) into the artifact-generator callable.
+    """
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0B",  # ← distinct from the project basename "demo"
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+
+    captured: dict[str, object] = {}
+
+    def _recording_gen(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        _site_repo: Path,
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+        captured["project"] = getattr(project_info, "project", None)
+        captured["board_rev"] = getattr(project_info, "board_rev", None)
+        # Emit asset refs in the same shape the workflow's preliminary
+        # detection uses so detect_outcome's asset existence check is
+        # consistent (the test does not need real files on disk —
+        # detect_outcome sees the version file as absent so returns
+        # "publish" before checking assets).
+        return (), ()
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        artifact_generator=_recording_gen,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+
+    with patch("kproj.services.site_publisher._git_run"):
+        workflow.run(request)
+
+    assert captured["project"] == "demo"
+    assert captured["board_rev"] == "1.0B", (
+        f"artifact generator received board_rev={captured['board_rev']!r}; "
+        "BLOCKER 1: must be the PCB-derived board_rev, not the project stem."
+    )

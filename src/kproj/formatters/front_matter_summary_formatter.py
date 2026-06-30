@@ -30,9 +30,7 @@ from ..model.publication import Publication
 from ..model.severity import Severity
 
 # Statuses whose on-site pages are "obsolete" (hidden / archived).
-_OBSOLETE_STATUSES: frozenset[Status] = frozenset(
-    {Status.RETIRED, Status.REPLACED_BY}
-)
+_OBSOLETE_STATUSES: frozenset[Status] = frozenset({Status.RETIRED, Status.REPLACED_BY})
 
 
 class FrontMatterSummaryFormatter:
@@ -94,8 +92,7 @@ class FrontMatterSummaryFormatter:
 
         # Images list.
         data["images"] = [
-            {"image_path": ref.path, "title": ref.title}
-            for ref in publication.images
+            {"image_path": ref.path, "title": ref.title} for ref in publication.images
         ]
 
         # Artifacts list (all with type=download).

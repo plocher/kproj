@@ -94,7 +94,7 @@ without a real KiCad install.
 """
 
 ArtifactGeneratorCallable = Callable[
-    ["ResolvedProject", Path, Path, Path, "ChangeJournal"],
+    ["ResolvedProject", "ProjectInfo", Path, Path, Path, "ChangeJournal"],
     tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]],
 ]
 """Callable that generates all release artifacts for a project.
@@ -103,11 +103,19 @@ Signature::
 
     def generator(
         resolved: ResolvedProject,
+        project_info: ProjectInfo,
         kicad_cli: Path,
         ibom_script: Path,
         site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[images_refs, artifact_refs]
+
+``project_info`` carries the canonical ``board_rev`` (PCB-derived per
+``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
+use for the on-disk asset directory layout and AssetRef paths.  The
+project basename (``<P>``) and board revision (``<R>``) together form
+the ``<P>-<R>`` token in every asset filename per ``docs/DESIGN.md``
+§ *Release asset set*.
 
 The default implementation calls all real exporters + packagers.
 Tests inject a stub that creates placeholder files and returns the
@@ -167,15 +175,11 @@ class PublishWorkflow:
         self._project_reader = project_reader or KicadProjectReader()
         self._metadata_analyzer = metadata_analyzer or MetadataAnalyzer()
         self._design_analyzer_factory = design_analyzer_factory or DesignAnalyzer
-        self._ibom_script_locator: IbomScriptLocator = (
-            ibom_script_locator or find_ibom_script
-        )
+        self._ibom_script_locator: IbomScriptLocator = ibom_script_locator or find_ibom_script
         self._artifact_generator: ArtifactGeneratorCallable = (
             artifact_generator or _default_artifact_generator
         )
-        self._site_publisher_factory: SitePublisherFactory = (
-            site_publisher_factory or SitePublisher
-        )
+        self._site_publisher_factory: SitePublisherFactory = site_publisher_factory or SitePublisher
 
     def run(self, request: PublishRequest) -> PublishResult:
         """Run the full 11-step publish pipeline against *request*.
@@ -286,7 +290,9 @@ class PublishWorkflow:
         )
 
         preliminary_pub = PublishWorkflow.build_publication(
-            resolved, project_info, analysis,
+            resolved,
+            project_info,
+            analysis,
             body_md=body_md,
             readme_md=readme_md,
             images=images_refs,
@@ -303,14 +309,16 @@ class PublishWorkflow:
                 # Step 8: Generate artifacts (only for "publish"; skip on "refresh")
                 if preliminary_outcome == "publish" and not request.dry_run:
                     actual_images, actual_artifacts = self._artifact_generator(
-                        resolved, kicad_cli, ibom_script, site_repo, journal
+                        resolved, project_info, kicad_cli, ibom_script, site_repo, journal
                     )
                 else:
                     actual_images, actual_artifacts = images_refs, artifact_refs
 
                 # Step 9: Build final publication
                 final_pub = PublishWorkflow.build_publication(
-                    resolved, project_info, analysis,
+                    resolved,
+                    project_info,
+                    analysis,
                     body_md=body_md,
                     readme_md=readme_md,
                     images=actual_images,
@@ -464,6 +472,7 @@ def _compute_standard_asset_refs(
 
 def _default_artifact_generator(
     resolved: ResolvedProject,
+    project_info: ProjectInfo,
     kicad_cli: Path,
     ibom_script: Path,
     site_repo: Path,
@@ -480,8 +489,18 @@ def _default_artifact_generator(
     manager rolls back all written files.  The workflow catches the
     resulting exception and returns ``outcome="failed"``.
 
+    The on-disk layout and AssetRef paths are derived from the
+    canonical ``project_info.project`` (``<P>``) and
+    ``project_info.board_rev`` (``<R>``) per ``docs/DESIGN.md``
+    § *Release asset set* and § *Metadata precedence*.  Wave-3 fix-up
+    (BLOCKER 1): the prior heuristic used ``resolved.project_file.stem``
+    for the board revision, which only coincided with the real PCB
+    revision when the project basename happened to match.
+
     Args:
         resolved: The resolved project.
+        project_info: Title-block facts carrying the canonical
+            ``project`` + ``board_rev`` tokens.
         kicad_cli: Discovered kicad-cli path.
         ibom_script: Discovered iBOM script path.
         site_repo: Local site-repo checkout.
@@ -491,21 +510,6 @@ def _default_artifact_generator(
         A 2-tuple ``(images, artifacts)`` of :class:`AssetRef` tuples
         for the artifacts actually produced.
     """
-    P = resolved.basename
-    # board_rev is read after project_info is built; derive from pcb_file stem
-    # The workflow has project_info but doesn't pass it to the generator.
-    # We use the pcb file stem as a fallback; in practice build_publication
-    # is called right after with the real board_rev.
-    # NOTE: The workflow passes project_info via build_publication; the generator
-    # needs to know the board_rev to compute output paths.  For now we fall back
-    # to the project name + first pass of the file stem heuristic.
-    # This function is always invoked AFTER project_info is resolved, so the
-    # workflow passes the correct board_rev via the final build_publication call.
-    # The generator itself computes paths from resolved + site_repo directory.
-    # We'll read the latest state from the publication produced in build_publication.
-    # For a simpler implementation, the generator uses the pcb stem as the board_rev.
-    # This is acceptable because tests inject their own generator; the default is
-    # only called from production code where project_info is known.
     pcb_exporter = PcbExporter(kicad_cli)
     sch_exporter = SchematicExporter(kicad_cli)
     ibom_gen = IbomGenerator(ibom_script)
@@ -513,20 +517,13 @@ def _default_artifact_generator(
     fab_packager = FabPackager(archiver)
     source_packager = SourcePackager(archiver)
 
-    # We need board_rev to compute output paths. The generator doesn't receive
-    # project_info directly, so we use the pcb_file stem as a proxy. Production
-    # workflow always passes a consistent board_rev through build_publication.
-    # The actual paths used here must match _compute_standard_asset_refs output.
-    # We extract board_rev by checking the publication after it's built, but since
-    # this generator is called BEFORE build_publication, we approximate.
-    # For production use this is fine; for tests the stub generator takes over.
-    # Approximate board_rev from the project context - use pcb file stem fallback.
-    board_rev_approx = resolved.project_file.stem  # P (same as board name base)
-    PR = f"{P}-{board_rev_approx}"
-    asset_dir = site_repo / "versions" / P / board_rev_approx
+    P = project_info.project
+    R = project_info.board_rev
+    PR = f"{P}-{R}"
+    asset_dir = site_repo / "versions" / P / R
     asset_dir.mkdir(parents=True, exist_ok=True)
 
-    base_site = f"/versions/{P}/{board_rev_approx}"
+    base_site = f"/versions/{P}/{R}"
 
     # PCB renders
     top_path = asset_dir / f"{PR}.top.png"
@@ -544,9 +541,7 @@ def _default_artifact_generator(
 
     # iBOM (kproj#10: may fail; ChangeJournal rolls back on exception)
     ibom_path = asset_dir / f"{PR}.ibom.html"
-    ibom_gen.generate(
-        resolved.pcb_file, ibom_path, f"{PR}.ibom", journal=journal
-    )
+    ibom_gen.generate(resolved.pcb_file, ibom_path, f"{PR}.ibom", journal=journal)
 
     # Fab pack (optional — skipped when production/ is missing)
     prod_dir = resolved.project_dir / "production"
@@ -554,17 +549,14 @@ def _default_artifact_generator(
         prod_dir,
         asset_dir / f"{PR}.fab.zip",
         title=P,
-        rev=board_rev_approx,
+        rev=R,
         pcb_path=resolved.pcb_file,
         journal=journal,
     )
 
     # Source archive
     source_path = asset_dir / f"{PR}.source.zip"
-    source_packager.package(
-        resolved.project_dir, source_path,
-        title=P, rev=board_rev_approx, journal=journal
-    )
+    source_packager.package(resolved.project_dir, source_path, title=P, rev=R, journal=journal)
 
     images: tuple[AssetRef, ...] = (
         AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),
@@ -572,19 +564,27 @@ def _default_artifact_generator(
         AssetRef(path=f"{base_site}/{PR}.sch.svg", tag="schematic-svg", title="Schematic"),
     )
     artifact_list: list[AssetRef] = [
-        AssetRef(path=f"{base_site}/{PR}.sch.pdf", tag="schematic-pdf",
-                 post="Full schematic (all sheets)"),
-        AssetRef(path=f"{base_site}/{PR}.ibom.html", tag="interactive-bom",
-                 post="Interactive HTML BOM"),
+        AssetRef(
+            path=f"{base_site}/{PR}.sch.pdf",
+            tag="schematic-pdf",
+            post="Full schematic (all sheets)",
+        ),
+        AssetRef(
+            path=f"{base_site}/{PR}.ibom.html", tag="interactive-bom", post="Interactive HTML BOM"
+        ),
         AssetRef(path=f"{base_site}/{PR}.step", tag="step-model", post="3D STEP model"),
     ]
     if not fab_result.skipped:
         artifact_list.append(
-            AssetRef(path=f"{base_site}/{PR}.fab.zip", tag="fab-pack",
-                     post="Fab-house bundle (BOM + POS + gerbers)")
+            AssetRef(
+                path=f"{base_site}/{PR}.fab.zip",
+                tag="fab-pack",
+                post="Fab-house bundle (BOM + POS + gerbers)",
+            )
         )
     artifact_list.append(
-        AssetRef(path=f"{base_site}/{PR}.source.zip", tag="source-archive",
-                 post="KiCad source archive")
+        AssetRef(
+            path=f"{base_site}/{PR}.source.zip", tag="source-archive", post="KiCad source archive"
+        )
     )
     return images, tuple(artifact_list)

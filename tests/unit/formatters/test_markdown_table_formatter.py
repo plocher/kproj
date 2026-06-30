@@ -15,7 +15,6 @@ from kproj.formatters.markdown_table_formatter import (
 from kproj.model.finding import Finding
 from kproj.model.severity import Severity
 
-
 # ──────────────────────────── helpers ────────────────────────────
 
 
@@ -85,10 +84,12 @@ def test_output_contains_markdown_table_pipe_syntax() -> None:
 def test_audit_and_drc_in_separate_sections() -> None:
     """Audit finding and DRC finding appear in different regions of the output."""
     fmt = MarkdownTableFormatter()
-    result = fmt.render([
-        _audit_finding(reason="Audit finding text"),
-        _drc_finding(reason="DRC finding text"),
-    ])
+    result = fmt.render(
+        [
+            _audit_finding(reason="Audit finding text"),
+            _drc_finding(reason="DRC finding text"),
+        ]
+    )
     # Both texts present
     assert "Audit finding text" in result
     assert "DRC finding text" in result

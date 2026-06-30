@@ -18,13 +18,11 @@ from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.publication import AssetRef, Publication
 from kproj.model.severity import Severity
 
-
 # ──────────────────────────── helpers ────────────────────────────
 
 
 def _pi(**kwargs: object) -> ProjectInfo:
     """Build a ProjectInfo with sane defaults."""
-    from kproj.model.raw_title_block import RawTitleBlock
 
     defaults: dict[str, object] = {
         "project": "MyProject",
@@ -136,26 +134,27 @@ class TestIskicadObsolete:
 
 class TestAuditDrcCounts:
     def test_audit_error_count(self) -> None:
-        ai = AnalysisInfo(findings=(
-            Finding(severity=Severity.ERROR, field="f", value="", reason="r"),
-        ))
+        ai = AnalysisInfo(
+            findings=(Finding(severity=Severity.ERROR, field="f", value="", reason="r"),)
+        )
         parsed = _parse(_pub(analysis_info=ai))
         assert parsed["audit"]["errors"] == 1
         assert parsed["audit"]["warnings"] == 0
 
     def test_audit_warning_count(self) -> None:
-        ai = AnalysisInfo(findings=(
-            Finding(severity=Severity.WARNING, field="g", value="", reason="r"),
-        ))
+        ai = AnalysisInfo(
+            findings=(Finding(severity=Severity.WARNING, field="g", value="", reason="r"),)
+        )
         parsed = _parse(_pub(analysis_info=ai))
         assert parsed["audit"]["errors"] == 0
         assert parsed["audit"]["warnings"] == 1
 
     def test_drc_exclusions_counted_separately(self) -> None:
-        ai = AnalysisInfo(findings=(
-            Finding(severity=Severity.EXCLUSION, field="track_clearance",
-                    value="", reason="r"),
-        ))
+        ai = AnalysisInfo(
+            findings=(
+                Finding(severity=Severity.EXCLUSION, field="track_clearance", value="", reason="r"),
+            )
+        )
         parsed = _parse(_pub(analysis_info=ai))
         # exclusions should appear in drc or erc section, not in audit
         # and should NOT bump errors or warnings
@@ -224,9 +223,7 @@ class TestImagePath:
 
 class TestImagesAndArtifacts:
     def test_images_list_rendered(self) -> None:
-        images = (
-            AssetRef(path="/versions/P/R/P-R.top.png", tag="render-top", title="Top"),
-        )
+        images = (AssetRef(path="/versions/P/R/P-R.top.png", tag="render-top", title="Top"),)
         parsed = _parse(_pub(images=images))
         assert len(parsed["images"]) == 1
         assert parsed["images"][0]["image_path"] == "/versions/P/R/P-R.top.png"
@@ -272,15 +269,15 @@ class TestRenderAuditMethod:
         assert "warnings" in counts
 
     def test_counts_errors(self) -> None:
-        ai = AnalysisInfo(findings=(
-            Finding(severity=Severity.ERROR, field="f", value="", reason="r"),
-        ))
+        ai = AnalysisInfo(
+            findings=(Finding(severity=Severity.ERROR, field="f", value="", reason="r"),)
+        )
         counts = FrontMatterSummaryFormatter().render_audit(ai)
         assert counts["errors"] == 1
 
     def test_counts_warnings(self) -> None:
-        ai = AnalysisInfo(findings=(
-            Finding(severity=Severity.WARNING, field="g", value="", reason="r"),
-        ))
+        ai = AnalysisInfo(
+            findings=(Finding(severity=Severity.WARNING, field="g", value="", reason="r"),)
+        )
         counts = FrontMatterSummaryFormatter().render_audit(ai)
         assert counts["warnings"] == 1
