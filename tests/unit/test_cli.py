@@ -3,7 +3,7 @@
 Validates the user-facing surface (positional + flags) per
 ``docs/DESIGN.md`` § *CLI surface mechanics* and the exit-code mapping
 per § *Exit code mapping*. Per ADR 0006, ``argparse`` lives only inside
-``cli.py`` — these tests poke at the public ``main()`` and ``build_request``
+``cli.py`` - these tests poke at the public ``main()`` and ``build_request``
 helpers.
 """
 
