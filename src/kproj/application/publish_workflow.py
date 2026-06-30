@@ -1,24 +1,24 @@
-"""The :class:`PublishWorkflow` orchestrator (foundation walking-skeleton).
+"""The :class:`PublishWorkflow` orchestrator.
 
 Per ``docs/DESIGN.md`` § *Pipeline orchestration sequence*,
-:class:`PublishWorkflow` drives the publish pipeline end-to-end. The
-foundation slice implements only the *pre-flight* portion (project
-resolution + ``kicad-cli`` discovery + major-version check) and stubs
-the downstream steps with ``PublishResult(outcome="failed",
-exit_code=2)`` per the issue's walking-skeleton scope.
+:class:`PublishWorkflow` drives the publish pipeline end-to-end.  Wave-2
+adds steps 2-4 (read + analyze + status detection) on top of the wave-1
+pre-flight; downstream steps 5-11 remain stubbed.
 
-This module also owns the :class:`PublishRequest` / :class:`PublishResult`
-value objects so that :mod:`kproj.cli` has a stable downstream contract
-even before the full pipeline lands.
+:class:`PublishRequest` / :class:`PublishResult` were relocated to
+:mod:`kproj.model.publish_request` / :mod:`kproj.model.publish_result`
+in wave-2 (carry-forward decision) so services and the workflow share
+the same dataclasses without TYPE_CHECKING gymnastics; this module
+re-exports them for backward compatibility with existing call sites and
+tests.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
 
 from ..common.kicad_install import (
     KicadNotFoundError,
@@ -26,97 +26,90 @@ from ..common.kicad_install import (
     kicad_version,
 )
 from ..config import KprojConfig
-from ..model.finding import Finding
+from ..model.analysis_info import AnalysisInfo
+from ..model.project_info import Status
+from ..model.publish_request import PublishRequest
+from ..model.publish_result import Outcome, PublishResult
+from ..services.design_analyzer import DesignAnalyzer
 from ..services.kicad_project_reader import (
     KicadProjectReader,
     ProjectResolutionError,
 )
+from ..services.metadata_analyzer import MetadataAnalyzer
 
 _log = logging.getLogger(__name__)
 
 _SUPPORTED_KICAD_MAJOR = 9
 """v1 enforces KiCad major version 9.x per docs/DESIGN.md § Pipeline orchestration."""
 
-Outcome = Literal["published", "refreshed", "noop", "private-skip", "failed"]
-"""Closed set of v1 PublishWorkflow outcomes per docs/DESIGN.md."""
+DesignAnalyzerFactory = Callable[[Path], DesignAnalyzer]
+"""Callable used to construct a :class:`DesignAnalyzer` once kicad-cli is known.
 
+A factory (rather than a pre-constructed instance) is taken so that
+``kicad-cli`` discovery can run inside :meth:`PublishWorkflow.run` rather
+than ahead of the workflow.  Tests inject a fake factory to avoid
+invoking real subprocesses.
+"""
 
-@dataclass(frozen=True)
-class PublishRequest:
-    """Inputs for one :meth:`PublishWorkflow.run` invocation.
-
-    Attributes:
-        project_arg: CLI positional — path to a ``.kicad_pro`` / dir /
-            basename / ``"."``. Resolved by ``KicadProjectReader.resolve``.
-        config: Effective configuration after the precedence chain
-            (``cli > env > yaml > default``).
-        dry_run: ``True`` enables read-only mode (no writes, no git ops).
-        verbose_level: 0 = quiet, 1 = ``-v``, 2 = ``-v -d``.
-        debug: ``True`` enables implementation-private debug output;
-            independent of :attr:`verbose_level`.
-    """
-
-    project_arg: str
-    config: KprojConfig
-    dry_run: bool = False
-    verbose_level: int = 0
-    debug: bool = False
-
-
-@dataclass(frozen=True)
-class PublishResult:
-    """Outcome of a :meth:`PublishWorkflow.run` invocation.
-
-    Attributes:
-        outcome: One of the values in :data:`Outcome`.
-        exit_code: Process exit code per ``docs/DESIGN.md`` § *Exit
-            code mapping* — 0 / 1 / 2.
-        message: Human-readable summary intended for stderr.
-        findings: Findings emitted during the run (used by the
-            front-matter summary + exit-code-1 detection).
-        produced_paths: Paths the run wrote (or would have written
-            in dry-run). Stable for verbose-mode logging.
-    """
-
-    outcome: Outcome
-    exit_code: int
-    message: str = ""
-    findings: tuple[Finding, ...] = field(default_factory=tuple)
-    produced_paths: tuple[Path, ...] = field(default_factory=tuple)
+__all__ = [
+    "DesignAnalyzerFactory",
+    "Outcome",
+    "PublishRequest",
+    "PublishResult",
+    "PublishWorkflow",
+]
 
 
 class PublishWorkflow:
-    """Walking-skeleton publish pipeline orchestrator.
+    """Publish-pipeline orchestrator (wave-2 read + analyze + status).
 
-    The foundation slice executes the pre-flight portion of the
-    pipeline described in ``docs/DESIGN.md`` § *Pipeline orchestration
-    sequence*:
+    Per ``docs/DESIGN.md`` § *Pipeline orchestration sequence* steps 1-4:
 
     1. Resolve the project via :class:`KicadProjectReader`.
     2. Discover the ``kicad-cli`` executable (config override or
        :func:`find_kicad_cli`) and verify its major version is 9.x.
-    3. Print a one-line "kproj: kicad-cli <version> at <path>" to
-       stderr for auditability.
+    3. Read title-block metadata + apply per-field precedence.
+    4. Run :class:`MetadataAnalyzer` (14-rule audit) and
+       :class:`DesignAnalyzer` (DRC + ERC) and merge their findings
+       into a single :class:`AnalysisInfo`.
+    5. Status detection: ``status == "private"`` short-circuits with
+       ``outcome="private-skip"`` BEFORE the iBOM / site-cleanliness
+       pre-flight that wave-3 will add (per PRD Story 7).
 
-    On any pre-flight failure the workflow returns
-    ``PublishResult(outcome="failed", exit_code=2)`` with a clear
-    stderr-ready message. On pre-flight success, the workflow also
-    returns ``failed``/``2`` because the downstream services are still
-    stubs; the message indicates the walking-skeleton state.
+    Downstream steps 5-11 (new-release detection, ChangeJournal scope,
+    artifact generation, site writes, git push) remain stubbed in
+    wave-2 and surface as ``outcome="failed"`` with a clear
+    walking-skeleton message.
 
-    Constructor accepts an optional :class:`KicadProjectReader` so
-    tests can inject a stand-in without monkeypatching imports.
+    The constructor accepts an optional :class:`KicadProjectReader`,
+    :class:`MetadataAnalyzer`, and :class:`DesignAnalyzer` so tests
+    can inject stand-ins without monkeypatching imports.
     """
 
-    def __init__(self, *, project_reader: KicadProjectReader | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        project_reader: KicadProjectReader | None = None,
+        metadata_analyzer: MetadataAnalyzer | None = None,
+        design_analyzer_factory: DesignAnalyzerFactory | None = None,
+    ) -> None:
         """Construct a workflow.
 
         Args:
-            project_reader: Optional custom :class:`KicadProjectReader`
-                instance. Defaults to a fresh one with the SPCoast
-                ``~/Dropbox/KiCad/projects/`` basename root.
+            project_reader: Optional :class:`KicadProjectReader`.
+                Defaults to a fresh instance using the SPCoast basename
+                root ``~/Dropbox/KiCad/projects/``.
+            metadata_analyzer: Optional :class:`MetadataAnalyzer` for
+                test injection.  Defaults to a fresh instance.
+            design_analyzer_factory: Callable returning a configured
+                :class:`DesignAnalyzer` given a discovered ``kicad-cli``
+                path.  Defaults to ``DesignAnalyzer``.  Tests may pass
+                a callable that returns a fake to avoid invoking real
+                kicad-cli.
         """
         self._project_reader = project_reader or KicadProjectReader()
+        self._metadata_analyzer = metadata_analyzer or MetadataAnalyzer()
+        self._design_analyzer_factory = design_analyzer_factory or DesignAnalyzer
 
     def run(self, request: PublishRequest) -> PublishResult:
         """Run the publish pipeline against *request*.
@@ -125,18 +118,18 @@ class PublishWorkflow:
             request: The bundled inputs (project arg + config + flags).
 
         Returns:
-            A :class:`PublishResult` describing the run.
-
-        Notes:
-            Foundation-slice semantics: pre-flight is fully implemented;
-            steps 2+ (read / analyze / export / publish) are stubbed.
+            A :class:`PublishResult` describing the run.  ``outcome`` is
+            ``"private-skip"`` when the project is marked private,
+            ``"failed"`` for any pre-flight failure or any path that
+            reaches the wave-2 walking-skeleton boundary at step 5+.
+            ``exit_code`` is populated via
+            :func:`kproj.model.publish_result.compute_exit_code`.
         """
         try:
             resolved = self._project_reader.resolve(request.project_arg)
         except ProjectResolutionError as exc:
-            return PublishResult(
-                outcome="failed",
-                exit_code=2,
+            return PublishResult.build(
+                "failed",
                 message=f"kproj: project resolution failed: {exc}",
             )
 
@@ -144,16 +137,14 @@ class PublishWorkflow:
             kicad_cli = self._resolve_kicad_cli(request.config)
             major, minor, patch = kicad_version(kicad_cli)
         except KicadNotFoundError as exc:
-            return PublishResult(
-                outcome="failed",
-                exit_code=2,
+            return PublishResult.build(
+                "failed",
                 message=f"kproj: {exc}",
             )
 
         if major != _SUPPORTED_KICAD_MAJOR:
-            return PublishResult(
-                outcome="failed",
-                exit_code=2,
+            return PublishResult.build(
+                "failed",
                 message=(
                     f"kproj: unsupported kicad-cli version {major}.{minor}.{patch} "
                     f"at {kicad_cli} (kproj v1 requires major version {_SUPPORTED_KICAD_MAJOR}.x)."
@@ -165,13 +156,36 @@ class PublishWorkflow:
             file=sys.stderr,
         )
 
-        return PublishResult(
-            outcome="failed",
-            exit_code=2,
+        # Steps 2-3: read project metadata, then merge metadata + DRC/ERC findings.
+        # The merged AnalysisInfo flows into status detection (step 4) and any
+        # downstream PublishResult so the exit-code mapping sees them.
+        project_info, read_findings = self._project_reader.read(resolved)
+        metadata_analysis = self._metadata_analyzer.analyze(project_info, resolved.project_dir)
+        design_analyzer = self._design_analyzer_factory(kicad_cli)
+        design_analysis = design_analyzer.analyze(resolved)
+        analysis = AnalysisInfo(
+            findings=tuple(read_findings) + metadata_analysis.findings + design_analysis.findings
+        )
+
+        # Step 4: status detection - a private project must short-circuit BEFORE
+        # the iBOM / site-cleanliness pre-flight that the wave-3 worker wires in.
+        if project_info.status is Status.PRIVATE:
+            return PublishResult.build(
+                "private-skip",
+                message=(
+                    f"kproj: {resolved.basename!r} is status=private; "
+                    "audit + DRC/ERC ran for stderr only, no site writes."
+                ),
+                findings=analysis.findings,
+            )
+
+        return PublishResult.build(
+            "failed",
             message=(
-                f"kproj: pre-flight succeeded for {resolved.basename!r}; the rest of "
-                "the publish pipeline is not yet implemented (foundation walking-skeleton)."
+                f"kproj: pre-flight + read + analyze succeeded for {resolved.basename!r}; "
+                "the rest of the publish pipeline (steps 5\u201311) is not yet implemented."
             ),
+            findings=analysis.findings,
         )
 
     @staticmethod

@@ -1,9 +1,11 @@
-"""Smoke tests for the foundation-slice service stubs.
+"""Smoke tests for the still-stubbed downstream services.
 
-Each downstream service's primary method must raise
-:class:`NotImplementedError` per the issue #1 acceptance criteria.
-These tests pin the contract so a future slice cannot silently
-remove the stub.
+Wave-2 retires the ``MetadataAnalyzer`` / ``DesignAnalyzer`` /
+``KicadProjectReader`` stub assertions - those services are
+implemented now and have their own test modules.  The exporters,
+packagers, iBOM generator, and site publisher remain wave-1 stubs
+until wave-3 wires them in; their NotImplementedError contract is
+still pinned here.
 """
 
 from __future__ import annotations
@@ -16,10 +18,8 @@ from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.publication import Publication
 from kproj.services.change_journal import ChangeJournal
-from kproj.services.design_analyzer import DesignAnalyzer
 from kproj.services.fab_packager import FabPackager
 from kproj.services.ibom_generator import IbomGenerator
-from kproj.services.metadata_analyzer import MetadataAnalyzer
 from kproj.services.pcb_exporter import PcbExporter
 from kproj.services.schematic_exporter import SchematicExporter
 from kproj.services.site_publisher import SitePublisher
@@ -40,20 +40,6 @@ def _project_info() -> ProjectInfo:
         overview="o",
         status=Status.ACTIVE,
     )
-
-
-def test_metadata_analyzer_stub_raises(tmp_path: Path) -> None:
-    """``MetadataAnalyzer.analyze`` is unimplemented in the foundation slice."""
-    with pytest.raises(NotImplementedError):
-        MetadataAnalyzer().analyze(_project_info(), tmp_path)
-
-
-def test_design_analyzer_stub_raises(tmp_path: Path) -> None:
-    """``DesignAnalyzer.analyze`` is unimplemented in the foundation slice."""
-    with pytest.raises(NotImplementedError):
-        DesignAnalyzer(kicad_cli=tmp_path / "kicad-cli").analyze(
-            resolved=None  # type: ignore[arg-type]
-        )
 
 
 def test_pcb_exporter_stub_raises(tmp_path: Path) -> None:
