@@ -6,6 +6,62 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - issue #4 (Phase 6 wave-4: publishing + formatters + Behave)
+
+- `src/kproj/formatters/stderr_formatter.py`: `StderrFormatter.format_findings()`
+  renders each `Finding` as a one-liner on stderr in the format
+  `<severity> [<field>] <project>:<field>: <reason> (value: <value>)` per
+  ADR 0004 § *What "surfaced" means*. `(value: …)` suppressed when empty;
+  `<project>:` suppressed when project is empty.
+- `src/kproj/formatters/markdown_table_formatter.py`: `MarkdownTableFormatter.render()`
+  produces two adjacent Markdown tables — *Metadata Audit* (findings whose `field`
+  is in the closed `AUDIT_FIELDS` set) and *DRC / ERC Findings* — matching the
+  version-page body contract in `docs/DESIGN.md` § *Front-matter shape*. Both
+  sections always present; empty sections show an italicised no-findings row.
+- `src/kproj/formatters/front_matter_summary_formatter.py`:
+  `FrontMatterSummaryFormatter.render(publication)` produces the full YAML front-
+  matter for `_versions/<P>/<R>.md` per the authoritative contract in `docs/DESIGN.md`
+  § *Front-matter shape*. Includes `iskicad: true` / `'obsolete'` (retired/replaced-by),
+  all Jekyll-required fields, `images:` + `artifacts:` lists, `audit:`/`drc:`/`erc:`
+  count summaries, and the `libraries:` three-bucket YAML section
+  (`internal:`/`external:`/`ambiguous:`) introduced by kproj#4 wave-3 scope.
+  Also exposes `render_audit(analysis_info) -> dict` for backward compatibility.
+- `src/kproj/model/publication.py`: added `readme_md: str = ""` field carrying the
+  project's README.md content for writing `pages/<P>.md` + new-release detection.
+- `src/kproj/services/site_publisher.py`: full `SitePublisher` implementation replacing
+  the foundation stub. `detect_outcome(publication, site_repo)` static method computes
+  `"noop"` / `"refresh"` / `"publish"` by (1) checking version file existence, (2)
+  checking asset presence in the site repo, (3) comparing rendered version content to
+  on-disk content, (4) comparing `pages/<P>.md` body to `publication.readme_md`.
+  `publish(publication, site_repo, no_push, dry_run)` writes `_versions/<P>/<R>.md` +
+  `pages/<P>.md` atomically via tempfile + `os.replace`, registers both with the
+  `ChangeJournal` (ADR 0005), runs `git add` + `git commit` + (unless `no_push`)
+  `git push`, marks the journal `committed`/`pushed`. Commit message patterns:
+  `add: <P> <R>` (first-ever publish), `publish: <P>-<R>` (new version), `refresh:
+  <P>-<R> (metadata updated)` (refresh). Dry-run skips all writes and git ops.
+- `src/kproj/application/publish_workflow.py`: wires all 11 DESIGN pipeline steps.
+  Steps 5–11 added: iBOM pre-flight (`ibom_script_locator` injectable), site-repo
+  cleanliness check (`git status --porcelain`, skipped on `dry_run`), new-release
+  detection via `SitePublisher.detect_outcome`, `ChangeJournal` scope, artifact
+  generation (`artifact_generator` injectable, default calls all real exporters +
+  packagers), `build_publication` (now accepts `readme_md` and reads `README.md`
+  via `_read_readme`), `SitePublisher.publish`. New injectable factories:
+  `ibom_script_locator`, `artifact_generator`, `site_publisher_factory`. Helper
+  functions: `_read_readme`, `_compute_standard_asset_refs`, `_default_artifact_generator`.
+  Pipeline exceptions (`SubprocessFailedError`, `SubprocessTimeoutError`, `OSError`)
+  are caught and returned as `outcome="failed"`.
+- **Test coverage (unit + Behave)**: 319 unit tests, 14 Behave scenarios covering
+  PRD Stories 1-13. Feature files: `publish.feature` (Stories 1, 13), `dry_run.feature`
+  (Story 2), `project_resolution.feature` (Story 3), `findings_surfaced.feature`
+  (Stories 4, 5), `metadata_refresh.feature` (Story 6), `private_status.feature`
+  (Story 7 - pre-existing), `batch_safety.feature` (Stories 8, 9), `site_repo_cleanliness.feature`
+  (Story 10), `verbose.feature` (Story 12). Stories 14-18 documented as Phase 7
+  manual-validation in `publish.feature` comments (cross the Jekyll build).
+- **iBOM stub choice** (`publish_steps.py`): the Behave artifact generator writes
+  placeholder `.ibom.html` files without invoking real iBOM (gated on kproj#10
+  spike). The pipeline orchestration is fully tested; iBOM integration is contract-
+  tested separately in `tests/contract/test_ibom_generator.py`.
+
 ### Added - issue #2 (Phase 6 wave-2: read services)
 - `pyproject.toml`: depend on `jbom>=7.3.0` (PR plocher/jBOM#333 merged);
   local-editable `tool.uv.sources` path during development; mypy override

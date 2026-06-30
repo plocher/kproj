@@ -22,6 +22,7 @@ this service:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import tempfile
@@ -62,7 +63,7 @@ def _git_run(
             :exc:`~kproj.common.subprocess_runner.SubprocessFailedError`.
     """
     subprocess_run(
-        ["git", "-C", str(site_repo)] + cmd,
+        ["git", "-C", str(site_repo), *cmd],
         timeout=DEFAULT_GIT_TIMEOUT,
         check=check,
     )
@@ -196,7 +197,7 @@ class SitePublisher:
             str(version_file.relative_to(site_repo)),
             str(pages_file.relative_to(site_repo)),
         ]
-        _git_run(["add"] + touched, site_repo=site_repo)
+        _git_run(["add", *touched], site_repo=site_repo)
         _git_run(["commit", "-m", commit_msg], site_repo=site_repo)
         self._journal.mark_committed()
 
@@ -299,10 +300,8 @@ def _atomic_write(path: Path, content: str) -> None:
             f.write(content)
         os.replace(tmp_name, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 

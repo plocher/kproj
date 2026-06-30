@@ -18,7 +18,6 @@ from collections.abc import Sequence
 
 from ..model.finding import Finding
 
-
 AUDIT_FIELDS: frozenset[str] = frozenset(
     {
         # Structural / file checks
@@ -99,7 +98,7 @@ def _render_audit_table(findings: Sequence[Finding]) -> str:
         f"| {_escape_pipe(f.reason)} |"
         for f in findings
     ]
-    return "\n".join([header, "", col_headers, separator] + rows)
+    return "\n".join([header, "", col_headers, separator, *rows])
 
 
 def _render_drc_table(findings: Sequence[Finding]) -> str:
@@ -118,7 +117,7 @@ def _render_drc_table(findings: Sequence[Finding]) -> str:
         f"| {_escape_pipe(f.reason)} |"
         for f in findings
     ]
-    return "\n".join([header, "", col_headers, separator] + rows)
+    return "\n".join([header, "", col_headers, separator, *rows])
 
 
 def _escape_pipe(text: str) -> str:
