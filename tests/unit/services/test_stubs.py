@@ -20,8 +20,6 @@ from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.publication import Publication
 from kproj.services.change_journal import ChangeJournal
 from kproj.services.site_publisher import SitePublisher
-from kproj.services.source_packager import SourcePackager
-from kproj.services.zip_archiver import ZipArchiver
 
 
 def _project_info() -> ProjectInfo:
@@ -37,14 +35,6 @@ def _project_info() -> ProjectInfo:
         overview="o",
         status=Status.ACTIVE,
     )
-
-
-def test_source_packager_stub_raises(tmp_path: Path) -> None:
-    """``SourcePackager.package`` is unimplemented in the foundation slice."""
-    with pytest.raises(NotImplementedError):
-        SourcePackager(zip_archiver=ZipArchiver()).package(
-            project_dir=tmp_path, output=tmp_path / "out.zip"
-        )
 
 
 def test_site_publisher_stub_raises(tmp_path: Path) -> None:

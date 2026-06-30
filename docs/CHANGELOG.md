@@ -116,6 +116,33 @@ versioning per [SemVer](https://semver.org).
   discovery is ambiguous. Emits a `production_stale` warning when
   production files are older than the PCB. Atomic via sibling-
   tempfile + `os.replace`; optional ChangeJournal injection.
+- `services/source_packager.py`: `SourcePackager.package(project_dir,
+  output, *, title, rev)` per `docs/DESIGN.md` § SourcePackager. Walks
+  `project_dir` applying the documented include/exclude rules and
+  assembles the matching project files into `<P>-<R>.source.zip` via
+  an atomic sibling-tempfile + `os.replace`. Optional ChangeJournal
+  injection registers the produced zip for ADR-0005 rollback.
+- Drop `SOURCE_README.md` from `source.zip` output; `SourcePackager`
+  just packages project files. The generic "how to install KiCad and
+  open a .kicad_pro" content was bureaucratic noise, and KiCad's own
+  UI surfaces missing libraries on project open - so no per-archive
+  manifest is needed. PRD Story 17 + DESIGN § SourcePackager +
+  `docs/phase4-resolutions.md` M7 row updated to match.
+
+### Design decisions (Wave 2 architect-review carry-forwards)
+
+- **ChangeJournal injection pattern**: producers accept the journal
+  as an optional method parameter, not a constructor argument.
+  Services are reusable across publish runs; the journal is
+  per-publish-run. The journal is registered with
+  `will_create(output)` *before* the subprocess invocation so that
+  even mid-step kicad-cli failure leaves the journal coherent for
+  ADR-0005 rollback.
+- **Atomic write pattern**: all five producers use a hidden
+  sibling-tempfile (`.<stem>.<8hex>.part<suffix>`) + `os.replace`.
+  Keeping the original suffix on the tempfile means kicad-cli /
+  iBOM scripts that infer output format from extension still see
+  the expected suffix.
 
 ### Added - issue #1 (Phase 6 foundation)
 
