@@ -196,3 +196,94 @@ def test_main_exit_code_zero_on_clean_run(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
     assert cli.main(["/tmp/proj"]) == 0
+
+
+# ----------------------------------------------------------------------
+# BLOCKER 4 regressions: findings must surface on stderr (ADR 0004)
+# ----------------------------------------------------------------------
+
+
+def _stub_workflow_returning(result: PublishResult) -> type:
+    """Return a stub workflow class whose ``run`` returns *result* verbatim."""
+
+    class _Stub:
+        def run(self, request: PublishRequest) -> PublishResult:
+            return result
+
+    return _Stub
+
+
+def test_main_prints_findings_to_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """ADR 0004: every audit/DRC/ERC finding must be printed to stderr.
+
+    The pre-fix CLI emitted only ``result.message``; findings only
+    showed up via the exit code (and indirectly in the version page),
+    never on the user's terminal.  The fix wires ``StderrFormatter``
+    into ``main()`` so every Finding is one stderr line.
+    """
+    findings = (
+        Finding(
+            severity=Severity.WARNING,
+            field="comment9_missing",
+            value="",
+            reason="COMMENT9 absent",
+            project="Demo",
+        ),
+        Finding(
+            severity=Severity.ERROR,
+            field="drc_violation",
+            value="(50, 75)",
+            reason="silk overlap",
+            project="Demo",
+        ),
+    )
+    result = PublishResult(
+        outcome="published",
+        exit_code=1,
+        message="kproj: published Demo-1.0B.",
+        findings=findings,
+    )
+    monkeypatch.setattr(cli, "PublishWorkflow", _stub_workflow_returning(result))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    exit_code = cli.main(["/tmp/proj"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "comment9_missing" in captured.err, (
+        f"BLOCKER 4: audit finding missing from stderr; got: {captured.err!r}"
+    )
+    assert "drc_violation" in captured.err
+    assert "silk overlap" in captured.err
+
+
+def test_main_emits_nothing_extra_when_findings_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """An empty findings tuple must not add noise on stderr."""
+    result = PublishResult(
+        outcome="published",
+        exit_code=0,
+        message="kproj: published Demo-1.0B.",
+        findings=(),
+    )
+    monkeypatch.setattr(cli, "PublishWorkflow", _stub_workflow_returning(result))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    cli.main(["/tmp/proj"])
+    captured = capsys.readouterr()
+
+    # The only stderr content should be the result message itself.
+    assert captured.err.strip() == "kproj: published Demo-1.0B."

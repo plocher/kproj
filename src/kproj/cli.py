@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .application.publish_workflow import PublishWorkflow
 from .config import ConfigOverrides, load_config
+from .formatters.stderr_formatter import StderrFormatter
 from .model.publish_request import PublishRequest
 from .model.publish_result import PublishResult, compute_exit_code
 
@@ -195,9 +196,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     workflow = PublishWorkflow()
     result = workflow.run(request)
+    _render_result_to_stderr(result, verbose_level=request.verbose_level)
+    return resolve_exit_code(result)
+
+
+def _render_result_to_stderr(result: PublishResult, *, verbose_level: int) -> None:
+    """Print the workflow result's findings + summary message to stderr.
+
+    ADR 0004 ("show what is provided") and PRD Story 5 require every
+    audit/DRC/ERC finding to surface on the user's terminal at default
+    verbosity.  The pre-fix CLI emitted only ``result.message``, so
+    findings could set ``exit_code=1`` and land in the version page
+    while remaining invisible to the user (BLOCKER 4).
+
+    Args:
+        result: The :class:`PublishResult` returned by
+            :meth:`PublishWorkflow.run`.
+        verbose_level: 0 = default (findings + message), 1+ = future
+            command-line / subprocess diagnostics (verbose wiring is
+            tracked as a Phase 6 follow-up issue).
+    """
+    if result.findings:
+        formatter = StderrFormatter(verbose_level=verbose_level)
+        rendered = formatter.format_findings(result.findings)
+        if rendered:
+            print(rendered, file=sys.stderr)
     if result.message:
         print(result.message, file=sys.stderr)
-    return resolve_exit_code(result)
 
 
 if __name__ == "__main__":  # pragma: no cover
