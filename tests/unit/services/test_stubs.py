@@ -20,7 +20,6 @@ from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.publication import Publication
 from kproj.services.change_journal import ChangeJournal
 from kproj.services.fab_packager import FabPackager
-from kproj.services.ibom_generator import IbomGenerator
 from kproj.services.site_publisher import SitePublisher
 from kproj.services.source_packager import SourcePackager
 from kproj.services.zip_archiver import ZipArchiver
@@ -39,16 +38,6 @@ def _project_info() -> ProjectInfo:
         overview="o",
         status=Status.ACTIVE,
     )
-
-
-def test_ibom_generator_stub_raises(tmp_path: Path) -> None:
-    """``IbomGenerator.generate`` is unimplemented in the foundation slice."""
-    with pytest.raises(NotImplementedError):
-        IbomGenerator(ibom_script=tmp_path / "ibom.py").generate(
-            pcb_path=tmp_path / "x.kicad_pcb",
-            output_dir=tmp_path,
-            name_format="demo",
-        )
 
 
 def test_fab_packager_stub_raises(tmp_path: Path) -> None:

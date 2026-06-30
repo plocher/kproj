@@ -92,6 +92,18 @@ versioning per [SemVer](https://semver.org).
   `root_only=True` mode) multiple SVGs.
 - Contract tests against the local kicad-cli for `sch export svg`
   (root-only, XML/SVG header) + `sch export pdf` (`%PDF-` header).
+- `services/ibom_generator.py`: `IbomGenerator.generate(pcb_path,
+  output_file, name_format)` per ADR 0008. Invokes
+  `<sys.executable> <ibom_script> --no-browser --no-compression
+  --dest-dir <tempdir> --name-format <P>-<R>.ibom --extra-data-file
+  <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer
+  --include-tracks <pcb>` directly via `common.subprocess_runner`,
+  then atomically moves `<tempdir>/<name_format>.html` into
+  *output_file*. Signature changed from the foundation stub's
+  `output_dir` form to `output_file` so callers don't have to know
+  the iBOM staging-dir convention.
+- Contract test against the locally-installed iBOM PCM plugin
+  (skipif when not present).
 
 ### Added - issue #1 (Phase 6 foundation)
 
