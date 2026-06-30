@@ -173,6 +173,47 @@ def test_generate_registers_with_change_journal(
         assert output in set(journal.all_paths())
 
 
+def test_generate_sets_interactive_html_bom_no_display_env(
+    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The subprocess env must include ``INTERACTIVE_HTML_BOM_NO_DISPLAY=1``.
+
+    The PCM-installed iBOM script imports wxPython unless this env var is
+    set, and kproj runs headless (ADR 0007 + ADR 0008).  Pin the value
+    here so a future refactor doesn't silently drop it and re-break the
+    KiCad-10-host iBOM contract.
+    """
+    captured_env: dict[str, str] = {}
+
+    def _capture_run(command: Iterable[Any], **kwargs: Any) -> subprocess_runner.SubprocessResult:
+        env = kwargs.get("env") or {}
+        captured_env.update(env)
+        argv = [str(a) for a in command]
+        dest_idx = argv.index("--dest-dir") + 1
+        name_idx = argv.index("--name-format") + 1
+        dest_dir = Path(argv[dest_idx])
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        (dest_dir / f"{argv[name_idx]}.html").write_text("<html/>")
+        return subprocess_runner.SubprocessResult(
+            command=tuple(argv),
+            returncode=0,
+            stdout="",
+            stderr="",
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(ibom_generator_module, "subprocess_run", _capture_run)
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "demo.ibom.html"
+    IbomGenerator(ibom_script=ibom_script).generate(
+        pcb_path=pcb,
+        output_file=output,
+        name_format="demo.ibom",
+    )
+    assert captured_env.get("INTERACTIVE_HTML_BOM_NO_DISPLAY") == "1"
+
+
 def test_generate_propagates_subprocess_failure(
     ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

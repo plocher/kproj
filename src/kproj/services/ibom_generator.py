@@ -43,6 +43,15 @@ from ..common.subprocess_runner import run as subprocess_run
 from ..model.export_result import ExportResult
 from .change_journal import ChangeJournal
 
+_IBOM_HEADLESS_ENV_VAR = "INTERACTIVE_HTML_BOM_NO_DISPLAY"
+"""Set in the subprocess env so iBOM doesn't require wxPython for display init.
+
+The PCM-installed iBOM script imports wxPython unconditionally unless this
+env var is set, and `wxPython` is typically not in the kproj venv (we're a
+non-interactive Makefile / CI tool per ADR 0007 + ADR 0008).  Setting the
+var lets the script run headless against the locally-installed PCM iBOM.
+"""
+
 
 class IbomGenerator:
     """Interactive HTML BOM generator.
@@ -122,7 +131,13 @@ class IbomGenerator:
                 str(pcb_path),
             ]
             started = time.monotonic()
-            result = subprocess_run(argv, timeout=DEFAULT_KICAD_TIMEOUT, check=True)
+            env = {**os.environ, _IBOM_HEADLESS_ENV_VAR: "1"}
+            result = subprocess_run(
+                argv,
+                timeout=DEFAULT_KICAD_TIMEOUT,
+                check=True,
+                env=env,
+            )
             elapsed = time.monotonic() - started
 
             produced = staging_dir / f"{name_format}.html"

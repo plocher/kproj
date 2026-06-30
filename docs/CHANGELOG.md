@@ -151,6 +151,31 @@ versioning per [SemVer](https://semver.org).
   `docs/phase4-resolutions.md` M7 second follow-up capture the
   design.
 
+### Fixed - issue #3 (wave-3 follow-up)
+
+- `common/kicad_install.py`: probe KiCad 10 install paths in
+  addition to KiCad 9 (`KICAD10_3RD_PARTY` env var,
+  `~/Documents/KiCad/10.0/3rdparty/` on macOS,
+  `~/.local/share/kicad/10.0/3rdparty/` on Linux,
+  `%APPDATA%\kicad\10.0\3rdparty\` and
+  `C:\Program Files\KiCad\10.0\bin\kicad-cli.exe` on Windows) -
+  KiCad 10 first, KiCad 9 fallback.  The `iBOM` contract test
+  was silently skipping on KiCad 10 hosts because the v9-only
+  probe tables couldn't see the v10 plugins.  The workflow's
+  major-version gate now reads from a new
+  `SUPPORTED_KICAD_MAJORS = frozenset({9, 10})` module-level
+  constant so the locator + workflow agree on which majors get
+  probed AND accepted. ADR 0009 amended with a "Version support"
+  addendum capturing the probe order and the policy for future
+  KiCad majors.
+- `services/ibom_generator.py`: pass
+  `INTERACTIVE_HTML_BOM_NO_DISPLAY=1` in the subprocess env when
+  invoking the PCM iBOM script. The script imports wxPython
+  unconditionally otherwise, and kproj runs headless per ADR 0007
+  + ADR 0008 (Makefile / CI use case).  Defect surfaced by the
+  iBOM contract test once the locator started actually finding
+  the v10 script.
+
 ### Design decisions (Wave 2 architect-review carry-forwards)
 
 - **ChangeJournal injection pattern**: producers accept the journal

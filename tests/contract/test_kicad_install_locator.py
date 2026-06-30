@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from kproj.common.kicad_install import (
+    SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
     find_ibom_script,
     find_kicad_cli,
@@ -63,19 +64,24 @@ def test_find_kicad_cli_returns_existing_executable() -> None:
 def test_kicad_version_returns_sane_major() -> None:
     """``kicad_version`` returns a plausible ``(major, minor, patch)`` tuple.
 
-    v1 supports the 9.x line per ADR 0009; this test asserts only that
-    the parser produces a sane tuple, not which major version is
-    installed (developer machines may carry 8.x or 9.x during
-    transitions).
+    v1 supports the 9.x and 10.x lines per ADR 0009 (Version-support
+    addendum). On the contract-test host the discovered major version
+    must be in :data:`SUPPORTED_KICAD_MAJORS` so the workflow's
+    version gate will accept it; if the host runs an older major the
+    workflow itself would reject the install, so we pin the assertion
+    here.
     """
     binary = find_kicad_cli()
     major, minor, patch = kicad_version(binary)
-    assert major >= 7  # KiCad ≥ 7 is the floor for kicad-cli existence
+    assert major in SUPPORTED_KICAD_MAJORS
     assert minor >= 0
     assert patch >= 0
 
 
-@pytest.mark.skipif(not _plugins_dir_available(), reason="KiCad 9 plugins dir not present locally")
+@pytest.mark.skipif(
+    not _plugins_dir_available(),
+    reason="KiCad 9.x / 10.x plugins dir not present locally",
+)
 def test_find_plugins_dir_returns_existing_directory() -> None:
     """The discovered plugins root exists and is a directory."""
     plugins = find_plugins_dir()

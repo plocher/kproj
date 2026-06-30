@@ -21,6 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..common.kicad_install import (
+    SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
     find_kicad_cli,
     kicad_version,
@@ -42,8 +43,10 @@ from ..services.metadata_analyzer import MetadataAnalyzer
 
 _log = logging.getLogger(__name__)
 
-_SUPPORTED_KICAD_MAJOR = 9
-"""v1 enforces KiCad major version 9.x per docs/DESIGN.md § Pipeline orchestration."""
+"""v1 supports KiCad 9.x and 10.x; the canonical set lives in
+:data:`kproj.common.kicad_install.SUPPORTED_KICAD_MAJORS` so the
+locator + workflow agree on which majors get probed AND accepted.
+"""
 
 DesignAnalyzerFactory = Callable[[Path], DesignAnalyzer]
 """Callable used to construct a :class:`DesignAnalyzer` once kicad-cli is known.
@@ -145,12 +148,13 @@ class PublishWorkflow:
                 message=f"kproj: {exc}",
             )
 
-        if major != _SUPPORTED_KICAD_MAJOR:
+        if major not in SUPPORTED_KICAD_MAJORS:
+            allowed = ", ".join(f"{m}.x" for m in sorted(SUPPORTED_KICAD_MAJORS))
             return PublishResult.build(
                 "failed",
                 message=(
                     f"kproj: unsupported kicad-cli version {major}.{minor}.{patch} "
-                    f"at {kicad_cli} (kproj v1 requires major version {_SUPPORTED_KICAD_MAJOR}.x)."
+                    f"at {kicad_cli} (kproj v1 supports {allowed})."
                 ),
             )
 
