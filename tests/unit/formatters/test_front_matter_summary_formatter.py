@@ -118,8 +118,22 @@ class TestRequiredTopLevelFields:
     def test_design_rev_field(self) -> None:
         assert _parse(_pub())["design_rev"] == "1.0"
 
-    def test_date_field(self) -> None:
-        assert _parse(_pub())["date"] == "2026.04"
+    def test_issue_date_field(self) -> None:
+        # The SPCoast YYYY.MM title-block date is emitted as `issue_date`;
+        # Hugo's reserved `date` carries the publish timestamp instead.
+        assert _parse(_pub())["issue_date"] == "2026.04"
+
+    def test_date_omitted_when_no_published_at(self) -> None:
+        # Unit fixtures don't set published_at, so `date` is omitted -
+        # no unparseable placeholder reaches Hugo.
+        assert "date" not in _parse(_pub())
+
+    def test_date_emitted_from_published_at(self) -> None:
+        raw = FrontMatterSummaryFormatter().render(
+            _pub(published_at="2026-07-01T12:00:00+00:00"), GENERIC_SITE_PROFILE
+        )
+        assert "2026-07-01T12:00:00+00:00" in raw  # Hugo's parseable date
+        assert "issue_date:" in raw  # YYYY.MM still emitted separately
 
     def test_status_field(self) -> None:
         assert _parse(_pub())["status"] == "active"

@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..common.kicad_install import (
@@ -342,6 +343,12 @@ class PublishWorkflow:
             project_info.project, project_info.board_rev, include_fab=include_fab
         )
 
+        # Publish timestamp = kproj execution time, emitted as Hugo's
+        # reserved ``date`` field.  Computed once per run so the version
+        # page + (future) reuse share one value.  It is a *volatile* key
+        # in new-release detection (a plain re-run stays a no-op).
+        published_at = _publish_timestamp()
+
         preliminary_pub = PublishWorkflow.build_publication(
             resolved,
             project_info,
@@ -350,6 +357,7 @@ class PublishWorkflow:
             readme_md=readme_md,
             images=images_refs,
             artifacts=artifact_refs,
+            published_at=published_at,
         )
 
         preliminary_outcome = SitePublisher.detect_outcome(
@@ -430,6 +438,7 @@ class PublishWorkflow:
                     readme_md=readme_md,
                     images=actual_images,
                     artifacts=actual_artifacts,
+                    published_at=published_at,
                 )
 
                 # Step 10: SitePublisher.publish.  Pass the workflow's
@@ -499,6 +508,7 @@ class PublishWorkflow:
         readme_md: str = "",
         images: tuple[AssetRef, ...] = (),
         artifacts: tuple[AssetRef, ...] = (),
+        published_at: str = "",
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
@@ -512,9 +522,12 @@ class PublishWorkflow:
             project_info: Title-block + audit-ready facts.
             analysis_info: Audit + DRC/ERC findings merged.
             body_md: Pre-rendered Markdown body (audit + DRC/ERC tables).
-            readme_md: Project README.md content for ``pages/<P>.md``.
+            readme_md: Project README.md content for the project section
+                index ``<versions_dir>/<P>/_index.md``.
             images: Image asset refs.
             artifacts: Artifact asset refs.
+            published_at: Publish timestamp for Hugo's ``date`` field
+                (empty string omits it).
 
         Returns:
             A populated :class:`Publication`.
@@ -524,6 +537,7 @@ class PublishWorkflow:
             analysis_info=analysis_info,
             body_md=body_md,
             readme_md=readme_md,
+            published_at=published_at,
             images=images,
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
@@ -539,6 +553,17 @@ def _read_readme(project_dir: Path) -> str:
     if readme.is_file():
         return readme.read_text(encoding="utf-8")
     return ""
+
+
+def _publish_timestamp() -> str:
+    """Return the current UTC time as an RFC3339 string for Hugo's ``date``.
+
+    Hugo requires its reserved ``date`` front-matter field to be a
+    parseable date; the kproj execution time serves as the page's
+    publish timestamp.  Seconds precision (microseconds dropped) keeps
+    the value tidy.
+    """
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _compute_standard_asset_refs(

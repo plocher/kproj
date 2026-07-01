@@ -619,7 +619,8 @@ iskicad: true                      # Phase 1 closeout discriminator: true | 'obs
 sidebar: spcoast_sidebar
 project: <project-basename>        # consumed by eagle.html's site.versions | where: "project", page.project
 title: <board_rev>                 # e.g. 1.0B — per-version key; consumed by version tabs
-date: <YYYY.MM>                    # PCB title-block date
+date: <RFC3339>                    # Hugo's reserved publish date = kproj execution time (parseable). VOLATILE: ignored in new-release detection so a plain re-run stays a no-op.
+issue_date: <YYYY.MM>              # PCB title-block date (SPCoast convention). Custom key; Hugo ignores it. (Was `date:` pre-Hugo; renamed because Hugo requires `date` to be a parseable date.)
 design_rev: <sch_rev>              # kproj convention; not consumed by eagle.html
 board_rev: <board_rev>             # same as title; convenience for grep/audit
 designer: <comment1>               # consumed (informational)

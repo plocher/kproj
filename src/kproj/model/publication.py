@@ -56,6 +56,14 @@ class Publication:
             on-disk section-index body differs, a ``"refresh"`` outcome
             is triggered.  Defaults to an empty string when the project
             has no README.
+        published_at: The kproj execution / publish time, emitted as the
+            version page's Hugo-reserved ``date`` front-matter field
+            (Hugo requires ``date`` to be a parseable date; the
+            title-block ``YYYY.MM`` value is emitted separately as
+            ``issue_date``). Empty string omits ``date`` (used by unit
+            fixtures that don't care about the publish time). Treated as
+            a **volatile** key in new-release detection so a plain
+            re-run stays a no-op.
         images: Asset references emitted into the front-matter
             ``images:`` list (renders, schematic SVG).
         artifacts: Asset references emitted into the front-matter
@@ -75,6 +83,7 @@ class Publication:
     analysis_info: AnalysisInfo
     body_md: str
     readme_md: str = ""
+    published_at: str = ""
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
     libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)

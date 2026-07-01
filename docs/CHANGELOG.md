@@ -6,6 +6,19 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - Hugo-safe version `date`; SPCoast YYYY.MM moves to `issue_date` (Phase G build fix)
+
+kproj emitted `date: '2026.05'` (the SPCoast YYYY.MM title-block convention), but
+`date` is a Hugo-reserved front-matter field that must be a parseable date, so
+`hugo` failed the whole build (and the GitHub Pages deploy would have failed too;
+caught by a local build during Phase G). Now the version page emits Hugo's `date`
+as the **kproj execution/publish timestamp** (RFC3339, parseable) and carries the
+YYYY.MM title-block value in a new custom `issue_date` key (Hugo ignores it). The
+publish `date` is treated as a **volatile** key in new-release detection - a
+content-identical re-run still resolves to `noop` (no-op detection is a
+performance optimisation, not a correctness gate). `Publication` gains
+`published_at`; the workflow computes it once per run.
+
 ### Changed - project overview is a Hugo section index (content/versions/<P>/_index.md)
 
 The per-project overview page moved from a flat `content/pages/<P>.md` to the

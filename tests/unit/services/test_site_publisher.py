@@ -171,6 +171,28 @@ class TestDetectOutcome:
         outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
         assert outcome in ("refresh", "publish")
 
+    def test_noop_ignores_volatile_publish_date(self, tmp_path: Path) -> None:
+        """A changed publish ``date`` alone does not force refresh (volatile key).
+
+        The Hugo ``date`` field is the kproj execution time and changes
+        every run; new-release detection ignores it so a content-identical
+        re-run stays a no-op (a performance optimisation, not correctness).
+        """
+        site = tmp_path / "site"
+        site.mkdir()
+        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
+
+        # On-disk page was published earlier (old timestamp); identical otherwise.
+        old = _pub(published_at="2020-01-01T00:00:00+00:00")
+        fm = FrontMatterSummaryFormatter().render(old, GENERIC_SITE_PROFILE)
+        _write_version_file(site, "Demo", "1.0B", f"---\n{fm}---\n{old.body_md}\n")
+        _write_pages_file(site, "Demo", f"---\ntitle: Demo\nproject: Demo\n---\n{old.readme_md}\n")
+
+        # This run only has a newer publish timestamp; nothing else changed.
+        now = _pub(published_at="2026-07-01T00:00:00+00:00")
+        outcome = SitePublisher.detect_outcome(now, site, GENERIC_SITE_PROFILE)
+        assert outcome == "noop", f"a changed publish date must not force refresh; got {outcome!r}"
+
     def test_refresh_when_readme_differs(self, tmp_path: Path) -> None:
         """On-disk pages/<P>.md body differs from publication.readme_md → 'refresh'."""
         site = tmp_path / "site"

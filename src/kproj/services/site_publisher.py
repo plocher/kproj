@@ -362,10 +362,16 @@ class SitePublisher:
             if not asset_path.exists():
                 return "publish"
 
-        # Step 3: compare rendered content to on-disk content.
+        # Step 3: compare rendered content to on-disk content.  Hugo's
+        # reserved ``date`` field (the publish timestamp) is volatile —
+        # a plain re-run would otherwise always differ — so it is
+        # ignored here.  No-op detection is a performance optimisation,
+        # not a correctness gate, so this accommodation is safe.
         would_be_version = _build_version_content(publication, site_profile)
         existing_version = version_file.read_text(encoding="utf-8")
-        if _normalize(existing_version) != _normalize(would_be_version):
+        if _normalize(_strip_volatile(existing_version)) != _normalize(
+            _strip_volatile(would_be_version)
+        ):
             return "refresh"
 
         # Step 4: compare the project section index to what we'd emit.
@@ -408,6 +414,18 @@ def _atomic_write(path: Path, content: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
+
+
+def _strip_volatile(text: str) -> str:
+    """Drop volatile front-matter lines (Hugo's publish ``date:``) for comparison.
+
+    The publish timestamp changes on every run; excluding it keeps a
+    content-identical re-run a no-op, per the new-release-detection
+    contract's "ignores volatile keys" rule. Only a line beginning
+    exactly with ``date:`` is dropped (``issue_date:`` / ``fab_date:``
+    are preserved).
+    """
+    return "\n".join(line for line in text.splitlines() if not line.startswith("date:"))
 
 
 def _normalize(text: str) -> str:
