@@ -139,7 +139,9 @@ class SourcePackager:
         del title, rev  # signature-stable; not consumed by the v1 packager
         output.parent.mkdir(parents=True, exist_ok=True)
         if journal is not None:
-            journal.will_create(output)
+            # BLOCKER 3: pre-existing asset → will_modify so rollback
+            # restores the prior bytes via git checkout.
+            journal.register_output(output)
 
         included = sorted(_walk_includes(project_dir))
 

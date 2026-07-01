@@ -123,6 +123,34 @@ class ChangeJournal:
         if path not in self._modified:
             self._modified.append(path)
 
+    def register_output(self, path: Path) -> None:
+        """Record an artifact-producer's intent to write *path*.
+
+        Dispatches to :meth:`will_modify` when *path* already exists on
+        disk and to :meth:`will_create` otherwise.  This is the
+        single-entry seam producers (PcbExporter, SchematicExporter,
+        IbomGenerator, FabPackager, SourcePackager) use so that
+        rollback restores pre-existing committed assets via
+        ``git checkout`` and only unlinks files we genuinely created
+        this run (ADR 0005 § *Rollback*).
+
+        The check is performed exactly once, at the moment the
+        producer announces the write — BEFORE the atomic tempfile +
+        ``os.replace`` sequence — so the original on-disk file is
+        still observable when the decision is made.
+
+        Args:
+            path: Absolute path the producer is about to write.  Must
+                be under :attr:`site_repo`.
+
+        Raises:
+            ValueError: When *path* is outside :attr:`site_repo`.
+        """
+        if path.exists():
+            self.will_modify(path)
+        else:
+            self.will_create(path)
+
     def mark_committed(self) -> None:
         """Mark the in-flight git commit as complete.
 

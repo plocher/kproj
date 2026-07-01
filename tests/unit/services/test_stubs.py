@@ -1,19 +1,15 @@
-"""Smoke tests for the still-stubbed downstream services.
+"""Smoke tests confirming all wave-3 services are fully implemented.
 
-Wave-2 retires the ``MetadataAnalyzer`` / ``DesignAnalyzer`` /
-``KicadProjectReader`` stub assertions - those services are
-implemented now and have their own test modules.  Wave-3 (this
-slice) retires the ``PcbExporter`` stub.  The remaining services
-(schematic exporter, iBOM generator, fab + source packagers, site
-publisher) stay wave-1 stubs until later slices wire them in;
-their NotImplementedError contract is still pinned here.
+Wave-4 (kproj#4) implements ``SitePublisher``; the previous
+``NotImplementedError`` stub is replaced by a real implementation.
+This module is now a simple smoke test that the service is importable
+and its primary method is callable.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
+from unittest.mock import patch
 
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.project_info import ProjectInfo, Status
@@ -37,14 +33,17 @@ def _project_info() -> ProjectInfo:
     )
 
 
-def test_site_publisher_stub_raises(tmp_path: Path) -> None:
-    """``SitePublisher.publish`` is unimplemented in the foundation slice."""
+def test_site_publisher_is_implemented(tmp_path: Path) -> None:
+    """``SitePublisher.publish`` is now fully implemented (kproj#4)."""
     publication = Publication(
         project_info=_project_info(),
         analysis_info=AnalysisInfo(findings=()),
         body_md="",
+        readme_md="",
     )
-    with ChangeJournal(tmp_path) as journal:
+    with ChangeJournal(tmp_path, dry_run=True) as journal:
         publisher = SitePublisher(change_journal=journal)
-        with pytest.raises(NotImplementedError):
-            publisher.publish(publication, tmp_path, no_push=True, dry_run=True)
+        with patch("kproj.services.site_publisher._git_run"):
+            result = publisher.publish(publication, tmp_path, no_push=True, dry_run=True)
+    # dry_run=True returns without writing files
+    assert result.outcome in ("published", "refreshed", "noop")

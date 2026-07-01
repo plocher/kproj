@@ -21,14 +21,25 @@ class Finding:
         field: Symbolic name of the rule that produced the finding
             (e.g. ``"comment9_missing"``, ``"silk_overlap"``).
         value: The offending value or location string. May be empty
-            when the rule's trigger is the absence of a value.
+            when the rule's trigger is the absence of a value.  For
+            DRC/ERC findings, this carries the KiCad-side location
+            (coordinate / uuid / sheet) per the wave-3 fix-up.
         reason: Human-readable explanation suitable for stderr +
             Markdown-table rendering.
         project: Project basename when known; empty string otherwise.
             Allows merging Findings from multiple projects in batch
             contexts without loss of origin.
-        location_hint: Optional KiCad-side locator (e.g. layer name,
-            sheet path). Empty when not applicable.
+        location_hint: Optional KiCad-side locator (layer name, etc.)
+            when ``value`` is the primary location.  Stays empty by
+            default.
+        source: Origin category of the finding.  Closed taxonomy:
+            ``"audit"`` (MetadataAnalyzer), ``"drc"`` /
+            ``"erc"`` (DesignAnalyzer), ``"read"`` (read-time
+            diagnostics from KicadProjectReader), or empty for
+            unspecified / legacy callers.  Drives source-specific
+            counting in :class:`FrontMatterSummaryFormatter` and
+            section discrimination in :class:`MarkdownTableFormatter`
+            (wave-3 M2 fix-up).
     """
 
     severity: Severity
@@ -37,3 +48,4 @@ class Finding:
     reason: str
     project: str = ""
     location_hint: str = ""
+    source: str = ""

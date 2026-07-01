@@ -108,7 +108,9 @@ class IbomGenerator:
         """
         output_file.parent.mkdir(parents=True, exist_ok=True)
         if journal is not None:
-            journal.will_create(output_file)
+            # BLOCKER 3: pre-existing asset → will_modify so rollback
+            # restores the prior bytes via git checkout.
+            journal.register_output(output_file)
 
         with tempfile.TemporaryDirectory(prefix="kproj-ibom-") as staging:
             staging_dir = Path(staging)

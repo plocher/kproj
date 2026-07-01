@@ -12,10 +12,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from kproj.common.subprocess_runner import SubprocessResult
 from kproj.model.resolved_project import ResolvedProject
 from kproj.model.severity import Severity
-from kproj.services.design_analyzer import DesignAnalyzer
+from kproj.services.design_analyzer import DesignAnalysisError, DesignAnalyzer
 
 
 def _resolved(tmp_path: Path) -> ResolvedProject:
@@ -86,7 +88,7 @@ def test_drc_violation_with_items_emits_per_item_finding(tmp_path: Path) -> None
     runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    drc_findings = [f for f in result.findings if f.location_hint == "drc"]
+    drc_findings = [f for f in result.findings if f.source == "drc"]
     assert len(drc_findings) == 2
     assert {f.field for f in drc_findings} == {"silk_overlap"}
     assert {f.severity for f in drc_findings} == {Severity.WARNING}
@@ -108,7 +110,7 @@ def test_erc_exclusion_severity_preserved(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    erc_findings = [f for f in result.findings if f.location_hint == "erc"]
+    erc_findings = [f for f in result.findings if f.source == "erc"]
     assert erc_findings and erc_findings[0].severity is Severity.EXCLUSION
     # Exclusions must NOT mark the analysis as "has_findings" per ADR 0004.
     assert result.has_findings is False
@@ -128,12 +130,88 @@ def test_runner_receives_severity_all_and_format_json(tmp_path: Path) -> None:
         assert "--severity-all" in cmd
 
 
-def test_no_output_file_returns_empty_findings(tmp_path: Path) -> None:
-    """When kicad-cli writes nothing, the analyzer returns no findings."""
+def test_no_output_file_and_clean_exit_returns_empty_findings(tmp_path: Path) -> None:
+    """M4 fix-up: kicad-cli rc=0 with empty stderr + no JSON → no findings.
+
+    This is the genuine "kicad-cli ran but produced nothing actionable"
+    path.  The mechanical-failure detector (rc != 0 OR stderr non-empty)
+    is exercised by ``test_no_output_file_with_failure_emits_mechanical_finding``.
+    """
     runner, _ = _fake_runner(write_drc=False, write_erc=False)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
     assert result.findings == ()
+
+
+def test_no_output_file_with_failure_raises_design_analysis_error(tmp_path: Path) -> None:
+    """M4 round-2: kicad-cli rc!=0 with no JSON must raise mechanical failure.
+
+    Round-1 modelled the crash as an ordinary error :class:`Finding`,
+    but ``compute_exit_code`` then mapped a mechanical failure to
+    ``exit=1`` ("findings present, publish succeeded") instead of
+    ``exit=2`` ("mechanical failure").  Round-2 gives the mechanical
+    failure a distinct channel: :class:`DesignAnalysisError` is
+    raised so :class:`~kproj.application.publish_workflow.PublishWorkflow`
+    can catch it, short-circuit before opening the change journal,
+    and return ``PublishResult(outcome="failed", exit_code=2)`` per
+    ADR 0004's mechanical-vs-findings split.
+    """
+
+    def runner(command: Sequence[str], **_kwargs: Any) -> SubprocessResult:
+        # No JSON file written; nonzero return + stderr context.
+        return SubprocessResult(
+            command=tuple(command),
+            returncode=2,
+            stdout="",
+            stderr="kicad-cli: segfault probing board\n",
+            elapsed_seconds=0.0,
+        )
+
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    with pytest.raises(DesignAnalysisError) as excinfo:
+        analyzer.analyze(_resolved(tmp_path))
+    # DRC runs before ERC; the DRC failure short-circuits.
+    assert excinfo.value.origin == "drc", (
+        f"expected DRC to short-circuit first; got origin={excinfo.value.origin!r}"
+    )
+    assert excinfo.value.returncode == 2
+    assert "segfault" in str(excinfo.value)
+
+
+def test_erc_mechanical_failure_after_clean_drc_raises(tmp_path: Path) -> None:
+    """M4 round-2: ERC-only mechanical failure still short-circuits.
+
+    Locks the second subcommand's error handling: even when DRC
+    completes cleanly, an ERC mechanical crash must raise
+    :class:`DesignAnalysisError` so the workflow returns failed/exit 2.
+    """
+
+    def runner(command: Sequence[str], **_kwargs: Any) -> SubprocessResult:
+        cmd = list(command)
+        if "drc" in cmd:
+            out_index = cmd.index("--output")
+            Path(cmd[out_index + 1]).write_text(json.dumps({"violations": []}), encoding="utf-8")
+            return SubprocessResult(
+                command=tuple(command),
+                returncode=0,
+                stdout="",
+                stderr="",
+                elapsed_seconds=0.0,
+            )
+        # ERC crashes without producing JSON.
+        return SubprocessResult(
+            command=tuple(command),
+            returncode=1,
+            stdout="",
+            stderr="kicad-cli: could not open schematic\n",
+            elapsed_seconds=0.0,
+        )
+
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    with pytest.raises(DesignAnalysisError) as excinfo:
+        analyzer.analyze(_resolved(tmp_path))
+    assert excinfo.value.origin == "erc"
+    assert excinfo.value.returncode == 1
 
 
 def test_violation_without_items_emits_single_finding(tmp_path: Path) -> None:
@@ -150,10 +228,60 @@ def test_violation_without_items_emits_single_finding(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    drc_findings = [f for f in result.findings if f.location_hint == "drc"]
+    drc_findings = [f for f in result.findings if f.source == "drc"]
     assert len(drc_findings) == 1
     assert drc_findings[0].field == "drc_mismatch"
     assert drc_findings[0].severity is Severity.ERROR
+
+
+def test_erc_reads_kicad10_per_sheet_shape(tmp_path: Path) -> None:
+    """KiCad 10 ERC nests findings under ``sheets[].violations``.
+
+    Wave-3 M12 fix-up: the M12 contract test caught a real drift —
+    KiCad 10 ERC no longer emits a top-level ``violations`` array but
+    instead a ``sheets`` array whose elements each carry a
+    ``violations`` list.  Pre-fix DesignAnalyzer silently returned
+    zero findings for KiCad 10 ERC.  This unit test locks the new
+    per-sheet parser branch with a canned KiCad-10-shape payload.
+    """
+    payload = {
+        "$schema": "...",
+        "kicad_version": "10.0.1",
+        "sheets": [
+            {
+                "path": "/",
+                "uuid_path": "/root-uuid",
+                "violations": [
+                    {
+                        "severity": "warning",
+                        "type": "unconnected_pin",
+                        "description": "U3.5 is floating",
+                        "items": [{"description": "U3.5", "pos": "60,70"}],
+                    }
+                ],
+            },
+            {
+                "path": "/subsheet",
+                "uuid_path": "/sub-uuid",
+                "violations": [
+                    {
+                        "severity": "error",
+                        "type": "pin_conflict",
+                        "description": "conflicting drivers",
+                    }
+                ],
+            },
+        ],
+    }
+    runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    result = analyzer.analyze(_resolved(tmp_path))
+    erc_findings = [f for f in result.findings if f.source == "erc"]
+    fields = {f.field for f in erc_findings}
+    assert "unconnected_pin" in fields, (
+        f"M12: KiCad 10 ERC per-sheet violation not surfaced; got fields={fields}"
+    )
+    assert "pin_conflict" in fields, f"M12: nested per-sheet violation missed; got fields={fields}"
 
 
 def test_erc_reads_unconnected_items_array(tmp_path: Path) -> None:
@@ -172,7 +300,7 @@ def test_erc_reads_unconnected_items_array(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    erc_findings = [f for f in result.findings if f.location_hint == "erc"]
+    erc_findings = [f for f in result.findings if f.source == "erc"]
     assert erc_findings and erc_findings[0].field == "unconnected_pin"
 
 

@@ -6,6 +6,208 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - issue #4 wave-3 review fix-up round-2 (post re-review)
+
+The gpt-5-5-xhigh re-review of the round-1 fix-up (see the `## Re-review
+(post-fix-up)` appendix in `docs/wave3-review.md` on branch
+`review/wave-3` commit `58e0d55`) found 2 MAJOR partials and 1 MINOR.
+Both MAJORs are addressed here on the same `feat/issue-4-publishing`
+branch, driven by failing tests first per the user-locked TDD workflow.
+
+- **M4 (round-2)** — DRC/ERC mechanical-failure channel. Round-1 modelled
+  a `kicad-cli` crash (nonzero rc + no JSON) as an ordinary error
+  `Finding`, but `compute_exit_code` then mapped a mechanical failure to
+  `exit=1` ("findings present, publish succeeded") instead of the
+  contracted `exit=2`. Round-2 gives mechanical failures a distinct
+  channel: `DesignAnalyzer` raises the new `DesignAnalysisError`
+  (carrying `origin` and `returncode`) and `PublishWorkflow.run()`
+  catches it *before* opening the change journal, returning
+  `PublishResult(outcome="failed", exit_code=2)` with no site writes.
+  Parseable DRC/ERC violations continue to flow as non-blocking
+  findings per ADR 0004. New Behave feature
+  `tests/features/drc_erc_mechanical_failure.feature` locks the
+  contract for both DRC and ERC crash paths.
+- **M11 (RIPPED OUT post-round-2)** — the content-hash machinery that implemented Story 6's cheap-refresh path was pulled entirely. Rationale: (1) persisting `kproj_source_hashes:` into `_versions/<P>/<R>.md` front-matter made the site-repo YAML a public API surface, coupling kproj's correctness to a repo it doesn't own (breaks under hand-edits, Jekyll-to-other-framework migrations, backups); (2) the whole exercise was premature optimization without measured baseline data for how expensive a full publish actually is. v1 now treats any SCH edit — including a title-block-only edit — as a trigger for a full publish. PRD Story 6 amended to reflect this honestly; follow-up issues filed as [kproj#17](https://github.com/plocher/kproj/issues/17) (profile hooks) + [kproj#18](https://github.com/plocher/kproj/issues/18) (smart refresh; deferred pending profile data). See `docs/phase4-resolutions.md` § "M11 rip-out (post-PR#11 round-2 fix-up)".
+
+- **M11 (round-2)** — Story 6 metadata-refresh is now a real functional
+  gate. Round-1's Behave step artificially bumped every published
+  asset's mtime into the future to defeat the M1 stale-asset rule;
+  that hid the real behavior. Round-2 removes the workaround and
+  drives the code fix from failing tests per the user's GIVEN/WHEN/
+  THEN framing ("kproj-published baseline; edit COMMENT9 in SCH;
+  outcome=refreshed; no artifact regen; commit uses `refresh:` prefix").
+  Six scenarios cover experimental→active, active→{broken, retired,
+  replaced-by:<other>, private, empty (defaults to active)}.
+
+  **Code fix (Option B: title-block-only refresh detection)** chosen
+  over Option A (full content hash) and Option C (explicit
+  `--refresh` flag). New `kproj/common/content_hash.py` walks the
+  KiCad S-expression paren tree (quoted-string aware) and computes
+  `sha256(sch_content_minus_title_block)` and the same for the PCB.
+  Both hashes are threaded onto `Publication` and persisted in the
+  version-page YAML front-matter under `kproj_source_hashes: {sch,
+  pcb}`. On a subsequent run the workflow reads back the persisted
+  hashes; when they match the current hashes the M1 stale-asset
+  escalation is skipped (title-block-only edits stay `refresh` /
+  `noop`). Real content edits still flip the hash and the M1
+  escalation fires exactly as before. `test_stale_pcb_forces_publish_
+  outcome` updated to modify PCB content (not just mtime) so the M1
+  guarantee is exercised against a genuine content change; pure
+  mtime touches no longer cause spurious publishes.
+- **MINOR (CHANGELOG accuracy)** — the round-1 CHANGELOG entry
+  characterised M4 and M11 as fully fixed; the re-review found both
+  were only partial. The round-1 wording below has been corrected to
+  say "round-1 partial" and point at the round-2 completion above.
+
+All unit tests (355) + contract tests + Behave scenarios (16) pass;
+ruff + mypy clean.
+
+### Fixed - issue #4 wave-3 review fix-up (PR #11 re-review response, round-1)
+
+Adversarial cross-family review of PR #11 (see `docs/wave3-review.md` on
+branch `review/wave-3` commit `e5d7483`) surfaced 5 BLOCKERs + 12 MAJORs.
+All 5 BLOCKERs plus the correctness MAJORs are fixed here on the same
+`feat/issue-4-publishing` branch; the remaining MAJORs are filed as
+follow-up issues (see below).
+
+**BLOCKERs (all 5 fixed):**
+- **BLOCKER 1** — production artifact paths used the project name as the board
+  revision (`_default_artifact_generator` read `resolved.project_file.stem`).
+  Fix threads `ProjectInfo` (carrying canonical PCB-derived `board_rev`) into
+  `ArtifactGeneratorCallable`; generator now uses `project_info.project` and
+  `project_info.board_rev` for on-disk layout, filenames, and AssetRef paths.
+- **BLOCKER 2** — `SitePublisher.publish` staged only the version-page and
+  project-page markdown, leaving producer-generated assets untracked while the
+  committed markdown linked to them. Fix stages every path from
+  `ChangeJournal.all_paths()` per ADR 0005.
+- **BLOCKER 3** — every artifact producer called `journal.will_create` without
+  checking existence; a re-publish's rollback would unlink already-committed
+  assets. Fix adds `ChangeJournal.register_output(path)` helper that dispatches
+  to `will_modify` when the path exists and `will_create` otherwise; every
+  producer routes through it.
+- **BLOCKER 4** — findings never reached the user's terminal (ADR 0004 violation).
+  Fix wires `StderrFormatter` into `cli.main()` so every audit/DRC/ERC finding
+  is printed on stderr as a one-liner before the result message.
+- **BLOCKER 5** — `SchematicExportError` and iBOM's `FileNotFoundError` escaped
+  the workflow as tracebacks instead of becoming `outcome="failed"`/exit 2. Fix
+  extends the exception ladder in `PublishWorkflow.run`.
+
+**Correctness MAJORs fixed in this PR:**
+- **M1** — asset freshness detection: `_assets_are_stale(images, artifacts,
+  resolved, site_repo)` compares each asset's mtime against its source (PCB /
+  SCH / project source set / production/). Workflow escalates `noop`/`refresh`
+  to `publish` when any asset is stale. `SitePublisher.publish` grows a
+  `force_outcome=` keyword so post-generation asset mtimes cannot re-decide
+  the outcome inside the publisher.
+- **M2** — front-matter counts partitioned by `Finding.source`. New `source:
+  str = ""` field on `Finding` (closed taxonomy: `audit` / `drc` / `erc` /
+  `read` / empty). `MetadataAnalyzer` stamps `source="audit"` on every emitted
+  finding via `dataclasses.replace`. `KicadProjectReader` stamps `source="read"`.
+  `AnalysisInfo` gains `count_by_source(severity, sources)`.
+  `FrontMatterSummaryFormatter` counts audit / drc / erc from their own
+  sources so a DRC error no longer inflates all three blocks.
+- **M3** — DRC/ERC Markdown table Location column now renders `Finding.value`
+  (the actual KiCad coordinate / uuid / sheet); new Source column surfaces
+  the origin (`drc` / `erc`). Section discriminator uses `source` first,
+  falls back to `AUDIT_FIELDS` for legacy findings.
+- **M4 (round-1 partial)** — DesignAnalyzer captured the
+  `SubprocessResult` and emitted a `<origin>_mechanical_failure`
+  error `Finding` instead of silently returning `()`. The re-review
+  flagged that this still resolved to `exit=1` rather than the
+  contracted `exit=2`; **round-2 completes the fix** by giving
+  mechanical failures a distinct exception channel
+  (`DesignAnalysisError`) that the workflow catches before opening
+  the journal. See the round-2 entry above.
+- **M6** — artifact-generator diagnostics flow into the final analysis. New
+  3-tuple contract: `(images, artifacts, diagnostics)`. Workflow merges the
+  diagnostics into a fresh `AnalysisInfo`, rebuilds the body markdown, and
+  passes the merged findings to `build_publication` so producer warnings reach
+  the front-matter counts, Markdown tables, stderr, and exit code.
+- **M11 (round-1 partial)** — Behave scenarios were rewritten as real
+  functional gates: Story 9 now injects a failing producer instead
+  of running `--dry-run`; `verbose.feature` actually passes `-v`.
+  However, the re-review flagged that Story 6 still masked the
+  workflow behavior by artificially bumping asset mtimes to defeat
+  the M1 stale-asset rule. **Round-2 completes the fix** by
+  removing the mtime workaround, driving six status-transition
+  scenarios, and adding title-block-stripped source-hash comparison
+  to distinguish metadata-only from content edits. See the round-2
+  entry above. Shared `_stub_artifact_generator` was updated in
+  round-1 for the new 3-tuple signature and remains correct.
+- **M12** — new contract tests `tests/contract/test_kicad_cli_drc.py` and
+  `test_kicad_cli_erc.py` run the real local kicad-cli 10 and assert the JSON
+  shapes kproj depends on. The tests caught a real drift: KiCad 10 ERC nests
+  findings under `sheets[<n>].violations` instead of a top-level `violations`
+  array, and pre-fix `DesignAnalyzer` silently produced zero findings from
+  KiCad 10 ERC output. `_findings_from_payload` now walks both shapes.
+
+**Follow-up issues filed (unfixed MAJORs):**
+- kproj#12 (M5): dry-run should render a full path/would-be-write preview.
+- kproj#13 (M7): project page front-matter contract (layout/sidebar/tags/etc.).
+- kproj#14 (M8): production emission drops tags and `replaced-by:<target>`.
+- kproj#15 (M9): implement thumbnail generation (long-deferred).
+- kproj#16 (M10): wire `-v` through subprocess + git command logging.
+
+Round-1 baseline: unit tests + contract tests + Behave scenarios all
+passed; ruff + mypy clean. Post-round-2 totals appear in the round-2
+entry above.
+
+### Added - issue #4 (Phase 6 wave-4: publishing + formatters + Behave)
+
+- `src/kproj/formatters/stderr_formatter.py`: `StderrFormatter.format_findings()`
+  renders each `Finding` as a one-liner on stderr in the format
+  `<severity> [<field>] <project>:<field>: <reason> (value: <value>)` per
+  ADR 0004 § *What "surfaced" means*. `(value: …)` suppressed when empty;
+  `<project>:` suppressed when project is empty.
+- `src/kproj/formatters/markdown_table_formatter.py`: `MarkdownTableFormatter.render()`
+  produces two adjacent Markdown tables — *Metadata Audit* (findings whose `field`
+  is in the closed `AUDIT_FIELDS` set) and *DRC / ERC Findings* — matching the
+  version-page body contract in `docs/DESIGN.md` § *Front-matter shape*. Both
+  sections always present; empty sections show an italicised no-findings row.
+- `src/kproj/formatters/front_matter_summary_formatter.py`:
+  `FrontMatterSummaryFormatter.render(publication)` produces the full YAML front-
+  matter for `_versions/<P>/<R>.md` per the authoritative contract in `docs/DESIGN.md`
+  § *Front-matter shape*. Includes `iskicad: true` / `'obsolete'` (retired/replaced-by),
+  all Jekyll-required fields, `images:` + `artifacts:` lists, `audit:`/`drc:`/`erc:`
+  count summaries, and the `libraries:` three-bucket YAML section
+  (`internal:`/`external:`/`ambiguous:`) introduced by kproj#4 wave-3 scope.
+  Also exposes `render_audit(analysis_info) -> dict` for backward compatibility.
+- `src/kproj/model/publication.py`: added `readme_md: str = ""` field carrying the
+  project's README.md content for writing `pages/<P>.md` + new-release detection.
+- `src/kproj/services/site_publisher.py`: full `SitePublisher` implementation replacing
+  the foundation stub. `detect_outcome(publication, site_repo)` static method computes
+  `"noop"` / `"refresh"` / `"publish"` by (1) checking version file existence, (2)
+  checking asset presence in the site repo, (3) comparing rendered version content to
+  on-disk content, (4) comparing `pages/<P>.md` body to `publication.readme_md`.
+  `publish(publication, site_repo, no_push, dry_run)` writes `_versions/<P>/<R>.md` +
+  `pages/<P>.md` atomically via tempfile + `os.replace`, registers both with the
+  `ChangeJournal` (ADR 0005), runs `git add` + `git commit` + (unless `no_push`)
+  `git push`, marks the journal `committed`/`pushed`. Commit message patterns:
+  `add: <P> <R>` (first-ever publish), `publish: <P>-<R>` (new version), `refresh:
+  <P>-<R> (metadata updated)` (refresh). Dry-run skips all writes and git ops.
+- `src/kproj/application/publish_workflow.py`: wires all 11 DESIGN pipeline steps.
+  Steps 5–11 added: iBOM pre-flight (`ibom_script_locator` injectable), site-repo
+  cleanliness check (`git status --porcelain`, skipped on `dry_run`), new-release
+  detection via `SitePublisher.detect_outcome`, `ChangeJournal` scope, artifact
+  generation (`artifact_generator` injectable, default calls all real exporters +
+  packagers), `build_publication` (now accepts `readme_md` and reads `README.md`
+  via `_read_readme`), `SitePublisher.publish`. New injectable factories:
+  `ibom_script_locator`, `artifact_generator`, `site_publisher_factory`. Helper
+  functions: `_read_readme`, `_compute_standard_asset_refs`, `_default_artifact_generator`.
+  Pipeline exceptions (`SubprocessFailedError`, `SubprocessTimeoutError`, `OSError`)
+  are caught and returned as `outcome="failed"`.
+- **Test coverage (unit + Behave)**: 319 unit tests, 14 Behave scenarios covering
+  PRD Stories 1-13. Feature files: `publish.feature` (Stories 1, 13), `dry_run.feature`
+  (Story 2), `project_resolution.feature` (Story 3), `findings_surfaced.feature`
+  (Stories 4, 5), `metadata_refresh.feature` (Story 6), `private_status.feature`
+  (Story 7 - pre-existing), `batch_safety.feature` (Stories 8, 9), `site_repo_cleanliness.feature`
+  (Story 10), `verbose.feature` (Story 12). Stories 14-18 documented as Phase 7
+  manual-validation in `publish.feature` comments (cross the Jekyll build).
+- **iBOM stub choice** (`publish_steps.py`): the Behave artifact generator writes
+  placeholder `.ibom.html` files without invoking real iBOM (gated on kproj#10
+  spike). The pipeline orchestration is fully tested; iBOM integration is contract-
+  tested separately in `tests/contract/test_ibom_generator.py`.
+
 ### Added - issue #2 (Phase 6 wave-2: read services)
 - `pyproject.toml`: depend on `jbom>=7.3.0` (PR plocher/jBOM#333 merged);
   local-editable `tool.uv.sources` path during development; mypy override

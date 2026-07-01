@@ -105,7 +105,9 @@ class SchematicExporter:
         """
         output_file.parent.mkdir(parents=True, exist_ok=True)
         if journal is not None:
-            journal.will_create(output_file)
+            # BLOCKER 3: pre-existing asset → will_modify so rollback
+            # restores the prior bytes via git checkout.
+            journal.register_output(output_file)
 
         with tempfile.TemporaryDirectory(prefix="kproj-svg-") as tmpdir:
             tempdir = Path(tmpdir)
@@ -166,7 +168,9 @@ class SchematicExporter:
         del all_sheets  # full PDF is always emitted in v1
         output_file.parent.mkdir(parents=True, exist_ok=True)
         if journal is not None:
-            journal.will_create(output_file)
+            # BLOCKER 3: pre-existing asset → will_modify so rollback
+            # restores the prior bytes via git checkout.
+            journal.register_output(output_file)
 
         tempfile_path = _tempfile_sibling(output_file)
         argv = [

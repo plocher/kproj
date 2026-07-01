@@ -66,3 +66,27 @@ After the initial three-commit resolution batch, the user reviewed this document
 - **M9 testing principle made explicit** — User reinforced the jBOM-learned distinction: Behave/Gherkin tests are FUNCTIONAL feature gates (additive only, user-vocabulary); pytest unit tests test IMPLEMENTATION (evolve with code, never duplicate functional details); contract tests validate external-tool surfaces. DESIGN's Testing strategy section now opens with an explicit "Layer principles" subsection documenting each layer's distinct duty and evolution cadence.
 - **Q3 confirmation** — User asked whether fab-artifact missing was meant to block; ADR 0003 § "Audit findings about `production/`" is explicit that it's a warning, not a publish failure. Q3 row in this doc now quotes ADR 0003 directly and contrasts with the `kicad_sch_missing` / `kicad_pcb_missing` cases (which DO block per the plan's Scaffolding skip rule). DESIGN unchanged — already consistent with ADR 0003.
 - **Mn1 performance assumption captured** — User flagged that we have an unbounded presumption about kproj run speed. DESIGN now has a dedicated "Performance assumption" subsection under Cross-cutting concerns making the v1 framing explicit: full runs are assumed fast enough not to need `--step` subsetting; if POC/tracer-bullet evidence invalidates that, both performance and debugability gaps get re-opened together. No pre-architecting until evidence justifies it.
+
+## M11 rip-out (post-PR#11 round-2 fix-up)
+During the post-round-2 architecture review, the user surfaced two cascading concerns about the M11 Option-B content-hash implementation:
+
+1. **Site-repo YAML as public API surface.** Persisting `kproj_source_hashes:` into `_versions/<P>/<R>.md` front-matter turned the site repo into a bidirectional interface between past-kproj-runs and future-kproj-runs. This coupled kproj's correctness to the site-repo file schema, which is a repository kproj doesn't own — hand-edits, cross-repo migrations (e.g. Jekyll → Flutter), backup restores, or the front-matter being rendered publicly on the site all break the hash lifecycle. This is an ownership-boundary violation of ADR 0002's "kproj is a Jekyll publisher" framing: a publisher writes output; it must not require its output to remain unmodified.
+
+2. **The whole exercise is premature optimization.** Story 6's "cheap refresh" claim was written without measured baseline data. We don't know how long a full kproj publish actually takes, don't know where the time goes (iBOM boot, 3D render, kicad-cli JSON serialization, git operations), and don't know how frequent metadata-only edits will be in the SPCoast workflow. Building state-persistence machinery to skip artifact regen for a specific edit pattern is unjustified without those numbers. "If X seconds then caching" is itself premature-solution thinking: the right sequence is profile → find the bottleneck → pick the specific optimization for the specific hotspot.
+
+**Resolution**: rip out the M11 machinery from PR#11 entirely. Concrete changes:
+
+- Deleted `src/kproj/common/content_hash.py` (the title-block-stripped SHA-256 utility).
+- Removed `Publication.sch_content_hash` + `Publication.pcb_content_hash` fields.
+- Removed the `kproj_source_hashes:` YAML emission from `FrontMatterSummaryFormatter`.
+- Removed the `_title_block_only_change_since_publish` helper + `_read_stored_source_hashes` helper + their invocation in `PublishWorkflow.run` step 6. The workflow now escalates any stale asset to a full publish (M1's original behavior) without an M11 escape hatch.
+- Removed `sch_content_hash` / `pcb_content_hash` parameters from `PublishWorkflow.build_publication`.
+- Deleted `tests/features/metadata_refresh.feature` (all 6 status-transition scenarios; the `active → private` case is covered by `private_status.feature`).
+- Removed the M11-specific step definitions from `tests/features/steps/publish_steps.py` (`step_when_change_comment9`, `step_when_change_comment9_empty`, `step_when_change_status_active` alias, `step_then_frontmatter_status_matches`, `step_then_assets_not_regenerated`, `step_then_git_commit_prefix`, `step_then_no_commit_invoked_second_run`, plus the `baseline_asset_mtimes` snapshot in `step_given_previously_published`).
+- Amended PRD Story 6 to document v1's honest behavior: any SCH edit triggers a full publish; smart refresh deferred pending profile data.
+
+**Follow-up issues filed on `plocher/kproj`**:
+- **[kproj#17 — Profile hooks](https://github.com/plocher/kproj/issues/17)** — per-step wall-clock instrumentation for `PublishWorkflow.run()`. Includes the open trace-vs-findings design question (does timing data flow through the existing `Finding` channel or a new `ProfileEvent` model?). Produces the baseline data needed to make evidence-based optimization decisions.
+- **[kproj#18 — Smart refresh](https://github.com/plocher/kproj/issues/18)** — gated on kproj#17's profile data pointing at metadata-refresh as a real bottleneck. Design constraints locked from the M11 rip-out lessons (kproj-owned state, graceful degradation, real end-to-end Behave scenarios, `--force` escape hatch).
+
+**Lesson**: any v1 code that exists to make things "faster" or "cheaper" (versus "correct" or "safe") should have a measurement anchor before landing. Also: state kproj needs for its own correctness should live in storage kproj owns, not storage kproj writes to as a side effect.

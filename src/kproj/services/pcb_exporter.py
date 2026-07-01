@@ -171,7 +171,9 @@ class PcbExporter:
         """
         output.parent.mkdir(parents=True, exist_ok=True)
         if journal is not None:
-            journal.will_create(output)
+            # BLOCKER 3: distinguish create vs modify so rollback restores
+            # a pre-existing committed asset instead of unlinking it.
+            journal.register_output(output)
 
         tempfile_path = _tempfile_sibling(output)
         argv = command_builder(tempfile_path, pcb_path)
