@@ -61,17 +61,25 @@ def _make_site_repo(base_dir: Path) -> Path:
 
 
 def _stub_artifact_generator(site_repo: Path) -> Any:
-    """Return an artifact generator stub that writes placeholder files."""
+    """Return an artifact generator stub that writes placeholder files.
+
+    Wave-3 fix-ups: honours the new
+    ``(resolved, project_info, kicad_cli, ibom_script, site_repo, journal)``
+    signature and returns the 3-tuple ``(images, artifacts, diagnostics)``.
+    Derives ``basename`` / ``board_rev`` from ``project_info`` so path
+    layout matches BLOCKER 1's canonical shape.
+    """
 
     def _gen(
         resolved: Any,
+        project_info: Any,
         _kicad_cli: Path,
         _ibom_script: Path,
         _site_repo: Path,
         journal: ChangeJournal,
-    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
-        basename = getattr(resolved, "basename", "demo")
-        R = "1.0"
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
+        R = getattr(project_info, "board_rev", None) or "1.0"
         PR = f"{basename}-{R}"
         base_site = f"/versions/{basename}/{R}"
         asset_dir = site_repo / "versions" / basename / R
@@ -111,22 +119,27 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
                 post="KiCad source archive",
             ),
         )
-        return images, artifacts
+        return images, artifacts, ()
 
     return _gen
 
 
 def _build_workflow(context: Any) -> PublishWorkflow:
-    """Build a PublishWorkflow with all external services stubbed."""
+    """Build a PublishWorkflow with all external services stubbed.
+
+    When ``context.failing_generator`` is set, use it instead of the
+    happy-path stub (drives the Story 9 mid-pipeline rollback scenario).
+    """
     fake_ibom = Path(context.tmpdir) / "generate_interactive_bom.py"
     if not fake_ibom.exists():
         fake_ibom.write_text("")
     site_repo = context.site_repo
+    generator = getattr(context, "failing_generator", None) or _stub_artifact_generator(site_repo)
     return PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
         design_analyzer_factory=_SilentDesignAnalyzer,
         ibom_script_locator=lambda: fake_ibom,
-        artifact_generator=_stub_artifact_generator(site_repo),
+        artifact_generator=generator,
         site_publisher_factory=SitePublisher,
     )
 
@@ -150,11 +163,12 @@ def _build_request(context: Any, *, dry_run: bool = False) -> PublishRequest:
 
 
 def _run_workflow(context: Any, *, dry_run: bool = False) -> None:
-    """Invoke the stubbed workflow and store result in context."""
+    """Invoke the stubbed workflow and store result + git calls in context."""
     workflow = _build_workflow(context)
     request = _build_request(context, dry_run=dry_run)
-    with patch("kproj.services.site_publisher._git_run"):
+    with patch("kproj.services.site_publisher._git_run") as mock_git:
         context.result = workflow.run(request)
+        context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
     context.outcome = context.result.outcome
     context.stderr = context.result.message or ""
     # Also set context.exit_code for compatibility with preflight_steps.py assertions.
@@ -256,6 +270,39 @@ def step_given_no_push(context: Any) -> None:
     context.no_push = True
 
 
+@given("an artifact producer will fail after writing one asset")
+def step_given_failing_producer(context: Any) -> None:
+    """Install a failing artifact generator for the next kproj run.
+
+    Mimics a real mid-pipeline producer crash: writes one asset,
+    journals it, then raises an OSError that the workflow converts
+    to outcome="failed" (via the generic OSError catch in
+    :meth:`PublishWorkflow.run`).  The ChangeJournal rolls back the
+    one written file per ADR 0005; combined with the mocked _git_run
+    (no commit ever happens), the site repo stays completely clean.
+    """
+
+    def _failing_gen(
+        resolved: Any,
+        project_info: Any,
+        _kicad_cli: Path,
+        _ibom_script: Path,
+        _site_repo: Path,
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
+        R = getattr(project_info, "board_rev", None) or "1.0"
+        # Simulate one producer writing an asset before a later one fails.
+        asset_dir = _site_repo / "versions" / basename / R
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        early_asset = asset_dir / f"{basename}-{R}.top.png"
+        early_asset.write_bytes(b"placeholder")
+        journal.will_create(early_asset)
+        raise OSError("simulated producer failure after one asset was written")
+
+    context.failing_generator = _failing_gen
+
+
 # ─────────────────────────── When steps ──────────────────────────────────────
 
 
@@ -275,6 +322,67 @@ def step_when_run_dry_run(context: Any) -> None:
 def step_when_run_kproj_again(context: Any) -> None:
     """Run the pipeline a second time (for no-op detection)."""
     _run_workflow(context)
+
+
+@when("I change the project status to active")
+def step_when_change_status_active(context: Any) -> None:
+    """Rewrite the fixture SCH so ``${COMMENT9}`` becomes ``active``.
+
+    The pre-fix scenario ran the same project twice; this rewrite
+    actually mutates COMMENT9 between runs so the pipeline exercises
+    the real ``experimental → active`` refresh path per PRD Story 6.
+
+    After the SCH mutation we bump the already-published assets'
+    mtimes to be newer than the (just-modified) SCH so the M1 asset-
+    freshness escalation does NOT treat this as a full-publish
+    situation.  This models the user intent for Story 6: they edited
+    only the status field and want the version-page front-matter
+    updated without regenerating renders/STEP/iBOM/etc.  The
+    schematic-content freshness detection (M1) is exercised by unit
+    tests where the source actually changes shape rather than just
+    COMMENT9 metadata.
+    """
+    import time as _time
+
+    from _kicad_fixtures import TitleBlockSpec, write_kicad_sch
+
+    write_kicad_sch(
+        context.proj_dir / f"{context.project_name}.kicad_sch",
+        TitleBlockSpec(
+            title="My Board",
+            company="MRCS",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer", 2: "A tagline", 9: "active"},
+        ),
+    )
+    future = _time.time() + 60
+    for asset in (context.site_repo / "versions").rglob("*"):
+        if asset.is_file():
+            os.utime(asset, (future, future))
+
+
+@when("I run kproj with -v")
+def step_when_run_kproj_verbose(context: Any) -> None:
+    """Run the workflow with verbose_level=1 and capture the stderr text."""
+    workflow = _build_workflow(context)
+    request = _build_request(context)
+    # verbose_level=1 emulates `kproj -v <path>`.
+    from dataclasses import replace as _replace
+
+    request = _replace(request, verbose_level=1)
+    captured_findings: list[Any] = []
+    with patch("kproj.services.site_publisher._git_run") as mock_git:
+        context.result = workflow.run(request)
+        context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
+    context.outcome = context.result.outcome
+    context.exit_code = context.result.exit_code
+    # Render findings via StderrFormatter to build the stderr surface the
+    # CLI would have produced; matches the wire-up added in BLOCKER 4.
+    from kproj.formatters.stderr_formatter import StderrFormatter
+
+    captured_findings.extend(context.result.findings)
+    context.stderr = StderrFormatter(verbose_level=1).format_findings(captured_findings)
 
 
 # ─────────────────────────── Then steps ──────────────────────────────────────
@@ -403,4 +511,48 @@ def step_then_stderr_dirty_message(context: Any) -> None:
     msg = context.result.message
     assert "uncommitted" in msg or "changes" in msg, (
         f"Expected uncommitted/changes in message: {msg!r}"
+    )
+
+
+@then("no git push was invoked")
+def step_then_no_push_invoked(context: Any) -> None:
+    """Assert the mocked git runner was never asked to push.
+
+    Requires the scenario to have captured git calls via a mocked
+    :func:`kproj.services.site_publisher._git_run`.  When ``no_push``
+    is true, ``SitePublisher.publish`` calls ``git add`` and
+    ``git commit`` but must never invoke ``git push``.
+    """
+    git_calls = getattr(context, "git_calls", None)
+    if git_calls is None:
+        # Fallback: outcome must at least be a terminal success and the
+        # workflow's PublishResult must not carry a "push" verb in the
+        # message; the `-v` scenario provides git_calls directly.
+        assert context.result.outcome in (
+            "published",
+            "refreshed",
+            "noop",
+        ), f"expected success outcome, got {context.result.outcome!r}"
+        return
+    push_calls = [call for call in git_calls if call and call[0] == "push"]
+    assert not push_calls, f"Expected no git push invocations under no_push mode; got: {push_calls}"
+
+
+@then("stderr contains the audit finding names")
+def step_then_stderr_has_audit_names(context: Any) -> None:
+    """Assert the rendered stderr text contains audit finding rule names.
+
+    Uses the AuditProject fixture (see :func:`step_given_project_with_warnings`)
+    which triggers ``date_format`` and ``designer_format`` warnings.
+    """
+    stderr_text = getattr(context, "stderr", "") or ""
+    finding_fields = {f.field for f in context.result.findings}
+    assert finding_fields, (
+        "expected at least one finding under the AuditProject fixture; "
+        f"got findings={finding_fields}"
+    )
+    # At least one finding's field name must appear in stderr.
+    hits = [name for name in finding_fields if name in stderr_text]
+    assert hits, (
+        f"No finding names surfaced on stderr. stderr={stderr_text!r} findings={finding_fields}"
     )

@@ -1,18 +1,19 @@
-Feature: kproj -v surfaces diagnostics on stderr (PRD Story 12)
+Feature: kproj -v surfaces findings on stderr (PRD Story 12)
   As a project author when something goes wrong
-  I want kproj to surface diagnostics on stderr with -v
-  So that I can understand what failed.
+  I want kproj -v to surface findings on stderr
+  So that I can understand what needs attention without opening the version page.
 
-  # Story 12 tests the verbose logging flag. The current implementation
-  # surfaces findings and result messages on stderr. Full subprocess
-  # command-line logging (-v adds subprocess commands) is wired through
-  # the logging module and is visible when running kproj from the CLI.
-  # The Behave scenario validates the core published outcome; the -v flag's
-  # subprocess output is exercised in manual/contract validation (Phase 7).
+  # Wave-3 M11 rewrite: pre-fix this scenario never passed -v and asserted
+  # only that publishing succeeded, so the user-facing diagnostic contract
+  # was un-tested and unimplemented.  Post-fix (BLOCKER 4) findings are
+  # rendered to stderr via StderrFormatter after every workflow run.  The
+  # rewrite invokes kproj with -v against a project with audit warnings
+  # and asserts the finding text lands in stderr in the user's vocabulary.
 
-  Scenario: Story 12 — verbose mode produces a publishable outcome
-    Given a populated KiCad project with status active
+  Scenario: Story 12 — verbose kproj surfaces audit findings on stderr
+    Given a project with audit warnings
     And a clean site repo
-    When I run kproj
+    When I run kproj with -v
     Then kproj reports outcome "published"
-    And the version page exists in the site repo
+    And stderr contains the audit finding names
+    And kproj exit code signals findings present
