@@ -6,7 +6,9 @@ this service:
 1. Determines the publish outcome (``"noop"`` / ``"refresh"`` /
    ``"published"``) by comparing the current publication to the
    on-disk site state (§ *New-release detection*).
-2. Writes ``_versions/<P>/<R>.md`` and ``pages/<P>.md`` atomically via
+2. Writes the per-version markdown and per-project overview files
+   (paths selected by the caller-supplied
+   :class:`~kproj.config.SiteProfile`) atomically via
    ``tempfile + os.replace``.
 3. Registers every write with the :class:`ChangeJournal` for rollback
    (ADR 0005).
@@ -31,6 +33,7 @@ from typing import Literal
 
 from ..common.subprocess_runner import DEFAULT_GIT_TIMEOUT
 from ..common.subprocess_runner import run as subprocess_run
+from ..config import SiteProfile
 from ..formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
 from ..model.publication import Publication
 from ..model.publish_result import PublishResult
@@ -72,9 +75,12 @@ def _git_run(
 # ──────────────────────────── content builders ─────────────────────────────────
 
 
-def _build_version_content(publication: Publication) -> str:
-    """Build the full markdown content for ``_versions/<P>/<R>.md``."""
-    yaml_block = _fm_formatter.render(publication)
+def _build_version_content(
+    publication: Publication,
+    site_profile: SiteProfile,
+) -> str:
+    """Render the version-page markdown body (front-matter + tables)."""
+    yaml_block = _fm_formatter.render(publication, site_profile)
     body = publication.body_md
     return f"---\n{yaml_block}---\n{body}\n"
 
@@ -114,6 +120,7 @@ class SitePublisher:
         site_repo: Path,
         no_push: bool,
         dry_run: bool,
+        site_profile: SiteProfile,
         *,
         force_outcome: _Outcome | None = None,
     ) -> PublishResult:
@@ -124,7 +131,7 @@ class SitePublisher:
 
         Args:
             publication: The assembled :class:`Publication` to emit.
-            site_repo: Local checkout of the SPCoast Jekyll site repo.
+            site_repo: Local checkout of the SPCoast site repo.
             no_push: When ``True``, skip ``git push`` (batch-friendly).
             dry_run: When ``True``, analyse and report but make no writes.
             force_outcome: Optional pre-computed outcome from the
@@ -133,6 +140,8 @@ class SitePublisher:
                 required for the workflow's asset-freshness escalation
                 where post-generation asset mtimes would otherwise
                 convince ``detect_outcome`` to noop the run.
+            site_profile: :class:`SiteProfile` selecting per-version
+                and per-project paths inside *site_repo*.
 
         Returns:
             A :class:`PublishResult` whose ``outcome`` is one of
@@ -144,14 +153,14 @@ class SitePublisher:
         PR = f"{P}-{R}"
         findings = publication.analysis_info.findings
 
-        version_file = site_repo / "_versions" / P / f"{R}.md"
-        pages_file = site_repo / "pages" / f"{P}.md"
+        version_file = site_repo / site_profile.versions_dir / P / f"{R}.md"
+        pages_file = site_repo / site_profile.pages_dir / f"{P}.md"
 
         # ── new-release detection ──
         outcome = (
             force_outcome
             if force_outcome is not None
-            else self.detect_outcome(publication, site_repo)
+            else self.detect_outcome(publication, site_repo, site_profile=site_profile)
         )
 
         if outcome == "noop":
@@ -185,7 +194,7 @@ class SitePublisher:
         else:
             commit_msg = f"refresh: {PR} (metadata updated)"
 
-        would_be_version = _build_version_content(publication)
+        would_be_version = _build_version_content(publication, site_profile)
         would_be_pages = _build_pages_content(publication)
 
         # ── write version file atomically ──
@@ -291,12 +300,13 @@ class SitePublisher:
     def detect_outcome(
         publication: Publication,
         site_repo: Path,
+        site_profile: SiteProfile,
     ) -> _Outcome:
         """Determine whether publishing is a no-op, refresh, or full publish.
 
         Implements ``docs/DESIGN.md`` § *New-release detection*:
 
-        1. ``_versions/<P>/<R>.md`` absent → ``"publish"``.
+        1. ``<site_profile.versions_dir>/<P>/<R>.md`` absent → ``"publish"``.
         2. Any referenced asset missing in the site repo → ``"publish"``.
         3. Would-be version content differs from on-disk → ``"refresh"``.
         4. Pages file body differs from ``publication.readme_md`` → ``"refresh"``.
@@ -305,6 +315,8 @@ class SitePublisher:
         Args:
             publication: The assembled publication to compare against.
             site_repo: Local site-repo checkout.
+            site_profile: :class:`SiteProfile` selecting per-version
+                and per-project paths inside *site_repo*.
 
         Returns:
             One of ``"noop"``, ``"refresh"``, or ``"publish"``.
@@ -312,8 +324,8 @@ class SitePublisher:
         P = publication.project_info.project
         R = publication.project_info.board_rev
 
-        version_file = site_repo / "_versions" / P / f"{R}.md"
-        pages_file = site_repo / "pages" / f"{P}.md"
+        version_file = site_repo / site_profile.versions_dir / P / f"{R}.md"
+        pages_file = site_repo / site_profile.pages_dir / f"{P}.md"
 
         # Step 1: version file must exist.
         if not version_file.exists():
@@ -326,7 +338,7 @@ class SitePublisher:
                 return "publish"
 
         # Step 3: compare rendered content to on-disk content.
-        would_be_version = _build_version_content(publication)
+        would_be_version = _build_version_content(publication, site_profile)
         existing_version = version_file.read_text(encoding="utf-8")
         if _normalize(existing_version) != _normalize(would_be_version):
             return "refresh"

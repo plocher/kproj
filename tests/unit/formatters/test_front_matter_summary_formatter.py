@@ -1,15 +1,22 @@
 """Unit tests for :class:`kproj.formatters.front_matter_summary_formatter.FrontMatterSummaryFormatter`.
 
 Per ``docs/DESIGN.md`` § *Front-matter shape*, this formatter is
-responsible for the authoritative YAML front-matter emitted into
-``_versions/<P>/<R>.md`` — including the ``libraries:`` section
-(kproj#4 wave-3 scope).
+responsible for the authoritative YAML front-matter emitted into the
+per-version markdown file. Under :data:`~kproj.config.GENERIC_SITE_PROFILE`
+(the abstract test anchor used throughout this module) the field set
+omits the optional ``layout:`` key; production `HUGO_SITE_PROFILE` and
+a Jekyll-shaped profile are exercised separately in
+:class:`TestLayoutFieldProfileSensitivity`.
+
+Tests reference :data:`GENERIC_SITE_PROFILE` at every call site — there
+are no in-code default values on the formatter's ``render`` method.
 """
 
 from __future__ import annotations
 
 import yaml
 
+from kproj.config import GENERIC_SITE_PROFILE, SiteProfile
 from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.finding import Finding
@@ -53,9 +60,20 @@ def _pub(**kwargs: object) -> Publication:
     )
 
 
-def _parse(pub: Publication) -> dict:  # type: ignore[type-arg]
-    """Render and parse front-matter YAML as a dict."""
-    return yaml.safe_load(FrontMatterSummaryFormatter().render(pub))
+def _parse(
+    pub: Publication,
+    site_profile: SiteProfile = GENERIC_SITE_PROFILE,
+) -> dict:  # type: ignore[type-arg]
+    """Render and parse front-matter YAML as a dict.
+
+    Test-helper convenience: defaults to :data:`GENERIC_SITE_PROFILE`
+    so individual tests don't repeat the constant.  The underlying
+    :meth:`FrontMatterSummaryFormatter.render` has **no default** —
+    the profile is passed explicitly here.  Pass an explicit
+    *site_profile* to this helper to verify profile-specific field
+    emission (e.g. Jekyll's ``layout: eagle``).
+    """
+    return yaml.safe_load(FrontMatterSummaryFormatter().render(pub, site_profile))
 
 
 # ──────────────────────────── tests ─────────────────────────────
@@ -63,7 +81,10 @@ def _parse(pub: Publication) -> dict:  # type: ignore[type-arg]
 
 class TestRenderReturnType:
     def test_returns_string(self) -> None:
-        assert isinstance(FrontMatterSummaryFormatter().render(_pub()), str)
+        assert isinstance(
+            FrontMatterSummaryFormatter().render(_pub(), GENERIC_SITE_PROFILE),
+            str,
+        )
 
     def test_is_valid_yaml(self) -> None:
         parsed = _parse(_pub())
@@ -74,8 +95,13 @@ class TestRequiredTopLevelFields:
     def test_iskicad_true_for_active(self) -> None:
         assert _parse(_pub())["iskicad"] is True
 
-    def test_layout_eagle(self) -> None:
-        assert _parse(_pub())["layout"] == "eagle"
+    def test_no_layout_field_under_generic_profile(self) -> None:
+        """Under GENERIC (Hugo), ``layout:`` is omitted — Hugo picks layout by section.
+
+        Jekyll-specific emission is exercised in
+        :class:`TestLayoutFieldProfileSensitivity` below.
+        """
+        assert "layout" not in _parse(_pub())
 
     def test_sidebar(self) -> None:
         assert _parse(_pub())["sidebar"] == "spcoast_sidebar"
@@ -112,6 +138,37 @@ class TestRequiredTopLevelFields:
 
     def test_designer_field(self) -> None:
         assert _parse(_pub())["designer"] == "Alice Designer"
+
+
+class TestLayoutFieldProfileSensitivity:
+    """Confirm the ``layout:`` field emission tracks the SiteProfile.
+
+    Two profiles cover the shape matrix: GENERIC (Hugo default; no
+    layout emission) and a Jekyll-shaped profile that requests
+    ``layout: eagle`` (the legacy pre-Hugo emission).
+    """
+
+    _JEKYLL_PROFILE = SiteProfile(
+        name="jekyll-eagle",
+        versions_dir="_versions",
+        pages_dir="pages",
+        layout_field="eagle",
+    )
+
+    def test_generic_profile_omits_layout(self) -> None:
+        assert "layout" not in _parse(_pub(), GENERIC_SITE_PROFILE)
+
+    def test_jekyll_profile_emits_layout_eagle(self) -> None:
+        assert _parse(_pub(), self._JEKYLL_PROFILE)["layout"] == "eagle"
+
+    def test_custom_profile_layout_value(self) -> None:
+        custom = SiteProfile(
+            name="custom",
+            versions_dir="content/versions",
+            pages_dir="content/pages",
+            layout_field="kicad-version",
+        )
+        assert _parse(_pub(), custom)["layout"] == "kicad-version"
 
 
 class TestIskicadObsolete:

@@ -16,7 +16,7 @@ import pytest
 from kproj.application import publish_workflow as workflow_module
 from kproj.application.publish_workflow import PublishWorkflow
 from kproj.common.kicad_install import KicadNotFoundError
-from kproj.config import KprojConfig
+from kproj.config import GENERIC_SITE_PROFILE, KprojConfig
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.publication import AssetRef
 from kproj.model.publish_request import PublishRequest
@@ -41,6 +41,7 @@ def _make_request(project_arg: str, kicad_cli: Path) -> PublishRequest:
         site_repo=Path("/tmp/site"),
         no_push=False,
         kicad_cli=kicad_cli,
+        site_profile=GENERIC_SITE_PROFILE,
     )
     return PublishRequest(project_arg=project_arg, config=config)
 
@@ -111,7 +112,12 @@ def test_preflight_failure_on_kicad_not_found(
         raise KicadNotFoundError("kicad-cli not found")
 
     monkeypatch.setattr(workflow_module, "find_kicad_cli", _fake_find)
-    config = KprojConfig(site_repo=tmp_path, no_push=False, kicad_cli=None)
+    config = KprojConfig(
+        site_repo=tmp_path,
+        no_push=False,
+        kicad_cli=None,
+        site_profile=GENERIC_SITE_PROFILE,
+    )
     request = PublishRequest(project_arg=str(proj_dir), config=config)
     workflow = _workflow(tmp_path)
     result = workflow.run(request)
@@ -140,6 +146,7 @@ def test_rejects_configured_kicad_cli_that_does_not_exist(tmp_path: Path) -> Non
         site_repo=tmp_path,
         no_push=False,
         kicad_cli=tmp_path / "no-such-kicad-cli",
+        site_profile=GENERIC_SITE_PROFILE,
     )
     request = PublishRequest(project_arg=str(proj_dir), config=config)
     workflow = _workflow(tmp_path)
@@ -586,6 +593,7 @@ def _make_full_request(
         site_repo=site_repo,
         no_push=no_push,
         kicad_cli=kicad_cli,
+        site_profile=GENERIC_SITE_PROFILE,
     )
     return PublishRequest(
         project_arg=project_arg,

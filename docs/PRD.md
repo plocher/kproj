@@ -41,9 +41,9 @@ Stories are grouped by actor. Each carries Gherkin acceptance criteria — the u
 GIVEN a kicad_project at <path> with a populated title_block
 AND the project's `production/` directory contains fresh jBOM output (gerber pack + bom.csv + pos.csv)
 WHEN I run `kproj <path>`
-THEN the site repo has `_versions/<Project>/<board_rev>.md` with front-matter matching the project state
+THEN the site repo has `<versions_dir>/<Project>/<board_rev>.md` with front-matter matching the project state (default `content/versions/...` under the Hugo `GENERIC_SITE_PROFILE`)
 AND the site repo has `versions/<Project>/<board_rev>/<P>-<R>.<asset>` files for the standard asset set (top.png, bottom.png, step, sch.svg, sch.pdf, ibom.html, fab.zip, source.zip, thumbnail.png)
-AND the site repo has `pages/<Project>.md` with content from the project's README.md
+AND the site repo has `<pages_dir>/<Project>.md` with content from the project's README.md (default `content/pages/...`)
 AND the site repo is committed and pushed
 ```
 
@@ -187,9 +187,9 @@ AND stderr contains the git command lines and their stdout/stderr
 
 ```gherkin path=null start=null
 GIVEN a kicad_project already published, where:
-  - the current front-matter kproj would emit matches the on-disk `_versions/<P>/<R>.md` front-matter
+  - the current front-matter kproj would emit matches the on-disk `<versions_dir>/<P>/<R>.md` front-matter (default `content/versions/...` under GENERIC)
   - the current body kproj would emit matches the on-disk body
-  - the project's README.md content matches the on-disk `pages/<P>.md` body
+  - the project's README.md content matches the on-disk `<pages_dir>/<P>.md` body (default `content/pages/...`)
   - every artifact referenced in the front-matter exists on disk and is not older than its source
 WHEN I run `kproj <path>`
 THEN no files are written

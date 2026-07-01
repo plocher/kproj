@@ -6,6 +6,81 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Changed - `SiteProfile` abstraction; Hugo path defaults (Phase F of Jekyll → Hugo migration)
+
+The production SPCoast site was migrated from Jekyll to Hugo in a
+companion PR (`SPCoast/SPCoast.github.io` orphan branch `main`); the
+pre-migration Jekyll state is preserved at the `archive/jekyll-final`
+tag of that repository. This kproj change updates the tool to emit
+content for the new backend while keeping tests decoupled from any
+specific site shape (mirrors jBOM's ADR 0008 GENERIC-profile pattern).
+
+- **New `SiteProfile` dataclass** in `src/kproj/config.py` captures the
+  backend-specific decisions: `versions_dir` (where per-version markdown
+  files land), `pages_dir` (where the per-project overview lands), and
+  `layout_field` (optional value for the `layout:` front-matter key;
+  `None` omits the field entirely).
+- **Two built-in profiles ship**, mirroring jBOM's `generic` vs. named-
+  profile pattern:
+  - `GENERIC_SITE_PROFILE` — abstract test anchor. Values are
+    intentionally backend-neutral (`versions_dir="versions"`,
+    `pages_dir="pages"`, `layout_field=None`); Behave scenarios and
+    unit-test fixtures reference this constant so tests exercise the
+    abstraction contract without pinning to any real backend's layout.
+    Not intended for live deployment.
+  - `HUGO_SITE_PROFILE` — concrete Hugo backend. Fills in the
+    structural bones a Hugo GitHub Pages deployment expects:
+    `versions_dir="content/versions"`, `pages_dir="content/pages"`,
+    `layout_field=None` (Hugo picks by section).
+- **Single source of truth for the default** (no in-code fallbacks):
+  - `KprojConfig.site_profile` is a **required** field — no dataclass
+    default. Callers must always specify it. Construction without
+    `site_profile=...` raises `TypeError` at instantiation.
+  - `load_config` (the production entry point) selects
+    `HUGO_SITE_PROFILE` via a new `_resolve_site_profile()` helper
+    that mirrors the existing `_resolve_site_repo` /
+    `_resolve_no_push` / `_resolve_kicad_cli` chain. A future
+    `--profile` / `--type` / `--theme` CLI flag + env + yaml
+    precedence chain plugs in here alongside the existing resolvers.
+  - Rationale: DRY-hardcoded `= GENERIC_SITE_PROFILE` defaults on
+    multiple function signatures create a maintenance hazard; jBOM's
+    ADR 0008 avoids this by keeping the argparse/config layer as the
+    only place the default lives. kproj follows the same discipline.
+- **`SitePublisher.publish` and `.detect_outcome`** now take
+  `site_profile` as a **required** parameter (no default). Target
+  paths are `<site_repo>/<site_profile.versions_dir>/<P>/<R>.md` and
+  `<site_repo>/<site_profile.pages_dir>/<P>.md`. `PublishWorkflow`
+  threads `request.config.site_profile` through to both call sites.
+- **`FrontMatterSummaryFormatter.render`** takes `site_profile` as a
+  **required** parameter (no default) and emits `layout: <value>`
+  only when `profile.layout_field is not None`. Under
+  `GENERIC_SITE_PROFILE` (test anchor, no `layout:` field) and
+  `HUGO_SITE_PROFILE` (Hugo picks by section), the `layout:` field
+  is omitted from the emitted YAML.
+- **Behave scenarios + unit-test fixtures** reference
+  `GENERIC_SITE_PROFILE.versions_dir` / `.pages_dir` instead of
+  literal `"_versions"` / `"pages"` paths, so scenarios validate
+  the abstraction contract (“the version file lands under the
+  configured versions dir”) rather than pinning to a specific
+  backend's layout.
+- **New profile-sensitivity test class** in
+  `tests/unit/formatters/test_front_matter_summary_formatter.py`
+  exercises the `layout:` matrix: GENERIC omits the field; a
+  Jekyll-shaped custom profile (`layout_field="eagle"`) emits it.
+- **`docs/DESIGN.md`** gains a new § *SiteProfile abstraction* right
+  after § *Configuration layer*; pipeline orchestration + new-release
+  detection sections use `<site_profile.versions_dir>` /
+  `<site_profile.pages_dir>` placeholders instead of literal paths;
+  the § *Front-matter shape* example comments out `layout: eagle`
+  as Jekyll-specific.
+- **`docs/PRD.md`** Story 1 and Story 13 use `<versions_dir>` /
+  `<pages_dir>` placeholders with the Hugo defaults called out.
+- **`docs/GLOSSARY.md`** *version* entry updated to reference the
+  profile-driven path.
+
+All unit tests (340) + contract tests (17) + Behave scenarios (15,
+87 steps) pass; ruff + mypy strict clean.
+
 ### Fixed - issue #4 wave-3 review fix-up round-2 (post re-review)
 
 The gpt-5-5-xhigh re-review of the round-1 fix-up (see the `## Re-review

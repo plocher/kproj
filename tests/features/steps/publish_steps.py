@@ -30,7 +30,14 @@ from _kicad_fixtures import (  # noqa: E402
 )
 from kproj.application import publish_workflow as workflow_module  # noqa: E402
 from kproj.application.publish_workflow import PublishWorkflow  # noqa: E402
-from kproj.config import KprojConfig  # noqa: E402
+from kproj.config import GENERIC_SITE_PROFILE, KprojConfig  # noqa: E402
+
+# Steps below reference GENERIC_SITE_PROFILE's directory constants
+# instead of literal ``_versions`` / ``pages`` paths so scenarios exercise
+# the SiteProfile abstraction ("the version page lands under the
+# configured versions dir") rather than pinning to a specific backend.
+_VDIR = GENERIC_SITE_PROFILE.versions_dir
+_PDIR = GENERIC_SITE_PROFILE.pages_dir
 from kproj.model.analysis_info import AnalysisInfo  # noqa: E402
 from kproj.model.publication import AssetRef  # noqa: E402
 from kproj.model.publish_request import PublishRequest  # noqa: E402
@@ -163,6 +170,7 @@ def _build_request(context: Any, *, dry_run: bool = False) -> PublishRequest:
             site_repo=context.site_repo,
             no_push=getattr(context, "no_push", True),
             kicad_cli=fake_cli,
+            site_profile=GENERIC_SITE_PROFILE,
         ),
         dry_run=dry_run,
     )
@@ -358,31 +366,31 @@ def step_when_run_kproj_verbose(context: Any) -> None:
 
 @then("the version page exists in the site repo")
 def step_then_version_page_exists(context: Any) -> None:
-    """Assert the _versions/<P>/<R>.md file was created."""
+    """Assert the version markdown was created under the profile's versions_dir."""
     P = getattr(context, "project_name", "MyProject")
-    version_file = context.site_repo / "_versions" / P / "1.0.md"
-    assert version_file.exists(), f"_versions/{P}/1.0.md not found in {context.site_repo}"
+    version_file = context.site_repo / _VDIR / P / "1.0.md"
+    assert version_file.exists(), f"{_VDIR}/{P}/1.0.md not found in {context.site_repo}"
 
 
 @then("the project page exists in the site repo")
 def step_then_project_page_exists(context: Any) -> None:
-    """Assert the pages/<P>.md file was created."""
+    """Assert the per-project overview page was created under pages_dir."""
     P = getattr(context, "project_name", "MyProject")
-    pages_file = context.site_repo / "pages" / f"{P}.md"
-    assert pages_file.exists(), f"pages/{P}.md not found in {context.site_repo}"
+    pages_file = context.site_repo / _PDIR / f"{P}.md"
+    assert pages_file.exists(), f"{_PDIR}/{P}.md not found in {context.site_repo}"
 
 
 @then("no files are written to the site repo")
 def step_then_no_files_written(context: Any) -> None:
     """Assert the site repo has no version/pages files (dry-run guard)."""
     versions = (
-        list((context.site_repo / "_versions").rglob("*.md"))
-        if (context.site_repo / "_versions").exists()
+        list((context.site_repo / _VDIR).rglob("*.md"))
+        if (context.site_repo / _VDIR).exists()
         else []
     )
     pages = (
-        list((context.site_repo / "pages").rglob("*.md"))
-        if (context.site_repo / "pages").exists()
+        list((context.site_repo / _PDIR).rglob("*.md"))
+        if (context.site_repo / _PDIR).exists()
         else []
     )
     assert not versions and not pages, f"dry-run wrote files: versions={versions}, pages={pages}"
@@ -392,11 +400,11 @@ def step_then_no_files_written(context: Any) -> None:
 def step_then_version_page_has_audit_table(context: Any) -> None:
     """Assert the version markdown body has a Metadata Audit table."""
     P = getattr(context, "project_name", "AuditProject")
-    version_file = context.site_repo / "_versions" / P / "1.0.md"
+    version_file = context.site_repo / _VDIR / P / "1.0.md"
     if not version_file.exists():
         # Try project name from result
         P = context.result.message.split("'")[1] if "'" in context.result.message else P
-        version_file = context.site_repo / "_versions" / P / "1.0.md"
+        version_file = context.site_repo / _VDIR / P / "1.0.md"
     assert version_file.exists(), f"version file not found: {version_file}"
     content = version_file.read_text()
     assert "Metadata Audit" in content, (
@@ -408,9 +416,9 @@ def step_then_version_page_has_audit_table(context: Any) -> None:
 def step_then_front_matter_has_counts(context: Any) -> None:
     """Assert audit: {errors:…, warnings:…} is in the front-matter."""
     P = getattr(context, "project_name", "AuditProject")
-    version_file = context.site_repo / "_versions" / P / "1.0.md"
+    version_file = context.site_repo / _VDIR / P / "1.0.md"
     if not version_file.exists():
-        for f in (context.site_repo / "_versions").rglob("*.md"):
+        for f in (context.site_repo / _VDIR).rglob("*.md"):
             version_file = f
             break
     content = version_file.read_text()
@@ -429,7 +437,7 @@ def step_then_exit_1(context: Any) -> None:
 @then("the version page has updated status")
 def step_then_version_has_updated_status(context: Any) -> None:
     """Assert the version page front-matter has status: active."""
-    for version_file in (context.site_repo / "_versions").rglob("*.md"):
+    for version_file in (context.site_repo / _VDIR).rglob("*.md"):
         content = version_file.read_text()
         assert "status: active" in content, (
             f"Expected 'status: active' in {version_file}:\n{content[:500]}"
@@ -451,7 +459,7 @@ def step_then_commit_exists(context: Any) -> None:
     """Assert the site repo now has at least one commit (via file existence)."""
     # We mock _git_run so we can't check git log directly.
     # Instead, verify the version file was written.
-    version_files = list((context.site_repo / "_versions").rglob("*.md"))
+    version_files = list((context.site_repo / _VDIR).rglob("*.md"))
     assert version_files, "Expected at least one version file after publish"
 
 
@@ -459,13 +467,13 @@ def step_then_commit_exists(context: Any) -> None:
 def step_then_no_partial_files(context: Any) -> None:
     """Assert the site repo is clean (rollback worked)."""
     version_files = (
-        list((context.site_repo / "_versions").rglob("*.md"))
-        if (context.site_repo / "_versions").exists()
+        list((context.site_repo / _VDIR).rglob("*.md"))
+        if (context.site_repo / _VDIR).exists()
         else []
     )
     pages_files = (
-        list((context.site_repo / "pages").rglob("*.md"))
-        if (context.site_repo / "pages").exists()
+        list((context.site_repo / _PDIR).rglob("*.md"))
+        if (context.site_repo / _PDIR).exists()
         else []
     )
     assert not version_files and not pages_files, (
@@ -563,8 +571,8 @@ def step_then_exit_code_is(context: Any, code: int) -> None:
 
 @then("no version page is written")
 def step_then_no_version_page_written(context: Any) -> None:
-    """Assert no ``_versions/*.md`` files exist in the site repo."""
-    versions_dir = context.site_repo / "_versions"
+    """Assert no per-version markdown files exist under the profile's versions_dir."""
+    versions_dir = context.site_repo / _VDIR
     files = list(versions_dir.rglob("*.md")) if versions_dir.exists() else []
     assert not files, f"expected no version pages; found {files!r}"
 

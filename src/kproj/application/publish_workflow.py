@@ -317,7 +317,11 @@ class PublishWorkflow:
             artifacts=artifact_refs,
         )
 
-        preliminary_outcome = SitePublisher.detect_outcome(preliminary_pub, site_repo)
+        preliminary_outcome = SitePublisher.detect_outcome(
+            preliminary_pub,
+            site_repo,
+            request.config.site_profile,
+        )
         # M1 fix-up: docs/DESIGN.md § New-release detection requires
         # comparing each asset's mtime against its source.  When the
         # PCB has been edited since the last publish but the title
@@ -400,6 +404,7 @@ class PublishWorkflow:
                     site_repo,
                     request.config.no_push,
                     request.dry_run,
+                    request.config.site_profile,
                     force_outcome=preliminary_outcome,
                 )
 

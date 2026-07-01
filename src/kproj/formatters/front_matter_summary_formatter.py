@@ -1,11 +1,12 @@
 """The :class:`FrontMatterSummaryFormatter`.
 
-Produces the authoritative YAML front-matter for
-``_versions/<P>/<R>.md`` per ``docs/DESIGN.md`` § *Front-matter shape*.
-
-The :meth:`render` method takes a fully assembled :class:`Publication`
-and returns a YAML string (without the ``---`` delimiters) ready for
-embedding in a Jekyll markdown file.
+Produces the authoritative YAML front-matter for the per-version
+markdown file per ``docs/DESIGN.md`` § *Front-matter shape*.  The
+:meth:`render` method takes a :class:`~kproj.model.publication.Publication`
+plus a :class:`~kproj.config.SiteProfile` and returns a YAML string
+(without the ``---`` delimiters).  The profile drives optional
+front-matter fields (currently: whether ``layout:`` is emitted and
+with what value).
 
 The ``libraries:`` section groups libraries into three buckets
 (``internal`` / ``external`` / ``ambiguous``) per the
@@ -14,8 +15,8 @@ The ``libraries:`` section groups libraries into three buckets
 
 Design note: key order in the emitted YAML follows the DESIGN
 § *Front-matter shape* example; ``sort_keys=False`` is used in
-:func:`yaml.dump` to preserve it.  Jekyll reads front-matter as an
-ordered map anyway, so order is cosmetic but keeps diffs reviewable.
+:func:`yaml.dump` to preserve it.  Order is cosmetic but keeps
+diffs reviewable.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from collections import defaultdict
 
 import yaml
 
+from ..config import SiteProfile
 from ..model.analysis_info import AnalysisInfo
 from ..model.project_info import Status
 from ..model.publication import Publication
@@ -46,16 +48,23 @@ class FrontMatterSummaryFormatter:
     def __init__(self) -> None:
         """Construct a front-matter summary formatter."""
 
-    def render(self, publication: Publication) -> str:
+    def render(
+        self,
+        publication: Publication,
+        site_profile: SiteProfile,
+    ) -> str:
         """Render the full YAML front-matter for *publication*.
 
         Args:
             publication: The site-emission-ready publication bundle.
+            site_profile: :class:`SiteProfile` selecting optional
+                front-matter fields (currently: whether ``layout:``
+                is emitted and with what value).
 
         Returns:
             A YAML string (no ``---`` fences) ready to embed between
-            the opening and closing ``---`` delimiters of a Jekyll
-            markdown file.
+            the opening and closing ``---`` delimiters of a Hugo /
+            Jekyll markdown file.
         """
         pi = publication.project_info
         ai = publication.analysis_info
@@ -67,7 +76,15 @@ class FrontMatterSummaryFormatter:
 
         data: dict[str, object] = {
             "iskicad": iskicad,
-            "layout": "eagle",
+        }
+
+        # Emit ``layout:`` only when the profile declares one.  Hugo
+        # picks layout by section and omits the field; Jekyll needed
+        # ``layout: eagle`` (or equivalent) to select the version layout.
+        if site_profile.layout_field is not None:
+            data["layout"] = site_profile.layout_field
+
+        data.update({
             "sidebar": "spcoast_sidebar",
             "project": P,
             "title": R,
@@ -82,7 +99,7 @@ class FrontMatterSummaryFormatter:
             "status": pi.status.value,
             "publish": True,
             "image_path": f"/versions/{P}/{R}/{PR}.thumbnail.png",
-        }
+        })
 
         # Fabrication fields — only when set.
         if pi.fabricated:
