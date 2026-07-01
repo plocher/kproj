@@ -93,7 +93,12 @@ def _write_version_file(
 
 
 def _write_pages_file(site_repo: Path, P: str, content: str) -> Path:
-    path = site_repo / GENERIC_SITE_PROFILE.pages_dir / f"{P}.md"
+    """Write the project section index (``<versions_dir>/<P>/_index.md``).
+
+    (Historical helper name; the per-project overview is now the Hugo
+    section index page, not a flat ``pages/<P>.md``.)
+    """
+    path = GENERIC_SITE_PROFILE.project_index_path(site_repo, P)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
@@ -147,8 +152,8 @@ class TestDetectOutcome:
         fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
         content = f"---\n{fm}---\n{pub.body_md}\n"
         _write_version_file(site, "Demo", "1.0B", content)
-        # Write matching pages file
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
+        # Write matching project section index
+        _write_pages_file(site, "Demo", f"---\ntitle: Demo\nproject: Demo\n---\n{pub.readme_md}\n")
 
         outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
         assert outcome == "noop"
@@ -213,8 +218,8 @@ class TestPublish:
         assert version_file.exists()
         assert isinstance(result, PublishResult)
 
-    def test_publish_writes_pages_file(self, tmp_path: Path) -> None:
-        """publish() creates pages/<P>.md."""
+    def test_publish_writes_project_index(self, tmp_path: Path) -> None:
+        """publish() creates the project section index <versions_dir>/<P>/_index.md."""
         site = tmp_path / "site"
         site.mkdir()
         pub = _pub()
@@ -225,9 +230,9 @@ class TestPublish:
             sp = SitePublisher(journal)
             sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
 
-        pages_file = site / GENERIC_SITE_PROFILE.pages_dir / "Demo.md"
-        assert pages_file.exists()
-        assert "demo project" in pages_file.read_text().lower()
+        index_file = GENERIC_SITE_PROFILE.project_index_path(site, "Demo")
+        assert index_file.exists()
+        assert "demo project" in index_file.read_text().lower()
 
     def test_publish_returns_published_outcome(self, tmp_path: Path) -> None:
         """First publish returns outcome='published'."""
@@ -280,7 +285,7 @@ class TestPublish:
 
         tracked = list(journal.all_paths())
         assert any("1.0B.md" in str(p) for p in tracked)
-        assert any("Demo.md" in str(p) for p in tracked)
+        assert any("_index.md" in str(p) for p in tracked)
 
     def test_dry_run_does_not_write_files(self, tmp_path: Path) -> None:
         """dry_run=True must not write any files to site_repo."""
@@ -380,7 +385,7 @@ class TestPublish:
         fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
         content = f"---\n{fm}---\n{pub.body_md}\n"
         _write_version_file(site, "Demo", "1.0B", content)
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
+        _write_pages_file(site, "Demo", f"---\ntitle: Demo\nproject: Demo\n---\n{pub.readme_md}\n")
 
         journal = _open_journal(site, dry_run=True)
         with patch("kproj.services.site_publisher._git_run") as mock_git:
@@ -578,9 +583,9 @@ class TestPublish:
                 f"BLOCKER 2: SitePublisher must stage every journal.all_paths() entry. "
                 f"added_paths={added_paths}"
             )
-        # And the version + pages markdown still need to be in there.
+        # And the version page + project section index still need to be in there.
         assert f"{GENERIC_SITE_PROFILE.versions_dir}/Demo/1.0B.md" in added_paths
-        assert f"{GENERIC_SITE_PROFILE.pages_dir}/Demo.md" in added_paths
+        assert f"{GENERIC_SITE_PROFILE.versions_dir}/Demo/_index.md" in added_paths
 
     def test_findings_passed_through_result(self, tmp_path: Path) -> None:
         """Findings from the publication appear in the returned PublishResult."""

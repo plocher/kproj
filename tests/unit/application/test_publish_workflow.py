@@ -428,7 +428,9 @@ def test_drc_erc_mechanical_failure_does_not_open_journal(
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         called["artifact_gen"] = True
@@ -458,11 +460,9 @@ def test_drc_erc_mechanical_failure_does_not_open_journal(
         "M4: no git operations expected on mechanical failure; got "
         f"{[c.args for c in mock_git.call_args_list]!r}"
     )
-    # No partial version/page markdown on disk.
-    versions_dir = site / "_versions"
-    pages_dir = site / "pages"
+    # No partial markdown on disk (mechanical failure before any writes).
+    versions_dir = site / GENERIC_SITE_PROFILE.versions_dir
     assert not versions_dir.exists() or not list(versions_dir.rglob("*.md"))
-    assert not pages_dir.exists() or not list(pages_dir.rglob("*.md"))
 
 
 def test_workflow_uses_injected_design_analyzer_factory(

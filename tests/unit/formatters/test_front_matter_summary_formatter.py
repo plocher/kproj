@@ -151,7 +151,6 @@ class TestLayoutFieldProfileSensitivity:
     _JEKYLL_PROFILE = SiteProfile(
         name="jekyll-eagle",
         versions_dir="_versions",
-        pages_dir="pages",
         assets_dir="versions",
         layout_field="eagle",
     )
@@ -166,7 +165,6 @@ class TestLayoutFieldProfileSensitivity:
         custom = SiteProfile(
             name="custom",
             versions_dir="content/versions",
-            pages_dir="content/pages",
             assets_dir="static/versions",
             layout_field="kicad-version",
         )

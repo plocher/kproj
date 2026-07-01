@@ -6,9 +6,9 @@ this service:
 1. Determines the publish outcome (``"noop"`` / ``"refresh"`` /
    ``"published"``) by comparing the current publication to the
    on-disk site state (§ *New-release detection*).
-2. Writes the per-version markdown and per-project overview files
-   (paths selected by the caller-supplied
-   :class:`~kproj.config.SiteProfile`) atomically via
+2. Writes the per-version markdown page and the per-project section
+   index (``<versions_dir>/<P>/_index.md``) — paths selected by the
+   caller-supplied :class:`~kproj.config.SiteProfile` — atomically via
    ``tempfile + os.replace``.
 3. Registers every write with the :class:`ChangeJournal` for rollback
    (ADR 0005).
@@ -89,11 +89,18 @@ def _build_version_content(
     return f"---\n{yaml_block}---\n{body}\n"
 
 
-def _build_pages_content(publication: Publication) -> str:
-    """Build the content for ``pages/<P>.md``."""
+def _build_project_index_content(publication: Publication) -> str:
+    """Build the project section-index page (``<versions_dir>/<P>/_index.md``).
+
+    One project-global page per project, rewritten each publish to reflect
+    the most-recent-publish state. Front-matter carries ``title`` +
+    ``project`` so the project renders as a Hugo section; the body is the
+    project README. (A later tranche adds DESCRIPTION + a discovered
+    datasheet list.)
+    """
     project = publication.project_info.project
     readme = publication.readme_md
-    return f"---\nproject: {project}\n---\n{readme}\n"
+    return f"---\ntitle: {project}\nproject: {project}\n---\n{readme}\n"
 
 
 # ──────────────────────────── SitePublisher ──────────────────────────────────
@@ -157,8 +164,8 @@ class SitePublisher:
         PR = f"{P}-{R}"
         findings = publication.analysis_info.findings
 
-        version_file = site_repo / site_profile.versions_dir / P / f"{R}.md"
-        pages_file = site_repo / site_profile.pages_dir / f"{P}.md"
+        version_file = site_profile.version_page_path(site_repo, P, R)
+        project_index_file = site_profile.project_index_path(site_repo, P)
 
         # ── new-release detection ──
         outcome = (
@@ -178,7 +185,7 @@ class SitePublisher:
             _log.info(
                 "dry-run: would write %s + %s (outcome=%s)",
                 version_file,
-                pages_file,
+                project_index_file,
                 outcome,
             )
             return PublishResult.build(
@@ -197,7 +204,7 @@ class SitePublisher:
         #   publish   - brand-new version of an existing project
         #   republish - existing version, artifacts regenerated (source changed)
         #   refresh   - existing version, metadata-only change
-        project_is_new = not pages_file.exists()
+        project_is_new = not project_index_file.exists()
         version_is_new = not version_file.exists()
 
         if project_is_new:
@@ -210,7 +217,7 @@ class SitePublisher:
             commit_msg = f"refresh: {PR} (metadata updated)"
 
         would_be_version = _build_version_content(publication, site_profile)
-        would_be_pages = _build_pages_content(publication)
+        would_be_project_index = _build_project_index_content(publication)
 
         # ── write version file atomically ──
         version_file.parent.mkdir(parents=True, exist_ok=True)
@@ -220,13 +227,13 @@ class SitePublisher:
             self._journal.will_create(version_file)
         _atomic_write(version_file, would_be_version)
 
-        # ── write pages file atomically ──
-        pages_file.parent.mkdir(parents=True, exist_ok=True)
-        if pages_file.exists():
-            self._journal.will_modify(pages_file)
+        # ── write project section index atomically ──
+        project_index_file.parent.mkdir(parents=True, exist_ok=True)
+        if project_index_file.exists():
+            self._journal.will_modify(project_index_file)
         else:
-            self._journal.will_create(pages_file)
-        _atomic_write(pages_file, would_be_pages)
+            self._journal.will_create(project_index_file)
+        _atomic_write(project_index_file, would_be_project_index)
 
         # ── git add + commit + push ──
         # BLOCKER 2 fix: stage EVERY path the journal knows about (assets
@@ -239,7 +246,7 @@ class SitePublisher:
         touched_paths = self._collect_paths_to_stage(
             site_repo=site_repo,
             version_file=version_file,
-            pages_file=pages_file,
+            project_index_file=project_index_file,
         )
         _git_run(["add", *touched_paths], site_repo=site_repo)
         _git_run(["commit", "-m", commit_msg], site_repo=site_repo)
@@ -266,7 +273,7 @@ class SitePublisher:
         *,
         site_repo: Path,
         version_file: Path,
-        pages_file: Path,
+        project_index_file: Path,
     ) -> list[str]:
         """Return the deduplicated set of paths (relative to *site_repo*) to ``git add``.
 
@@ -298,7 +305,7 @@ class SitePublisher:
         for absolute in (
             *self._journal.all_paths(),
             version_file,
-            pages_file,
+            project_index_file,
         ):
             try:
                 rel = str(absolute.relative_to(site_repo))
@@ -339,8 +346,8 @@ class SitePublisher:
         P = publication.project_info.project
         R = publication.project_info.board_rev
 
-        version_file = site_repo / site_profile.versions_dir / P / f"{R}.md"
-        pages_file = site_repo / site_profile.pages_dir / f"{P}.md"
+        version_file = site_profile.version_page_path(site_repo, P, R)
+        project_index_file = site_profile.project_index_path(site_repo, P)
 
         # Step 1: version file must exist.
         if not version_file.exists():
@@ -361,14 +368,14 @@ class SitePublisher:
         if _normalize(existing_version) != _normalize(would_be_version):
             return "refresh"
 
-        # Step 4: compare pages/<P>.md to publication.readme_md.
-        if pages_file.exists():
-            existing_pages = pages_file.read_text(encoding="utf-8")
-            would_be_pages = _build_pages_content(publication)
-            if _normalize(existing_pages) != _normalize(would_be_pages):
+        # Step 4: compare the project section index to what we'd emit.
+        if project_index_file.exists():
+            existing_index = project_index_file.read_text(encoding="utf-8")
+            would_be_index = _build_project_index_content(publication)
+            if _normalize(existing_index) != _normalize(would_be_index):
                 return "refresh"
         else:
-            # Pages file missing — create it during the refresh.
+            # Section index missing — create it during the refresh.
             return "refresh"
 
         return "noop"

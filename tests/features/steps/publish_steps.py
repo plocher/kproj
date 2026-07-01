@@ -37,7 +37,6 @@ from kproj.config import GENERIC_SITE_PROFILE, KprojConfig  # noqa: E402
 # the SiteProfile abstraction ("the version page lands under the
 # configured versions dir") rather than pinning to a specific backend.
 _VDIR = GENERIC_SITE_PROFILE.versions_dir
-_PDIR = GENERIC_SITE_PROFILE.pages_dir
 from kproj.model.analysis_info import AnalysisInfo  # noqa: E402
 from kproj.model.publication import AssetRef  # noqa: E402
 from kproj.model.publish_request import PublishRequest  # noqa: E402
@@ -383,26 +382,21 @@ def step_then_version_page_exists(context: Any) -> None:
 
 @then("the project page exists in the site repo")
 def step_then_project_page_exists(context: Any) -> None:
-    """Assert the per-project overview page was created under pages_dir."""
+    """Assert the per-project section index was created (versions/<P>/_index.md)."""
     P = getattr(context, "project_name", "MyProject")
-    pages_file = context.site_repo / _PDIR / f"{P}.md"
-    assert pages_file.exists(), f"{_PDIR}/{P}.md not found in {context.site_repo}"
+    index_file = GENERIC_SITE_PROFILE.project_index_path(context.site_repo, P)
+    assert index_file.exists(), f"{index_file} not found in {context.site_repo}"
 
 
 @then("no files are written to the site repo")
 def step_then_no_files_written(context: Any) -> None:
-    """Assert the site repo has no version/pages files (dry-run guard)."""
+    """Assert the site repo has no version/section-index files (dry-run guard)."""
     versions = (
         list((context.site_repo / _VDIR).rglob("*.md"))
         if (context.site_repo / _VDIR).exists()
         else []
     )
-    pages = (
-        list((context.site_repo / _PDIR).rglob("*.md"))
-        if (context.site_repo / _PDIR).exists()
-        else []
-    )
-    assert not versions and not pages, f"dry-run wrote files: versions={versions}, pages={pages}"
+    assert not versions, f"dry-run wrote files: versions={versions}"
 
 
 @then("the version page contains the audit findings table")
@@ -480,14 +474,7 @@ def step_then_no_partial_files(context: Any) -> None:
         if (context.site_repo / _VDIR).exists()
         else []
     )
-    pages_files = (
-        list((context.site_repo / _PDIR).rglob("*.md"))
-        if (context.site_repo / _PDIR).exists()
-        else []
-    )
-    assert not version_files and not pages_files, (
-        f"Partial files remain: {version_files + pages_files}"
-    )
+    assert not version_files, f"Partial files remain: {version_files}"
 
 
 @then("stderr explains the uncommitted state")

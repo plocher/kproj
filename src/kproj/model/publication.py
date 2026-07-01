@@ -50,11 +50,12 @@ class Publication:
         body_md: The pre-rendered Markdown body (audit + DRC/ERC
             tables) written below the YAML front-matter terminator.
         readme_md: The project's ``README.md`` content.  Written as the
-            body of ``pages/<P>.md`` (the per-project aggregator page).
-            Also used in new-release detection: if the on-disk
-            ``pages/<P>.md`` body differs, a ``"refresh"`` outcome is
-            triggered.  Defaults to an empty string when the project has
-            no README.
+            body of the project section index
+            ``<versions_dir>/<P>/_index.md`` (one per project, rewritten
+            each publish).  Also used in new-release detection: if the
+            on-disk section-index body differs, a ``"refresh"`` outcome
+            is triggered.  Defaults to an empty string when the project
+            has no README.
         images: Asset references emitted into the front-matter
             ``images:`` list (renders, schematic SVG).
         artifacts: Asset references emitted into the front-matter

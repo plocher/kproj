@@ -6,6 +6,18 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Changed - project overview is a Hugo section index (content/versions/<P>/_index.md)
+
+The per-project overview page moved from a flat `content/pages/<P>.md` to the
+project section index `content/versions/<P>/_index.md`, so a project is a Hugo
+section (its identity = the index page) with each version a page in it - the
+EAGLE "one project page + version tabs" model. One index per project, rewritten
+each publish to reflect the most-recent-publish project-global state; kproj no
+longer writes `content/pages/<P>.md`. `SiteProfile.pages_dir` is removed;
+`SiteProfile` gains `version_page_path()` and `project_index_path()` helpers.
+`SitePublisher` (write + detect_outcome + staging + commit classification) and
+the workflow route through them.
+
 ### Added - version thumbnail generation (Phase G: `image_path` now resolves)
 
 The version front-matter has always advertised

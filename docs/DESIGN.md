@@ -195,9 +195,9 @@ The motivation: DRY-hardcoded defaults on multiple function signatures create a 
 
 ### Consumer contract
 
-* `SitePublisher.publish` and `.detect_outcome` read `versions_dir` / `pages_dir` from the (required) caller-supplied profile.
+* `SitePublisher.publish` and `.detect_outcome` derive the version-page (`versions_dir/<P>/<R>.md`) and project section-index (`versions_dir/<P>/_index.md`) paths from the (required) caller-supplied profile via `version_page_path()` / `project_index_path()`.
 * `FrontMatterSummaryFormatter.render` emits `layout: <value>` only when `profile.layout_field is not None`.
-* Behave scenarios and unit-test fixtures reference `GENERIC_SITE_PROFILE.versions_dir` / `.pages_dir` — never literal path strings.
+* Behave scenarios and unit-test fixtures reference `GENERIC_SITE_PROFILE.versions_dir` / `.project_index_path()` — never literal path strings.
 * Adding a new backend (Jekyll, Astro, custom) means declaring a new `SITE_PROFILE` constant and (eventually) exposing it via the `--profile` flag. No service code changes required.
 
 The `--site-repo` CLI flag remains reserved for the on-disk site checkout path; the two concerns (repo location, backend shape) are orthogonal.
@@ -276,7 +276,7 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - ThumbnailGenerator.generate(top_png)              # v1: copy of top.png so image_path resolves (scaling is a follow-up)
 9. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
 10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run, site_profile)
-    - On outcome ∈ {"publish", "refresh"}: journal-write <site_profile.versions_dir>/<P>/<R>.md + <site_profile.pages_dir>/<P>.md (atomic via tempfile + os.replace)
+    - On outcome ∈ {"publish", "refresh"}: journal-write <site_profile.versions_dir>/<P>/<R>.md + <site_profile.versions_dir>/<P>/_index.md (the project section index; atomic via tempfile + os.replace)
     - If not dry_run: git -C <site_repo> add <touched> ; git commit ; journal.mark_committed() ; (unless no_push) git push ; journal.mark_pushed()
 11. Close ChangeJournal cleanly. Return PublishResult.
 
@@ -291,7 +291,7 @@ The comparison inputs:
 
 1. **Front-matter** of `<site_repo>/<site_profile.versions_dir>/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
 2. **Body markdown** of the same file vs the body kproj would emit (the audit/DRC/ERC tables).
-3. **Project page body** of `<site_repo>/<site_profile.pages_dir>/<P>.md` vs the project's current `README.md` content (per ADR 0002, the project page body is always rewritten from README.md).
+3. **Project section-index body** of `<site_repo>/<site_profile.versions_dir>/<P>/_index.md` vs the project's current `README.md` content (per ADR 0002, the project-global page body is always rewritten from README.md; one index per project).
 4. **Asset manifest** for `<site_repo>/versions/<P>/<R>/`:
    - Every artifact listed in the front-matter `artifacts[]` and `images[]` must exist on disk.
    - Each artifact's mtime is compared against the corresponding source mtime (e.g. `<P>-<R>.top.png` vs `<pcb>.kicad_pcb`; `<P>-<R>.ibom.html` vs `<pcb>.kicad_pcb`; `<P>-<R>.source.zip` vs the latest mtime in the project's source-include set; `<P>-<R>.fab.zip` vs the latest mtime in `<project_dir>/production/`).
@@ -300,7 +300,7 @@ The comparison inputs:
 Outcome decision:
 
 - All four inputs match → `outcome="noop"`. Return early. Exit 0 (or 1 if audit/DRC/ERC findings exist).
-- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite the version markdown + `<pages_dir>/<P>.md`. Skip asset regeneration.
+- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite the version markdown + `<versions_dir>/<P>/_index.md`. Skip asset regeneration.
 - The target file is absent, OR any asset is missing, OR any asset is stale → `outcome="publish"`. Run the full artifact pipeline.
 
 The status transition (e.g. `experimental` → `active`) is the canonical metadata-refresh case. README edits that don't touch any artifact's source files are also refresh-only. Anything that touches a `.kicad_pcb`, `.kicad_sch`, or `production/` files forces a publish.
@@ -556,7 +556,7 @@ class SitePublisher:
     ) -> PublishResult:
         """Compute new-release detection.
         Write <site_profile.versions_dir>/<P>/<R>.md (atomic; default: content/versions/...).
-        Write <site_profile.pages_dir>/<P>.md (atomic; default: content/pages/...; always rewritten from Publication's body_md).
+        Write <site_profile.versions_dir>/<P>/_index.md (the project section index; atomic; one per project, rewritten each publish from the README).
         For new releases: assets are already in place (PcbExporter et al wrote directly).
         git add + git commit + (unless no_push) git push.
         All writes journaled for rollback."""
@@ -662,7 +662,7 @@ kproj is the driver of the site's evolution from EAGLE-era to KiCad-aware. The s
 
 Body content (below the `---` front-matter terminator): the audit + DRC/ERC findings rendered as two adjacent Markdown tables via `MarkdownTableFormatter`. Optionally followed by README.md content if the user wants verbose project documentation in the version body (Phase 6 decision; for v1, body is just the tables).
 
-`pages/<Project>.md` is similar but covers project-level metadata; body content is the project's README.md content (always rewritten).
+`<versions_dir>/<Project>/_index.md` (the project section index) covers project-level metadata; body content is the project's README.md content (always rewritten). It is a single page per project (a Hugo section index), rewritten on each publish to reflect the most-recent-publish project-global state; kproj no longer writes a separate `pages/<Project>.md`.
 
 ## Site-repo git workflow
 

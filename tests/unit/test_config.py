@@ -158,7 +158,6 @@ class TestSiteProfileContract:
         """GENERIC values carry no backend-specific prefixes."""
         assert GENERIC_SITE_PROFILE.name == "generic"
         assert GENERIC_SITE_PROFILE.versions_dir == "versions"
-        assert GENERIC_SITE_PROFILE.pages_dir == "pages"
         assert GENERIC_SITE_PROFILE.assets_dir == "versions"
         assert GENERIC_SITE_PROFILE.layout_field is None
 
@@ -166,7 +165,6 @@ class TestSiteProfileContract:
         """HUGO puts per-version + per-page files under Hugo's ``content/`` root."""
         assert HUGO_SITE_PROFILE.name == "hugo"
         assert HUGO_SITE_PROFILE.versions_dir == "content/versions"
-        assert HUGO_SITE_PROFILE.pages_dir == "content/pages"
         # Assets live under static/ so Hugo serves them at the /versions/ URL.
         assert HUGO_SITE_PROFILE.assets_dir == "static/versions"
         assert HUGO_SITE_PROFILE.layout_field is None  # Hugo picks by section
@@ -175,11 +173,11 @@ class TestSiteProfileContract:
         """The two profiles are not accidentally aliased."""
         assert GENERIC_SITE_PROFILE != HUGO_SITE_PROFILE
         assert GENERIC_SITE_PROFILE.versions_dir != HUGO_SITE_PROFILE.versions_dir
-        assert GENERIC_SITE_PROFILE.pages_dir != HUGO_SITE_PROFILE.pages_dir
+        assert GENERIC_SITE_PROFILE.assets_dir != HUGO_SITE_PROFILE.assets_dir
 
     def test_site_profile_is_frozen(self) -> None:
         """``SiteProfile`` is a frozen dataclass."""
-        profile = SiteProfile(name="x", versions_dir="v", pages_dir="p", assets_dir="a")
+        profile = SiteProfile(name="x", versions_dir="v", assets_dir="a")
         with pytest.raises(dataclasses.FrozenInstanceError):
             profile.name = "y"  # type: ignore[misc]
 
@@ -191,7 +189,20 @@ class TestSiteProfileContract:
         served assets physically live.
         """
         with pytest.raises(TypeError, match="assets_dir"):
-            SiteProfile(name="x", versions_dir="v", pages_dir="p")  # type: ignore[call-arg]
+            SiteProfile(name="x", versions_dir="v")  # type: ignore[call-arg]
+
+    def test_version_and_project_index_paths(self) -> None:
+        """Version pages and the project section index derive from versions_dir."""
+        site = Path("/site")
+        assert HUGO_SITE_PROFILE.version_page_path(site, "Demo", "1.0B") == (
+            site / "content/versions" / "Demo" / "1.0B.md"
+        )
+        assert HUGO_SITE_PROFILE.project_index_path(site, "Demo") == (
+            site / "content/versions" / "Demo" / "_index.md"
+        )
+        assert GENERIC_SITE_PROFILE.project_index_path(site, "Demo") == (
+            site / "versions" / "Demo" / "_index.md"
+        )
 
 
 class TestAssetDiskPath:
