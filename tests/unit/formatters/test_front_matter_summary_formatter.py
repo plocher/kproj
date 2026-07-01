@@ -152,6 +152,7 @@ class TestLayoutFieldProfileSensitivity:
         name="jekyll-eagle",
         versions_dir="_versions",
         pages_dir="pages",
+        assets_dir="versions",
         layout_field="eagle",
     )
 
@@ -166,6 +167,7 @@ class TestLayoutFieldProfileSensitivity:
             name="custom",
             versions_dir="content/versions",
             pages_dir="content/pages",
+            assets_dir="static/versions",
             layout_field="kicad-version",
         )
         assert _parse(_pub(), custom)["layout"] == "kicad-version"

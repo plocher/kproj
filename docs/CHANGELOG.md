@@ -6,6 +6,20 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - Hugo assets written under static/ so they are actually served (kproj#10 Phase G finding)
+
+Release assets were written to a repo-root `versions/` directory, but Hugo only
+serves `static/` at the site root, so every front-matter `/versions/<P>/<R>/*`
+URL (renders, STEP, SVG/PDF, iBOM, zips) would 404 on the built site. Added a
+required `assets_dir` field to `SiteProfile` (`GENERIC="versions"`,
+`HUGO="static/versions"`) plus `SiteProfile.asset_disk_path()`, which maps the
+fixed public `/versions/...` URL to the profile's physical directory. The
+default artifact generator writes there, and both disk-existence checks
+(`SitePublisher.detect_outcome`, `_assets_are_stale`) read through the same
+mapping so writer and readers agree. Public AssetRef URLs are unchanged
+(`/versions/...`); only the physical location moved. `assets_dir` is required
+(no default) so a backend can't silently reintroduce the un-served-assets bug.
+
 ### Fixed - site commit message reflects the real publish outcome (kproj#10 Phase G finding)
 
 The site commit prefix was chosen purely from file existence and ignored the

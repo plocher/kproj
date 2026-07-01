@@ -159,6 +159,7 @@ class TestSiteProfileContract:
         assert GENERIC_SITE_PROFILE.name == "generic"
         assert GENERIC_SITE_PROFILE.versions_dir == "versions"
         assert GENERIC_SITE_PROFILE.pages_dir == "pages"
+        assert GENERIC_SITE_PROFILE.assets_dir == "versions"
         assert GENERIC_SITE_PROFILE.layout_field is None
 
     def test_hugo_carries_hugo_content_prefix(self) -> None:
@@ -166,6 +167,8 @@ class TestSiteProfileContract:
         assert HUGO_SITE_PROFILE.name == "hugo"
         assert HUGO_SITE_PROFILE.versions_dir == "content/versions"
         assert HUGO_SITE_PROFILE.pages_dir == "content/pages"
+        # Assets live under static/ so Hugo serves them at the /versions/ URL.
+        assert HUGO_SITE_PROFILE.assets_dir == "static/versions"
         assert HUGO_SITE_PROFILE.layout_field is None  # Hugo picks by section
 
     def test_generic_and_hugo_are_distinct(self) -> None:
@@ -176,9 +179,46 @@ class TestSiteProfileContract:
 
     def test_site_profile_is_frozen(self) -> None:
         """``SiteProfile`` is a frozen dataclass."""
-        profile = SiteProfile(name="x", versions_dir="v", pages_dir="p")
+        profile = SiteProfile(name="x", versions_dir="v", pages_dir="p", assets_dir="a")
         with pytest.raises(dataclasses.FrozenInstanceError):
             profile.name = "y"  # type: ignore[misc]
+
+    def test_site_profile_requires_assets_dir(self) -> None:
+        """``assets_dir`` is a required field (no default).
+
+        An implicit fallback is exactly what let Hugo assets land outside
+        ``static/`` and 404 (kproj#10); every backend must state where its
+        served assets physically live.
+        """
+        with pytest.raises(TypeError, match="assets_dir"):
+            SiteProfile(name="x", versions_dir="v", pages_dir="p")  # type: ignore[call-arg]
+
+
+class TestAssetDiskPath:
+    """``SiteProfile.asset_disk_path`` maps a public asset URL to disk.
+
+    Public asset URLs are always ``/versions/<P>/<R>/<file>``; the physical
+    location swaps the leading served-mount segment for ``assets_dir`` so
+    the file resolves at that URL on the built site.
+    """
+
+    def test_generic_maps_versions_url_to_versions_dir(self) -> None:
+        site = Path("/site")
+        got = GENERIC_SITE_PROFILE.asset_disk_path(site, "/versions/Demo/1.0B/Demo-1.0B.top.png")
+        assert got == site / "versions" / "Demo" / "1.0B" / "Demo-1.0B.top.png"
+
+    def test_hugo_maps_versions_url_under_static(self) -> None:
+        """Hugo serves ``static/`` at ``/``, so /versions/... lives in static/versions/."""
+        site = Path("/site")
+        got = HUGO_SITE_PROFILE.asset_disk_path(site, "/versions/Demo/1.0B/Demo-1.0B.ibom.html")
+        assert got == site / "static" / "versions" / "Demo" / "1.0B" / "Demo-1.0B.ibom.html"
+
+    def test_leading_slash_optional(self) -> None:
+        """A path without the leading slash maps the same way."""
+        site = Path("/site")
+        with_slash = HUGO_SITE_PROFILE.asset_disk_path(site, "/versions/P/R/f.step")
+        without_slash = HUGO_SITE_PROFILE.asset_disk_path(site, "versions/P/R/f.step")
+        assert with_slash == without_slash == site / "static" / "versions" / "P" / "R" / "f.step"
 
 
 class TestSiteProfileResolution:

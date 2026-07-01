@@ -85,6 +85,7 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
         _ibom_script: Path,
         _kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
@@ -309,6 +310,7 @@ def step_given_failing_producer(context: Any) -> None:
         _ibom_script: Path,
         _kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")

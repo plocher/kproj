@@ -538,6 +538,7 @@ def _stub_artifact_generator(
         ibom_script: Path,
         kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
@@ -809,6 +810,7 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         ibom_script: Path,
         kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         captured["project"] = getattr(project_info, "project", None)
@@ -884,6 +886,7 @@ def test_schematic_export_error_converts_to_failed_outcome(
         ibom_script: Path,
         kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         # Simulate the schematic-export shape-mismatch path: register
@@ -1066,6 +1069,7 @@ def test_artifact_generator_diagnostics_flow_into_result(
         ibom_script: Path,
         kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
         # Return no asset refs; just surface a producer-stage diagnostic.

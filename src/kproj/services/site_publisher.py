@@ -347,8 +347,11 @@ class SitePublisher:
             return "publish"
 
         # Step 2: every referenced asset must exist in the site repo.
+        # Assets are referenced by their public URL (/versions/...) but
+        # physically live under the profile's assets_dir (Hugo:
+        # static/versions/...), so map the URL to disk via the profile.
         for ref in (*publication.images, *publication.artifacts):
-            asset_path = site_repo / ref.path.lstrip("/")
+            asset_path = site_profile.asset_disk_path(site_repo, ref.path)
             if not asset_path.exists():
                 return "publish"
 

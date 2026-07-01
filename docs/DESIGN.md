@@ -139,15 +139,20 @@ Missing file is fine; defaults apply.
 
 ## SiteProfile abstraction
 
-kproj isolates site-backend-specific decisions (per-version markdown location, per-project overview page location, whether an explicit `layout:` front-matter field is emitted) behind a `SiteProfile` dataclass in `src/kproj/config.py`. **Two built-in profiles ship in v1** — an abstract test anchor and one concrete backend — mirroring jBOM ADR 0008's `generic` vs. named-profile pattern.
+kproj isolates site-backend-specific decisions (per-version markdown location, per-project overview page location, where per-version **asset files** are physically written, whether an explicit `layout:` front-matter field is emitted) behind a `SiteProfile` dataclass in `src/kproj/config.py`. **Two built-in profiles ship in v1** — an abstract test anchor and one concrete backend — mirroring jBOM ADR 0008's `generic` vs. named-profile pattern.
 
 ```python path=null start=null
 @dataclass(frozen=True)
 class SiteProfile:
     name: str
-    versions_dir: str          # relative to site_repo root
-    pages_dir: str             # relative to site_repo root
+    versions_dir: str          # per-version markdown dir, relative to site_repo root
+    pages_dir: str             # per-project overview dir, relative to site_repo root
+    assets_dir: str            # per-version ASSET files dir (Hugo: static/versions), relative to site_repo root
     layout_field: str | None   # None omits ``layout:``; "eagle" emits Jekyll's field
+
+    def asset_disk_path(self, site_repo: Path, public_asset_path: str) -> Path:
+        """Map a public asset URL (/versions/<P>/<R>/<file>) to its on-disk path
+        by swapping the leading served-mount segment for ``assets_dir``."""
 
 
 # Abstract test anchor — backend-neutral defaults.
@@ -155,6 +160,7 @@ GENERIC_SITE_PROFILE = SiteProfile(
     name="generic",
     versions_dir="versions",
     pages_dir="pages",
+    assets_dir="versions",
     layout_field=None,
 )
 
@@ -164,9 +170,12 @@ HUGO_SITE_PROFILE = SiteProfile(
     name="hugo",
     versions_dir="content/versions",
     pages_dir="content/pages",
+    assets_dir="static/versions",   # Hugo serves static/ at /, so files resolve at /versions/
     layout_field=None,   # Hugo picks by section
 )
 ```
+
+**Public asset URL vs physical location.** Asset files are referenced in front-matter by their fixed public URL — always `/versions/<Project>/<Revision>/<file>` — but the *physical* file lands under `assets_dir`. Hugo serves `static/` at the site root, so `static/versions/...` resolves at `/versions/...`. `assets_dir` is a **required** profile field (no default): an implicit fallback to a repo-root `versions/` is exactly what let Hugo assets land outside `static/` and 404 (kproj#10 Phase G finding). `SiteProfile.asset_disk_path()` centralises the URL→disk mapping; `_default_artifact_generator` (writing) and both disk-existence checks (`SitePublisher.detect_outcome`, `_assets_are_stale`) route through the profile so writer and readers agree.
 
 ### Two-profile split — rationale
 
@@ -255,8 +264,8 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - Journal lives across steps 8–10. Any unhandled exception triggers full rollback (ADR 0005).
    - On dry_run, the journal is opened in dry-run mode: registers intent only, never writes.
 8. Generate artifacts (only on outcome=="publish"; skipped on outcome=="refresh"/"noop")
-   - Every artifact-producing service receives the open journal + kicad_cli + (for IbomGenerator) ibom_script.
-   - Each service writes to <site_repo>/versions/<P>/<R>/<file> via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 10.
+   - Every artifact-producing service receives the open journal + kicad_cli + (for IbomGenerator) ibom_script + kicad_python.
+   - Each service writes to <site_repo>/<site_profile.assets_dir>/<P>/<R>/<file> (Hugo: static/versions/...; served at the public /versions/... URL) via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 10.
    - PcbExporter.export_render(side=top|bottom)        # see ExportResult below
    - PcbExporter.export_step()
    - SchematicExporter.export_svg(root_only=True)      # see SchematicExporter directory-output mechanics

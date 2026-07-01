@@ -47,7 +47,7 @@ from ..common.subprocess_runner import (
     SubprocessTimeoutError,
 )
 from ..common.subprocess_runner import run as subprocess_run
-from ..config import KprojConfig
+from ..config import KprojConfig, SiteProfile
 from ..formatters.markdown_table_formatter import MarkdownTableFormatter
 from ..model.analysis_info import AnalysisInfo
 from ..model.finding import Finding
@@ -107,7 +107,7 @@ without a real KiCad install.
 """
 
 ArtifactGeneratorCallable = Callable[
-    ["ResolvedProject", "ProjectInfo", Path, Path, Path, Path, "ChangeJournal"],
+    ["ResolvedProject", "ProjectInfo", Path, Path, Path, Path, SiteProfile, "ChangeJournal"],
     tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple["Finding", ...]],
 ]
 """Callable that generates all release artifacts for a project.
@@ -121,12 +121,18 @@ Signature::
         ibom_script: Path,
         kicad_python: Path,
         site_repo: Path,
+        site_profile: SiteProfile,
         journal: ChangeJournal,
     ) -> tuple[images_refs, artifact_refs, diagnostics]
 
 ``kicad_python`` is KiCad's bundled interpreter (ADR 0008 amendment /
 kproj#10); it is passed to :class:`~kproj.services.ibom_generator.IbomGenerator`
 so the iBOM script runs under the Python that has ``pcbnew``.
+
+``site_profile`` supplies :attr:`~kproj.config.SiteProfile.assets_dir` so
+asset files are written where the backend serves them (Hugo's
+``static/versions/`` resolves at the public ``/versions/`` URL); the
+public AssetRef paths stay ``/versions/...`` regardless of backend.
 
 ``project_info`` carries the canonical ``board_rev`` (PCB-derived per
 ``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
@@ -370,6 +376,7 @@ class PublishWorkflow:
             artifacts=artifact_refs,
             resolved=resolved,
             site_repo=site_repo,
+            site_profile=request.config.site_profile,
         ):
             preliminary_outcome = "publish"
         if preliminary_outcome == "noop":
@@ -389,6 +396,7 @@ class PublishWorkflow:
                             ibom_script,
                             kicad_python,
                             site_repo,
+                            request.config.site_profile,
                             journal,
                         )
                     )
@@ -604,6 +612,7 @@ def _assets_are_stale(
     artifacts: tuple[AssetRef, ...],
     resolved: ResolvedProject,
     site_repo: Path,
+    site_profile: SiteProfile,
 ) -> bool:
     """Return ``True`` when any standard asset is older than its source.
 
@@ -623,6 +632,9 @@ def _assets_are_stale(
         artifacts: AssetRef tuple for downloadable-type assets.
         resolved: The resolved project carrying PCB / SCH paths.
         site_repo: Local site-repo checkout.
+        site_profile: Profile mapping the public asset URL to its
+            physical on-disk location (Hugo assets live under
+            ``static/versions/`` yet resolve at ``/versions/``).
 
     Returns:
         ``True`` when at least one existing asset is older than its
@@ -634,7 +646,7 @@ def _assets_are_stale(
         source = source_for_tag.get(ref.tag)
         if source is None or not source.exists():
             continue
-        asset_path = site_repo / ref.path.lstrip("/")
+        asset_path = site_profile.asset_disk_path(site_repo, ref.path)
         if not asset_path.exists():
             continue
         if asset_path.stat().st_mtime < source.stat().st_mtime:
@@ -701,6 +713,7 @@ def _default_artifact_generator(
     ibom_script: Path,
     kicad_python: Path,
     site_repo: Path,
+    site_profile: SiteProfile,
     journal: ChangeJournal,
 ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
     """Generate all release artifacts using real kicad-cli + iBOM.
@@ -731,6 +744,10 @@ def _default_artifact_generator(
         kicad_python: KiCad's bundled Python interpreter (runs iBOM;
             kproj#10 - the venv Python lacks ``pcbnew``).
         site_repo: Local site-repo checkout.
+        site_profile: Backend profile; its ``assets_dir`` decides where
+            asset files are physically written (e.g. Hugo's
+            ``static/versions/``), while the public AssetRef URLs stay
+            ``/versions/...``.
         journal: Open :class:`ChangeJournal` for rollback tracking.
 
     Returns:
@@ -749,7 +766,9 @@ def _default_artifact_generator(
     P = project_info.project
     R = project_info.board_rev
     PR = f"{P}-{R}"
-    asset_dir = site_repo / "versions" / P / R
+    # Physical write location comes from the profile (Hugo -> static/versions);
+    # the public URL below stays /versions/ regardless of backend.
+    asset_dir = site_repo / site_profile.assets_dir / P / R
     asset_dir.mkdir(parents=True, exist_ok=True)
 
     base_site = f"/versions/{P}/{R}"
