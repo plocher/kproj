@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from kproj.config import GENERIC_SITE_PROFILE
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.publication import Publication
@@ -44,6 +45,12 @@ def test_site_publisher_is_implemented(tmp_path: Path) -> None:
     with ChangeJournal(tmp_path, dry_run=True) as journal:
         publisher = SitePublisher(change_journal=journal)
         with patch("kproj.services.site_publisher._git_run"):
-            result = publisher.publish(publication, tmp_path, no_push=True, dry_run=True)
+            result = publisher.publish(
+                publication,
+                tmp_path,
+                no_push=True,
+                dry_run=True,
+                site_profile=GENERIC_SITE_PROFILE,
+            )
     # dry_run=True returns without writing files
     assert result.outcome in ("published", "refreshed", "noop")

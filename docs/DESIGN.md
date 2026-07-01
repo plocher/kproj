@@ -137,6 +137,62 @@ kicad_cli: /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli   # optional o
 
 Missing file is fine; defaults apply.
 
+## SiteProfile abstraction
+
+kproj isolates site-backend-specific decisions (per-version markdown location, per-project overview page location, whether an explicit `layout:` front-matter field is emitted) behind a `SiteProfile` dataclass in `src/kproj/config.py`. **Two built-in profiles ship in v1** — an abstract test anchor and one concrete backend — mirroring jBOM ADR 0008's `generic` vs. named-profile pattern.
+
+```python path=null start=null
+@dataclass(frozen=True)
+class SiteProfile:
+    name: str
+    versions_dir: str          # relative to site_repo root
+    pages_dir: str             # relative to site_repo root
+    layout_field: str | None   # None omits ``layout:``; "eagle" emits Jekyll's field
+
+
+# Abstract test anchor — backend-neutral defaults.
+GENERIC_SITE_PROFILE = SiteProfile(
+    name="generic",
+    versions_dir="versions",
+    pages_dir="pages",
+    layout_field=None,
+)
+
+
+# Concrete Hugo backend — selected by ``load_config`` for production.
+HUGO_SITE_PROFILE = SiteProfile(
+    name="hugo",
+    versions_dir="content/versions",
+    pages_dir="content/pages",
+    layout_field=None,   # Hugo picks by section
+)
+```
+
+### Two-profile split — rationale
+
+**`GENERIC_SITE_PROFILE`** is deliberately backend-neutral: `versions/`, `pages/`, no `layout:`. It carries **no Hugo knowledge** — nothing about `content/` prefixes, nothing about Hugo's section-based layout dispatch. A deployment against GENERIC would land files at paths that match neither Hugo (`content/...`) nor Jekyll (`_versions`) — which is fine, because **GENERIC is not for deployment**. It exists to give Behave scenarios and unit-test fixtures a stable, abstract anchor: tests assert against `<site>/<GENERIC.versions_dir>/...`, so the test suite validates the abstraction contract ("the version file lands under the profile's `versions_dir`") without pinning to any real backend's layout.
+
+**`HUGO_SITE_PROFILE`** fills in the structural bones a Hugo GitHub Pages deployment expects: `content/versions/`, `content/pages/`, no explicit `layout:` (Hugo picks by section). Real deployments select this profile via `load_config` — that is kproj v1's production path.
+
+### Single source of truth for the default
+
+**The profile has no in-code default value.** It is a required parameter on every consumer, and is resolved exactly once — at `load_config` time (v1) or at argparse time (v1.1+ when a `--profile` CLI flag lands) — then passed down through the entire call chain.
+
+* `KprojConfig.site_profile` is a required field (no dataclass default). Callers must always specify it. `load_config` computes it via a new `_resolve_site_profile()` helper that mirrors the existing `_resolve_site_repo` / `_resolve_no_push` / `_resolve_kicad_cli` precedence chain. v1 hard-codes the return value to `HUGO_SITE_PROFILE`; v1.1+ grows the CLI flag + env var + yaml key precedence with argparse-time default = `generic`.
+* `SitePublisher.publish`, `SitePublisher.detect_outcome`, `FrontMatterSummaryFormatter.render`, and `_build_version_content` all require `site_profile` explicitly. **No** `= GENERIC_SITE_PROFILE` fallback defaults anywhere in the service or formatter layer.
+* Test fixtures that construct :class:`KprojConfig` (or call a service directly) pass `site_profile=GENERIC_SITE_PROFILE` explicitly. This is deliberate: the abstraction is only safe if every caller has to think about the profile.
+
+The motivation: DRY-hardcoded defaults on multiple function signatures create a maintenance hazard — if the "what profile should we use when unspecified?" answer ever changes, every function default has to be updated in lockstep, and a new function author can silently forget the default entirely. jBOM's ADR 0008 avoids this by keeping the argparse layer as the *only* place the default lives; kproj follows the same discipline.
+
+### Consumer contract
+
+* `SitePublisher.publish` and `.detect_outcome` read `versions_dir` / `pages_dir` from the (required) caller-supplied profile.
+* `FrontMatterSummaryFormatter.render` emits `layout: <value>` only when `profile.layout_field is not None`.
+* Behave scenarios and unit-test fixtures reference `GENERIC_SITE_PROFILE.versions_dir` / `.pages_dir` — never literal path strings.
+* Adding a new backend (Jekyll, Astro, custom) means declaring a new `SITE_PROFILE` constant and (eventually) exposing it via the `--profile` flag. No service code changes required.
+
+The `--site-repo` CLI flag remains reserved for the on-disk site checkout path; the two concerns (repo location, backend shape) are orthogonal.
+
 ## Project resolution
 
 `KicadProjectReader.resolve(path: str | Path) -> ResolvedProject` wraps `jbom.application.pcb_project_loader.resolve_pcb_input()`. jBOM's resolver returns a `jbom.common.types.ResolvedPcbProject` dataclass with `pcb_path` + `project_context` + diagnostics; kproj wraps that in a kproj-owned `ResolvedProject` so downstream services accept a stable kproj shape and never see jBOM's internal types directly:
@@ -189,7 +245,7 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - If not dry_run: check site_repo cleanliness (git -C <site_repo> status --porcelain); dirty → exit 2
    - Any failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
 6. New-release detection (consults site_repo)
-   - Compute target path: <site_repo>/_versions/<P>/<board_rev>.md
+   - Compute target path: <site_repo>/<site_profile.versions_dir>/<P>/<board_rev>.md (default `content/versions/` under GENERIC)
    - Compare full rendered publication to on-disk state (see § New-release detection below)
    - All match → outcome="noop", return early
    - Front-matter or body differs, assets unchanged → outcome="refresh"
@@ -209,8 +265,8 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - SourcePackager.package(resolved.project_dir)      # writes source.zip (project artifacts only)
    - Thumbnail recipe (Phase 6 deepening)
 9. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
-10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run)
-    - On outcome ∈ {"publish", "refresh"}: journal-write _versions/<P>/<R>.md + pages/<P>.md (atomic via tempfile + os.replace)
+10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run, site_profile)
+    - On outcome ∈ {"publish", "refresh"}: journal-write <site_profile.versions_dir>/<P>/<R>.md + <site_profile.pages_dir>/<P>.md (atomic via tempfile + os.replace)
     - If not dry_run: git -C <site_repo> add <touched> ; git commit ; journal.mark_committed() ; (unless no_push) git push ; journal.mark_pushed()
 11. Close ChangeJournal cleanly. Return PublishResult.
 
@@ -223,9 +279,9 @@ No-op vs refresh vs publish is decided by comparing the **full rendered publicat
 
 The comparison inputs:
 
-1. **Front-matter** of `<site_repo>/_versions/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
+1. **Front-matter** of `<site_repo>/<site_profile.versions_dir>/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
 2. **Body markdown** of the same file vs the body kproj would emit (the audit/DRC/ERC tables).
-3. **Project page body** of `<site_repo>/pages/<P>.md` vs the project's current `README.md` content (per ADR 0002, the project page body is always rewritten from README.md).
+3. **Project page body** of `<site_repo>/<site_profile.pages_dir>/<P>.md` vs the project's current `README.md` content (per ADR 0002, the project page body is always rewritten from README.md).
 4. **Asset manifest** for `<site_repo>/versions/<P>/<R>/`:
    - Every artifact listed in the front-matter `artifacts[]` and `images[]` must exist on disk.
    - Each artifact's mtime is compared against the corresponding source mtime (e.g. `<P>-<R>.top.png` vs `<pcb>.kicad_pcb`; `<P>-<R>.ibom.html` vs `<pcb>.kicad_pcb`; `<P>-<R>.source.zip` vs the latest mtime in the project's source-include set; `<P>-<R>.fab.zip` vs the latest mtime in `<project_dir>/production/`).
@@ -234,7 +290,7 @@ The comparison inputs:
 Outcome decision:
 
 - All four inputs match → `outcome="noop"`. Return early. Exit 0 (or 1 if audit/DRC/ERC findings exist).
-- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite `_versions/<P>/<R>.md` + `pages/<P>.md`. Skip asset regeneration.
+- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite the version markdown + `<pages_dir>/<P>.md`. Skip asset regeneration.
 - The target file is absent, OR any asset is missing, OR any asset is stale → `outcome="publish"`. Run the full artifact pipeline.
 
 The status transition (e.g. `experimental` → `active`) is the canonical metadata-refresh case. README edits that don't touch any artifact's source files are also refresh-only. Anything that touches a `.kicad_pcb`, `.kicad_sch`, or `production/` files forces a publish.
@@ -473,16 +529,25 @@ class ZipArchiver:
 ```python path=null start=null
 class SitePublisher:
     def __init__(self, change_journal: ChangeJournal) -> None: ...
-    def publish(self, publication: Publication, site_repo: Path, no_push: bool, dry_run: bool) -> PublishResult:
+    def publish(
+        self,
+        publication: Publication,
+        site_repo: Path,
+        no_push: bool,
+        dry_run: bool,
+        *,
+        force_outcome: _Outcome | None = None,
+        site_profile: SiteProfile = GENERIC_SITE_PROFILE,
+    ) -> PublishResult:
         """Compute new-release detection.
-        Write _versions/<P>/<R>.md (atomic).
-        Write pages/<P>.md (atomic; always rewritten from Publication's body_md).
+        Write <site_profile.versions_dir>/<P>/<R>.md (atomic; default: content/versions/...).
+        Write <site_profile.pages_dir>/<P>.md (atomic; default: content/pages/...; always rewritten from Publication's body_md).
         For new releases: assets are already in place (PcbExporter et al wrote directly).
         git add + git commit + (unless no_push) git push.
         All writes journaled for rollback."""
 ```
 
-Front-matter rendering happens inside SitePublisher (Jekyll-specific YAML shape — see below). Body markdown comes from `Publication.body_md` (already rendered upstream with the audit/DRC tables).
+Front-matter rendering happens inside `FrontMatterSummaryFormatter` (called from `SitePublisher`).  The formatter takes a `SiteProfile` and emits an explicit `layout:` field only when the profile declares one; under `GENERIC_SITE_PROFILE` (Hugo default) the field is omitted.  Body markdown comes from `Publication.body_md` (already rendered upstream with the audit/DRC tables).
 
 Commit message format:
 - New release: `publish: <Project>-<board_rev>`
@@ -527,11 +592,13 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 
 ## Front-matter shape
 
-What `SitePublisher` writes into `_versions/<Project>/<board_rev>.md` (YAML front-matter, then body). **This shape is the authoritative kproj contract.** The site at `$SITE_REPO` (see `src/kproj/config.py::DEFAULT_SITE_REPO` for the canonical filesystem default) evolves via the locked site-setup PR (Phase 1 closeout) to consume it. Reuse of `layout: eagle` and `publish: true` is a pragmatic v1 minimization that keeps the site-setup PR small — it is NOT a constraint that retrofits kproj to the EAGLE-era shape. KiCad has different capabilities and limits than EAGLE; the site is expected to grow new keys, new conditional branches, and (eventually) a dedicated `kicad.html` layout to match.
+What `SitePublisher` writes into `<site_profile.versions_dir>/<Project>/<board_rev>.md` (YAML front-matter, then body). **This shape is the authoritative kproj contract.** The site at `$SITE_REPO` (see `src/kproj/config.py::DEFAULT_SITE_REPO` for the canonical filesystem default) is now a Hugo site — the previous Jekyll-era site was migrated in a companion PR (`SPCoast/SPCoast.github.io` orphan branch `main`), and the pre-migration Jekyll state is preserved at the `archive/jekyll-final` tag of that repository.
+
+The field set below reflects the `GENERIC_SITE_PROFILE` (Hugo default). The example shown assumes GENERIC — `layout:` is omitted (Hugo picks layout by section). A Jekyll-shaped custom `SiteProfile` with `layout_field="eagle"` would emit `layout: eagle` at the top of the block; the rest of the field set is backend-agnostic.
 
 ```yaml path=null start=null
 iskicad: true                      # Phase 1 closeout discriminator: true | 'obsolete'
-layout: eagle                      # reuse existing layout (ADR 0002 / Phase 1 closeout)
+# layout: eagle                    # omitted under GENERIC (Hugo picks by section); Jekyll profile would emit it
 sidebar: spcoast_sidebar
 project: <project-basename>        # consumed by eagle.html's site.versions | where: "project", page.project
 title: <board_rev>                 # e.g. 1.0B — per-version key; consumed by version tabs

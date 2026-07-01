@@ -25,7 +25,7 @@ from _kicad_fixtures import (  # noqa: E402 - path setup above
 )
 from kproj.application import publish_workflow as workflow_module  # noqa: E402
 from kproj.application.publish_workflow import PublishWorkflow  # noqa: E402
-from kproj.config import KprojConfig  # noqa: E402
+from kproj.config import GENERIC_SITE_PROFILE, KprojConfig  # noqa: E402
 from kproj.model.analysis_info import AnalysisInfo  # noqa: E402
 from kproj.model.publish_request import PublishRequest  # noqa: E402
 from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: E402
@@ -80,6 +80,7 @@ def step_run_kproj_workflow(context: Any) -> None:
         site_repo=Path("/tmp/private-site"),
         no_push=True,
         kicad_cli=fake_cli,
+        site_profile=GENERIC_SITE_PROFILE,
     )
     request = PublishRequest(
         project_arg=str(context.project_dir),
