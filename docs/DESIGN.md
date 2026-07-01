@@ -273,7 +273,7 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - IbomGenerator.generate()                          # ADR 0008: direct script invocation via ibom_script
    - FabPackager.package(resolved.project_dir / "production")
    - SourcePackager.package(resolved.project_dir)      # writes source.zip (project artifacts only)
-   - Thumbnail recipe (Phase 6 deepening)
+   - ThumbnailGenerator.generate(top_png)              # v1: copy of top.png so image_path resolves (scaling is a follow-up)
 9. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
 10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run, site_profile)
     - On outcome ∈ {"publish", "refresh"}: journal-write <site_profile.versions_dir>/<P>/<R>.md + <site_profile.pages_dir>/<P>.md (atomic via tempfile + os.replace)
@@ -319,7 +319,7 @@ Files emitted into `<site_repo>/versions/<Project>/<board_rev>/`. Filename token
 | `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | direct invocation per ADR 0008: `<python> <ibom_script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>`. `<python>` = `common.kicad_install.find_kicad_python()` (KiCad's bundled interpreter — the iBOM script needs `pcbnew`; ADR 0008 Amendment 1 / kproj#10, NOT `sys.executable`); `<ibom_script>` = `common.kicad_install.find_ibom_script()`. |
 | `<P>-<R>.fab.zip` | `FabPackager.package()` | reads jBOM-produced gerber pack from `<project_dir>/production/<title>_<rev>.zip` plus `bom.csv` + `pos.csv` → normalizes filenames inside the zip and assembles via `ZipArchiver` |
 | `<P>-<R>.source.zip` | `SourcePackager.package()` | walks `<project_dir>` per include/exclude rules → assembles via `ZipArchiver` |
-| `<P>-<R>.thumbnail.{png,svg}` | TBD Phase 6 | open: PIL crop of `top.png`, or PCB SVG outline |
+| `<P>-<R>.thumbnail.png` | `ThumbnailGenerator.generate()` | v1 grey-scale recipe: deterministic copy of `<P>-<R>.top.png` (pure-Python; no image lib) so the front-matter `image_path` resolves. Follow-up: real scaled crop via Pillow or `kicad-cli pcb render --width/--height`. |
 
 iBOM script discovery is delegated to `common.kicad_install.find_ibom_script()` (ADR 0009). Pre-flight calls this once and injects the resolved path into `IbomGenerator`. Missing iBOM plugin → exit 2 with message: `kproj: iBOM plugin not installed at <probed-path>. Install via KiCad's Plugin and Content Manager: org_openscopeproject_InteractiveHtmlBom.`
 

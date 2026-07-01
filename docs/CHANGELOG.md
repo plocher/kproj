@@ -6,6 +6,19 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - version thumbnail generation (Phase G: `image_path` now resolves)
+
+The version front-matter has always advertised
+`image_path: /versions/<P>/<R>/<P>-<R>.thumbnail.png`, but kproj never
+emitted that asset (it was marked "Phase 6 TBD"), so the URL 404'd on the
+built site. New `ThumbnailGenerator` produces `<P>-<R>.thumbnail.png` as
+part of the standard asset set. v1 grey-scale recipe: a deterministic
+copy of the top render (`<P>-<R>.top.png`) - lowest-dependency, no image
+library - so `image_path` resolves now; a real scaled/cropped thumbnail
+(Pillow or `kicad-cli pcb render --width/--height`) is a tracked
+follow-up. Written under the profile's `assets_dir` (Hugo:
+`static/versions/`), journaled for rollback like every other artifact.
+
 ### Fixed - Hugo assets written under static/ so they are actually served (kproj#10 Phase G finding)
 
 Release assets were written to a repo-root `versions/` directory, but Hugo only

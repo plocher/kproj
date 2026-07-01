@@ -69,6 +69,7 @@ from ..services.pcb_exporter import PcbExporter
 from ..services.schematic_exporter import SchematicExporter, SchematicExportError
 from ..services.site_publisher import SitePublisher
 from ..services.source_packager import SourcePackager
+from ..services.thumbnail_generator import ThumbnailGenerator
 from ..services.zip_archiver import ZipArchiver
 
 _log = logging.getLogger(__name__)
@@ -759,6 +760,7 @@ def _default_artifact_generator(
     pcb_exporter = PcbExporter(kicad_cli)
     sch_exporter = SchematicExporter(kicad_cli)
     ibom_gen = IbomGenerator(ibom_script, kicad_python)
+    thumbnail_gen = ThumbnailGenerator()
     archiver = ZipArchiver()
     fab_packager = FabPackager(archiver)
     source_packager = SourcePackager(archiver)
@@ -779,6 +781,13 @@ def _default_artifact_generator(
     top_path = asset_dir / f"{PR}.top.png"
     diagnostics.extend(
         pcb_exporter.export_render(resolved.pcb_file, "top", top_path, journal=journal).diagnostics
+    )
+    # Thumbnail (v1 grey-scale recipe: a copy of the top render, so the
+    # front-matter image_path resolves on the built site; real scaling is
+    # a tracked follow-up). Derived from top_path, so it runs right after.
+    thumbnail_path = asset_dir / f"{PR}.thumbnail.png"
+    diagnostics.extend(
+        thumbnail_gen.generate(top_path, thumbnail_path, journal=journal).diagnostics
     )
     bottom_path = asset_dir / f"{PR}.bottom.png"
     diagnostics.extend(
