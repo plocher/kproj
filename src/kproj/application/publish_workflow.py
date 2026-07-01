@@ -32,6 +32,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from ..common.content_hash import content_hash_excluding_title_block
 from ..common.kicad_install import (
     SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
@@ -56,7 +57,7 @@ from ..model.publish_request import PublishRequest
 from ..model.publish_result import Outcome, PublishResult
 from ..model.resolved_project import ResolvedProject
 from ..services.change_journal import ChangeJournal
-from ..services.design_analyzer import DesignAnalyzer
+from ..services.design_analyzer import DesignAnalysisError, DesignAnalyzer
 from ..services.fab_packager import FabPackager
 from ..services.ibom_generator import IbomGenerator
 from ..services.kicad_project_reader import (
@@ -236,7 +237,18 @@ class PublishWorkflow:
         project_info, read_findings = self._project_reader.read(resolved)
         metadata_analysis = self._metadata_analyzer.analyze(project_info, resolved.project_dir)
         design_analyzer = self._design_analyzer_factory(kicad_cli)
-        design_analysis = design_analyzer.analyze(resolved)
+        try:
+            design_analysis = design_analyzer.analyze(resolved)
+        except DesignAnalysisError as exc:
+            # M4 round-2: a kicad-cli DRC/ERC mechanical crash is a
+            # separate channel from findings per ADR 0004.  The failure
+            # happens BEFORE the change journal is opened, so no site
+            # writes can occur; we surface it as outcome=failed/exit 2
+            # with a stderr-ready message and skip everything downstream.
+            return PublishResult.build(
+                "failed",
+                message=f"kproj: design analysis failed ({exc.origin}): {exc}",
+            )
         analysis = AnalysisInfo(
             findings=tuple(read_findings) + metadata_analysis.findings + design_analysis.findings
         )
@@ -296,6 +308,13 @@ class PublishWorkflow:
             project_info.project, project_info.board_rev, include_fab=include_fab
         )
 
+        # Compute title-block-stripped content hashes so we can
+        # distinguish metadata-only edits from real design edits when
+        # asset mtimes look stale.  Values are also persisted in the
+        # emitted version-page front-matter for the next run to read.
+        sch_content_hash = content_hash_excluding_title_block(resolved.root_schematic)
+        pcb_content_hash = content_hash_excluding_title_block(resolved.pcb_file)
+
         preliminary_pub = PublishWorkflow.build_publication(
             resolved,
             project_info,
@@ -304,6 +323,8 @@ class PublishWorkflow:
             readme_md=readme_md,
             images=images_refs,
             artifacts=artifact_refs,
+            sch_content_hash=sch_content_hash,
+            pcb_content_hash=pcb_content_hash,
         )
 
         preliminary_outcome = SitePublisher.detect_outcome(preliminary_pub, site_repo)
@@ -313,11 +334,28 @@ class PublishWorkflow:
         # block is stable, detect_outcome alone returns ``noop`` and
         # leaves stale renders/STEP/iBOM/source/fab on the site.
         # Force a full publish when any asset is older than its source.
-        if preliminary_outcome != "publish" and _assets_are_stale(
-            images=images_refs,
-            artifacts=artifact_refs,
-            resolved=resolved,
-            site_repo=site_repo,
+        #
+        # M11 round-2: BUT if the SCH/PCB content-hash (with title
+        # blocks stripped) matches the hash stored in the previously
+        # published version file, the mtime bump is title-block-only
+        # (i.e. only status/date/rev metadata changed).  In that case
+        # do NOT escalate to publish — the outcome stays
+        # "refresh" (or "noop") per PRD Story 6's cheap-refresh contract.
+        if (
+            preliminary_outcome != "publish"
+            and _assets_are_stale(
+                images=images_refs,
+                artifacts=artifact_refs,
+                resolved=resolved,
+                site_repo=site_repo,
+            )
+            and not _title_block_only_change_since_publish(
+                site_repo=site_repo,
+                project=project_info.project,
+                board_rev=project_info.board_rev,
+                current_sch_hash=sch_content_hash,
+                current_pcb_hash=pcb_content_hash,
+            )
         ):
             preliminary_outcome = "publish"
         if preliminary_outcome == "noop":
@@ -368,6 +406,8 @@ class PublishWorkflow:
                     readme_md=readme_md,
                     images=actual_images,
                     artifacts=actual_artifacts,
+                    sch_content_hash=sch_content_hash,
+                    pcb_content_hash=pcb_content_hash,
                 )
 
                 # Step 10: SitePublisher.publish.  Pass the workflow's
@@ -436,6 +476,8 @@ class PublishWorkflow:
         readme_md: str = "",
         images: tuple[AssetRef, ...] = (),
         artifacts: tuple[AssetRef, ...] = (),
+        sch_content_hash: str = "",
+        pcb_content_hash: str = "",
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
@@ -452,6 +494,12 @@ class PublishWorkflow:
             readme_md: Project README.md content for ``pages/<P>.md``.
             images: Image asset refs.
             artifacts: Artifact asset refs.
+            sch_content_hash: SHA-256 of the SCH content with the
+                title-block stripped (M11 round-2).  Persisted in the
+                emitted version-page front-matter so the next kproj
+                run can distinguish title-block-only edits from real
+                schematic edits.
+            pcb_content_hash: Same, for the PCB file.
 
         Returns:
             A populated :class:`Publication`.
@@ -464,6 +512,8 @@ class PublishWorkflow:
             images=images,
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
+            sch_content_hash=sch_content_hash,
+            pcb_content_hash=pcb_content_hash,
         )
 
 
@@ -542,6 +592,88 @@ def _compute_standard_asset_refs(
     )
 
     return images, tuple(artifact_list)
+
+
+def _title_block_only_change_since_publish(
+    *,
+    site_repo: Path,
+    project: str,
+    board_rev: str,
+    current_sch_hash: str,
+    current_pcb_hash: str,
+) -> bool:
+    """Return ``True`` when the only change since last publish is title-block metadata.
+
+    M11 round-2: compares the workflow's current title-block-stripped
+    hashes against the ones persisted in the existing version-page
+    front-matter.  When both match, any SCH/PCB mtime bump is a
+    title-block-only edit (COMMENT9 status change, revision bump,
+    designer field, etc.) and the M1 asset-freshness escalation must
+    NOT force a full publish — the outcome stays at ``refresh`` (or
+    ``noop`` when the front-matter is byte-for-byte identical).
+
+    Args:
+        site_repo: Local site-repo checkout.
+        project: Project basename (``<P>``).
+        board_rev: Board revision (``<R>``).
+        current_sch_hash: Current SCH title-block-stripped hash.
+        current_pcb_hash: Current PCB title-block-stripped hash.
+
+    Returns:
+        ``True`` when the existing version file contains persisted
+        hashes and both match the current hashes; ``False`` otherwise
+        (including when no persisted hashes exist yet).
+    """
+    version_file = site_repo / "_versions" / project / f"{board_rev}.md"
+    if not version_file.exists():
+        return False
+    stored_sch, stored_pcb = _read_stored_source_hashes(version_file)
+    if not stored_sch and not stored_pcb:
+        # No hashes were persisted (older publish before M11 round-2
+        # landed, or hashes were manually stripped).  Fall back to the
+        # M1 mtime-only behaviour: return False so the caller escalates.
+        return False
+    return stored_sch == current_sch_hash and stored_pcb == current_pcb_hash
+
+
+def _read_stored_source_hashes(version_file: Path) -> tuple[str, str]:
+    """Extract ``kproj_source_hashes.{sch,pcb}`` from a version file's front-matter.
+
+    Parses the YAML block delimited by ``---`` markers.  Missing keys
+    or an unparseable front-matter yield empty-string sentinels so the
+    caller treats them as "no persisted hash".
+
+    Args:
+        version_file: Path to a ``_versions/<P>/<R>.md`` file.
+
+    Returns:
+        A ``(sch, pcb)`` string tuple.  Either element is ``""`` when
+        the corresponding key is absent.
+    """
+    import yaml
+
+    try:
+        text = version_file.read_text(encoding="utf-8")
+    except OSError:
+        return "", ""
+    if not text.startswith("---"):
+        return "", ""
+    # Split off the front-matter block between the leading ``---`` and
+    # the next ``---`` line.
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return "", ""
+    yaml_block = parts[1]
+    try:
+        data = yaml.safe_load(yaml_block)
+    except yaml.YAMLError:
+        return "", ""
+    if not isinstance(data, dict):
+        return "", ""
+    hashes = data.get("kproj_source_hashes")
+    if not isinstance(hashes, dict):
+        return "", ""
+    return str(hashes.get("sch", "") or ""), str(hashes.get("pcb", "") or "")
 
 
 def _assets_are_stale(

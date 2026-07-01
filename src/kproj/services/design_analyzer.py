@@ -13,6 +13,17 @@ point in kproj) and write to a tempfile that is deleted before
 KiCad's per-violation severity is preserved verbatim - including
 ``exclusion``, which by ADR 0004's locked policy does NOT contribute
 to the ``exit_code=1`` "findings present" rule.
+
+Mechanical failures vs findings (ADR 0004, wave-3 M4 round-2):
+
+- A ``kicad-cli`` mechanical crash (nonzero return AND no JSON
+  produced) is a **mechanical failure**, not a finding.  The analyzer
+  raises :class:`DesignAnalysisError` so
+  :class:`~kproj.application.publish_workflow.PublishWorkflow` can
+  catch it before opening the change journal and return
+  ``PublishResult(outcome="failed", exit_code=2)``.
+- Parseable DRC/ERC violations remain non-blocking findings emitted
+  through the normal :class:`AnalysisInfo` channel.
 """
 
 from __future__ import annotations
@@ -29,6 +40,37 @@ from ..model.analysis_info import AnalysisInfo
 from ..model.finding import Finding
 from ..model.resolved_project import ResolvedProject
 from ..model.severity import Severity
+
+
+class DesignAnalysisError(RuntimeError):
+    """Raised on a ``kicad-cli`` DRC/ERC mechanical failure.
+
+    A mechanical failure is defined as ``returncode != 0`` combined
+    with no JSON output produced (per ADR 0004's mechanical-vs-findings
+    split).  The workflow catches this exception at step 3 (before the
+    change journal is opened) and converts it into
+    ``PublishResult(outcome="failed", exit_code=2)`` with a stderr-ready
+    message.  Parseable DRC/ERC violations remain non-blocking findings
+    that flow through the normal :class:`AnalysisInfo` return channel.
+
+    Attributes:
+        origin: ``"drc"`` or ``"erc"`` — which subcommand failed.
+        returncode: The subprocess return code from ``kicad-cli``.
+    """
+
+    def __init__(self, message: str, *, origin: str, returncode: int) -> None:
+        """Construct a :class:`DesignAnalysisError`.
+
+        Args:
+            message: Stderr-ready failure summary (include ``origin`` +
+                ``returncode`` for user diagnosis).
+            origin: ``"drc"`` or ``"erc"``.
+            returncode: The subprocess return code.
+        """
+        super().__init__(message)
+        self.origin = origin
+        self.returncode = returncode
+
 
 SubprocessCallable = Callable[..., SubprocessResult]
 """Type alias for the injectable subprocess runner.
@@ -119,13 +161,17 @@ class DesignAnalyzer:
     ) -> Sequence[Finding]:
         """Execute one ``kicad-cli`` subcommand and parse its JSON output.
 
-        Wave-3 fix-up (M2 + M4):
+        Wave-3 fix-up (M2 + M4 round-2):
 
         - Each emitted :class:`Finding` carries ``source=origin`` so
           the front-matter formatter can split audit/drc/erc counts.
-        - When kicad-cli exits non-zero AND produces no JSON, we emit
-          a mechanical-failure error finding instead of returning the
-          empty tuple (pre-fix bug: a kicad-cli crash silently passed).
+        - When kicad-cli exits non-zero AND produces no JSON, we now
+          raise :class:`DesignAnalysisError` (round-2).  Round-1
+          modelled the crash as an ordinary error finding, but
+          ``compute_exit_code`` mapped it to ``exit=1`` ("findings
+          present") instead of the mechanical ``exit=2``.  Raising
+          keeps mechanical failures on a separate channel from
+          findings per ADR 0004.
 
         Args:
             subcommand: e.g. ``("pcb", "drc")`` or ``("sch", "erc")``.
@@ -135,9 +181,11 @@ class DesignAnalyzer:
                 on every emitted finding.
 
         Returns:
-            The parsed sequence of :class:`Finding` objects; possibly
-            containing a single ``<origin>_mechanical_failure`` entry
-            when kicad-cli failed without producing JSON.
+            The parsed sequence of :class:`Finding` objects.
+
+        Raises:
+            DesignAnalysisError: When kicad-cli exits non-zero AND
+                produces no JSON output (mechanical failure).
         """
         with tempfile.TemporaryDirectory(prefix=f"kproj-{origin}-") as tmpdir:
             output_path = Path(tmpdir) / f"{origin}.json"
@@ -156,7 +204,9 @@ class DesignAnalyzer:
             # mechanical failure.
             result = self._run(command, check=False)
             if not output_path.exists():
-                return _mechanical_failure_findings(result=result, origin=origin, project=project)
+                _raise_if_mechanical_failure(result=result, origin=origin)
+                # rc==0 with no JSON = kicad-cli produced nothing actionable.
+                return ()
             try:
                 payload = json.loads(output_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
@@ -259,48 +309,40 @@ def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Se
     )
 
 
-def _mechanical_failure_findings(
-    *,
-    result: SubprocessResult,
-    origin: str,
-    project: str,
-) -> tuple[Finding, ...]:
-    """Emit a mechanical-failure :class:`Finding` when kicad-cli wrote no JSON.
+def _raise_if_mechanical_failure(*, result: SubprocessResult, origin: str) -> None:
+    """Raise :class:`DesignAnalysisError` when kicad-cli failed mechanically.
 
-    Wave-3 fix-up (M4): pre-fix the analyzer silently returned ``()``
-    when kicad-cli failed mechanically and wrote no JSON, so a real
-    kicad-cli crash slipped through as "no findings".  This helper
-    distinguishes three cases:
+    Wave-3 M4 round-2: the ``kicad-cli`` subcommand may write no JSON
+    for two very different reasons:
 
     1. ``returncode == 0`` and no stderr: kicad-cli genuinely produced
-       nothing actionable.  Return ``()`` (no findings, no failure).
-    2. ``returncode != 0`` or stderr non-empty: surface an error
-       :class:`Finding` so the workflow's exit-code mapping bumps to
-       1 (or 2 if the workflow chooses to treat the field as
-       mechanical) and the user sees a clear message on stderr.
+       nothing actionable (e.g. a project with zero violations that
+       still emits no ``violations`` array).  Return silently — the
+       caller then returns ``()`` findings.
+    2. ``returncode != 0`` (or stderr non-empty with a non-zero rc):
+       kicad-cli crashed.  Raise :class:`DesignAnalysisError` so the
+       workflow can convert it into ``outcome=failed / exit=2``
+       (mechanical-vs-findings split per ADR 0004).
 
     Args:
         result: The captured :class:`SubprocessResult` from kicad-cli.
         origin: ``"drc"`` or ``"erc"``.
-        project: Project basename to stamp on the finding.
 
-    Returns:
-        A 0- or 1-tuple of :class:`Finding`.
+    Raises:
+        DesignAnalysisError: On mechanical failure (rc != 0 with no JSON).
     """
     rc = result.returncode
     stderr = (result.stderr or "").strip()
-    if rc == 0 and not stderr:
-        return ()
+    if rc == 0:
+        # No JSON but clean exit: treat as "kicad-cli produced nothing".
+        # (Stderr text alone with rc=0 is a warning-level condition
+        # kicad-cli emits at times; we do not escalate to mechanical.)
+        return
     detail = stderr or f"kicad-cli {origin} exited {rc} with no JSON output"
-    return (
-        Finding(
-            severity=Severity.ERROR,
-            field=f"{origin}_mechanical_failure",
-            value="",
-            reason=(f"kicad-cli {origin} failed without producing JSON (rc={rc}): {detail}"),
-            project=project,
-            source=origin,
-        ),
+    raise DesignAnalysisError(
+        f"kicad-cli {origin} failed without producing JSON (rc={rc}): {detail}",
+        origin=origin,
+        returncode=rc,
     )
 
 

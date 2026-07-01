@@ -119,6 +119,18 @@ class FrontMatterSummaryFormatter:
         if libs_yaml is not None:
             data["libraries"] = libs_yaml
 
+        # Source content hashes (wave-3 M11 round-2).  Emitted so a
+        # subsequent kproj run can distinguish title-block-only edits
+        # (metadata refresh) from real schematic/PCB content edits
+        # (full publish).  See
+        # :mod:`kproj.common.content_hash` and the workflow's
+        # `_only_title_block_change_since_publish` helper.
+        if publication.sch_content_hash or publication.pcb_content_hash:
+            data["kproj_source_hashes"] = {
+                "sch": publication.sch_content_hash,
+                "pcb": publication.pcb_content_hash,
+            }
+
         return yaml.dump(data, sort_keys=False, allow_unicode=True, default_flow_style=False)
 
     def render_audit(self, analysis_info: AnalysisInfo) -> dict[str, int]:
