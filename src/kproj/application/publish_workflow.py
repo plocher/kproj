@@ -300,6 +300,19 @@ class PublishWorkflow:
         )
 
         preliminary_outcome = SitePublisher.detect_outcome(preliminary_pub, site_repo)
+        # M1 fix-up: docs/DESIGN.md § New-release detection requires
+        # comparing each asset's mtime against its source.  When the
+        # PCB has been edited since the last publish but the title
+        # block is stable, detect_outcome alone returns ``noop`` and
+        # leaves stale renders/STEP/iBOM/source/fab on the site.
+        # Force a full publish when any asset is older than its source.
+        if preliminary_outcome != "publish" and _assets_are_stale(
+            images=images_refs,
+            artifacts=artifact_refs,
+            resolved=resolved,
+            site_repo=site_repo,
+        ):
+            preliminary_outcome = "publish"
         if preliminary_outcome == "noop":
             return PublishResult.build("noop", findings=analysis.findings)
 
@@ -325,10 +338,17 @@ class PublishWorkflow:
                     artifacts=actual_artifacts,
                 )
 
-                # Step 10: SitePublisher.publish
+                # Step 10: SitePublisher.publish.  Pass the workflow's
+                # pre-computed outcome so SitePublisher does not re-
+                # decide against post-generation asset mtimes and
+                # short-circuit an M1-escalated publish back to noop.
                 site_publisher = self._site_publisher_factory(journal)
                 result = site_publisher.publish(
-                    final_pub, site_repo, request.config.no_push, request.dry_run
+                    final_pub,
+                    site_repo,
+                    request.config.no_push,
+                    request.dry_run,
+                    force_outcome=preliminary_outcome,
                 )
 
                 # Step 11: ChangeJournal closed via context-manager __exit__
@@ -490,6 +510,102 @@ def _compute_standard_asset_refs(
     )
 
     return images, tuple(artifact_list)
+
+
+def _assets_are_stale(
+    *,
+    images: tuple[AssetRef, ...],
+    artifacts: tuple[AssetRef, ...],
+    resolved: ResolvedProject,
+    site_repo: Path,
+) -> bool:
+    """Return ``True`` when any standard asset is older than its source.
+
+    Implements ``docs/DESIGN.md`` § *New-release detection* asset
+    freshness rule.  Each asset tag has a deterministic source:
+
+    - ``render-top`` / ``render-bottom`` / ``step-model`` /
+      ``interactive-bom`` → PCB file.
+    - ``schematic-svg`` / ``schematic-pdf`` → root schematic file.
+    - ``source-archive`` → newest file under ``project_dir``
+      (excluding ``production/`` so jBOM outputs don't reset the
+      check).
+    - ``fab-pack`` → newest file under ``production/``.
+
+    Args:
+        images: AssetRef tuple for image-type assets.
+        artifacts: AssetRef tuple for downloadable-type assets.
+        resolved: The resolved project carrying PCB / SCH paths.
+        site_repo: Local site-repo checkout.
+
+    Returns:
+        ``True`` when at least one existing asset is older than its
+        source mtime; ``False`` otherwise (and when no source could
+        be determined for a given tag).
+    """
+    source_for_tag = _source_paths_by_tag(resolved)
+    for ref in (*images, *artifacts):
+        source = source_for_tag.get(ref.tag)
+        if source is None or not source.exists():
+            continue
+        asset_path = site_repo / ref.path.lstrip("/")
+        if not asset_path.exists():
+            continue
+        if asset_path.stat().st_mtime < source.stat().st_mtime:
+            return True
+    return False
+
+
+def _source_paths_by_tag(resolved: ResolvedProject) -> dict[str, Path | None]:
+    """Map each standard asset tag to its (newest) source-side path.
+
+    See :func:`_assets_are_stale` for the per-tag source rules.
+    Returns ``None`` when a tag has no detectable source (e.g. an
+    empty ``production/`` for the fab-pack tag); callers treat
+    ``None`` as "cannot determine staleness; do not escalate".
+    """
+    pcb = resolved.pcb_file
+    sch = resolved.root_schematic
+    return {
+        "render-top": pcb,
+        "render-bottom": pcb,
+        "step-model": pcb,
+        "interactive-bom": pcb,
+        "schematic-svg": sch,
+        "schematic-pdf": sch,
+        "source-archive": _newest_source_file(resolved.project_dir),
+        "fab-pack": _newest_source_file(resolved.project_dir / "production"),
+    }
+
+
+def _newest_source_file(directory: Path) -> Path | None:
+    """Return the file in *directory* with the largest mtime, or ``None``.
+
+    Walks recursively but skips the ``production/`` subdirectory (so a
+    jBOM-refreshed production set doesn't fool the source-archive
+    freshness check) and any hidden / VCS directories.
+    """
+    if not directory.is_dir():
+        return None
+    newest: Path | None = None
+    newest_mtime: float = -1.0
+    for path in directory.rglob("*"):
+        if not path.is_file():
+            continue
+        # Skip production/ when scanning the project root so the source
+        # archive's source mtime is the KiCad source set, not jBOM
+        # outputs that have their own freshness check.
+        try:
+            rel = path.relative_to(directory)
+        except ValueError:
+            continue
+        if rel.parts and rel.parts[0] in {"production", ".git"}:
+            continue
+        mtime = path.stat().st_mtime
+        if mtime > newest_mtime:
+            newest_mtime = mtime
+            newest = path
+    return newest
 
 
 def _default_artifact_generator(

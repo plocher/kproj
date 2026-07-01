@@ -114,6 +114,8 @@ class SitePublisher:
         site_repo: Path,
         no_push: bool,
         dry_run: bool,
+        *,
+        force_outcome: _Outcome | None = None,
     ) -> PublishResult:
         """Publish *publication* to the local site repo + commit + push.
 
@@ -125,6 +127,12 @@ class SitePublisher:
             site_repo: Local checkout of the SPCoast Jekyll site repo.
             no_push: When ``True``, skip ``git push`` (batch-friendly).
             dry_run: When ``True``, analyse and report but make no writes.
+            force_outcome: Optional pre-computed outcome from the
+                caller (wave-3 M1 fix-up).  When set, this publisher
+                skips its internal :meth:`detect_outcome` call —
+                required for the workflow's asset-freshness escalation
+                where post-generation asset mtimes would otherwise
+                convince ``detect_outcome`` to noop the run.
 
         Returns:
             A :class:`PublishResult` whose ``outcome`` is one of
@@ -140,7 +148,11 @@ class SitePublisher:
         pages_file = site_repo / "pages" / f"{P}.md"
 
         # ── new-release detection ──
-        outcome = self.detect_outcome(publication, site_repo)
+        outcome = (
+            force_outcome
+            if force_outcome is not None
+            else self.detect_outcome(publication, site_repo)
+        )
 
         if outcome == "noop":
             return PublishResult.build(
