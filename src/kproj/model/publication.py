@@ -68,19 +68,6 @@ class Publication:
             The site-emission layer renders these on the version page;
             see ``docs/DESIGN.md`` § *Library enumeration*. Rendering
             itself is tracked by kproj#4.
-        sch_content_hash: SHA-256 hex-digest of the schematic file
-            with every ``(title_block ...)`` subtree stripped.  Wave-3
-            M11 round-2: persisted in the version-page YAML front-
-            matter so a subsequent kproj run can distinguish
-            title-block-only edits (front-matter refresh, no artifact
-            regen per PRD Story 6) from real schematic-content edits
-            (full publish per M1's stale-asset safety net).  Empty
-            string when the schematic cannot be hashed.
-        pcb_content_hash: SHA-256 hex-digest of the PCB file with
-            every ``(title_block ...)`` subtree stripped.  Same
-            purpose as ``sch_content_hash`` for the PCB-derived asset
-            tags (renders, STEP, iBOM).  Empty when the PCB cannot be
-            hashed.
     """
 
     project_info: ProjectInfo
@@ -90,5 +77,3 @@ class Publication:
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
     libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)
-    sch_content_hash: str = ""
-    pcb_content_hash: str = ""

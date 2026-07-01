@@ -96,19 +96,20 @@ THEN the version page front-matter includes `audit: {errors: 0, warnings: N}` an
 AND the version page body shows two adjacent Markdown tables: metadata audit findings, and DRC/ERC findings
 ```
 
-#### Story 6 — Update status without re-running everything
-*As a project author, I want to update a release's status (e.g. experimental → active) without re-generating renders / fab / etc., so that status transitions are cheap.*
+#### Story 6 — Update status
+*As a project author, I want to update a release's status (e.g. experimental → active), so that the site reflects the current lifecycle state.*
 
 ```gherkin path=null start=null
 GIVEN a version already published with `status: experimental`
 AND I have edited ${COMMENT9} in the SCH title-block to `active`
 WHEN I run `kproj`
-THEN the version markdown is re-written with `status: active`
-AND no renders / SVGs / iBOM / fab.zip are regenerated
-AND the site repo is committed with a `refresh:` commit-message prefix
+THEN the site repo has the version markdown re-written with `status: active`
+AND the site repo is committed and pushed
 ```
 
 *Note*: `${COMMENT9}` is read from the SCH title-block per the locked per-field metadata precedence (SCH is canonical for `comment2`/`comment3`/`comment9`; PCB title-blocks routinely omit them). See `docs/DESIGN.md` § *Metadata precedence*.
+
+*v1 behavior*: any SCH edit — including a title-block-only edit like `${COMMENT9}` — currently triggers a full publish (all renders + iBOM + fab + source archive regenerated). An earlier draft of this story promised a "cheap refresh" path (metadata-only edits would skip artifact regen); the implementation was designed and reviewed but ripped out post-PR#11 as premature optimization. We have no measured baseline for how expensive a full publish actually is, and no evidence that metadata-only edits are frequent enough to justify the state-persistence machinery required to detect them cleanly (which would also couple kproj's correctness to the site repo's file schema — an ownership-boundary violation). A smart-refresh implementation is deferred pending profile data. See the follow-up issues on `plocher/kproj` for the profile-hooks work + the smart-refresh sub-project.
 
 #### Story 7 — Skip a private project
 *As a project author with a project not for public release (cpOD pattern), I want to mark it as `status: private`, so that kproj skips the site-publish step automatically.*
