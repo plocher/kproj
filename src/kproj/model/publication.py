@@ -64,6 +64,14 @@ class Publication:
             fixtures that don't care about the publish time). Treated as
             a **volatile** key in new-release detection so a plain
             re-run stays a no-op.
+        datasheets: Project-global datasheet PDF filenames discovered in
+            the project directory (per
+            :func:`kproj.common.project_docs.discover_datasheets`). Listed
+            by name on the project section index. Empty when none.
+        description: Optional project-global ``DESCRIPTION`` prose (per
+            :func:`kproj.common.project_docs.read_description`), rendered
+            on the project section index alongside the README. Empty
+            when the project has no DESCRIPTION file.
         images: Asset references emitted into the front-matter
             ``images:`` list (renders, schematic SVG).
         artifacts: Asset references emitted into the front-matter
@@ -84,6 +92,8 @@ class Publication:
     body_md: str
     readme_md: str = ""
     published_at: str = ""
+    datasheets: tuple[str, ...] = field(default_factory=tuple)
+    description: str = ""
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
     libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)

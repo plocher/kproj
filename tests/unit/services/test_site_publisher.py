@@ -26,7 +26,7 @@ from kproj.model.publication import AssetRef, Publication
 from kproj.model.publish_result import PublishResult
 from kproj.model.severity import Severity
 from kproj.services.change_journal import ChangeJournal
-from kproj.services.site_publisher import SitePublisher
+from kproj.services.site_publisher import SitePublisher, _build_project_index_content
 
 # Tests reference GENERIC_SITE_PROFILE's directory constants rather than
 # string literals so they exercise the abstraction contract ("the version
@@ -667,3 +667,57 @@ class TestJournalRollback:
         journal.rollback()
 
         assert not version_file.exists()
+
+
+# ──────────────────────────── project index rendering ─────────────────────────
+
+
+class TestBuildProjectIndexContent:
+    """Tests for the project section-index body (README + DESCRIPTION + datasheets)."""
+
+    def test_readme_only_matches_legacy_output(self) -> None:
+        """A README-only project renders exactly as the pre-datasheet format.
+
+        Guards no-op detection: the on-disk ``_index.md`` written by earlier
+        kproj versions must stay byte-identical (after the trailing newline)
+        so a plain re-run does not spuriously refresh.
+        """
+        pub = _pub()  # readme set, description="", datasheets=()
+        assert _build_project_index_content(pub) == (
+            "---\ntitle: Demo\nproject: Demo\n---\n# Demo\nA demo project.\n"
+        )
+
+    def test_bare_when_no_docs(self) -> None:
+        """No README / DESCRIPTION / datasheets yields an empty body."""
+        pub = Publication(
+            project_info=_pi(), analysis_info=AnalysisInfo(), body_md="", readme_md=""
+        )
+        assert _build_project_index_content(pub) == (
+            "---\ntitle: Demo\nproject: Demo\n---\n\n"
+        )
+
+    def test_description_and_datasheets_rendered_in_order(self) -> None:
+        """README, then DESCRIPTION prose, then a ``## Datasheets`` bullet list."""
+        pub = _pub(
+            description="Prose about the board.",
+            datasheets=("Cap-Foo.pdf", "Regulator-Bar.pdf"),
+        )
+        content = _build_project_index_content(pub)
+        body = content.split("---\n", 2)[2]
+        assert body == (
+            "# Demo\nA demo project.\n\n"
+            "Prose about the board.\n\n"
+            "## Datasheets\n\n- Cap-Foo.pdf\n- Regulator-Bar.pdf\n"
+        )
+
+    def test_datasheets_without_readme_or_description(self) -> None:
+        """Datasheets alone render under the heading with no stray blank lead."""
+        pub = Publication(
+            project_info=_pi(),
+            analysis_info=AnalysisInfo(),
+            body_md="",
+            readme_md="",
+            datasheets=("Only.pdf",),
+        )
+        body = _build_project_index_content(pub).split("---\n", 2)[2]
+        assert body == "## Datasheets\n\n- Only.pdf\n"

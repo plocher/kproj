@@ -94,13 +94,36 @@ def _build_project_index_content(publication: Publication) -> str:
 
     One project-global page per project, rewritten each publish to reflect
     the most-recent-publish state. Front-matter carries ``title`` +
-    ``project`` so the project renders as a Hugo section; the body is the
-    project README. (A later tranche adds DESCRIPTION + a discovered
-    datasheet list.)
+    ``project`` so the project renders as a Hugo section. The body stacks
+    the project-global content model, each part separated by a blank line
+    and omitted when empty:
+
+    1. ``README.md`` (:attr:`Publication.readme_md`).
+    2. ``DESCRIPTION`` prose (:attr:`Publication.description`).
+    3. A ``## Datasheets`` bullet list of discovered PDF filenames
+       (:attr:`Publication.datasheets`).  Name-only for now; linking or
+       copying the PDFs to the site is a deferred follow-up.
+
+    A project with no README, DESCRIPTION, or datasheets yields a bare
+    front-matter page (empty body) that matches the prior README-only
+    output after whitespace normalisation, so no-op detection
+    (:meth:`SitePublisher.detect_outcome`) is unaffected.
     """
     project = publication.project_info.project
-    readme = publication.readme_md
-    return f"---\ntitle: {project}\nproject: {project}\n---\n{readme}\n"
+    sections: list[str] = []
+    if publication.readme_md.strip():
+        sections.append(publication.readme_md.strip("\n"))
+    if publication.description.strip():
+        sections.append(publication.description.strip("\n"))
+    if publication.datasheets:
+        datasheet_lines = [
+            "## Datasheets",
+            "",
+            *(f"- {name}" for name in publication.datasheets),
+        ]
+        sections.append("\n".join(datasheet_lines))
+    body = "\n\n".join(sections)
+    return f"---\ntitle: {project}\nproject: {project}\n---\n{body}\n"
 
 
 # ──────────────────────────── SitePublisher ──────────────────────────────────

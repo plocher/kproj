@@ -6,6 +6,25 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - project-global datasheet + DESCRIPTION discovery on the section index (Phase G)
+
+The project section index (`content/versions/<P>/_index.md`) now lists the
+project's reference datasheets and optional `DESCRIPTION` prose below the README,
+completing the project-global content model (README + DESCRIPTION + datasheets +
+libraries) from the EAGLE reference UX. New `common.project_docs` provides
+`discover_datasheets(project_dir)` and `read_description(project_dir)`.
+`discover_datasheets` walks the project tree recursively so PDFs are found
+wherever they live (project root, `docs/`, `ds-downloads/`, ...), pruning
+generated / VCS / backup subtrees (hidden dirs like `.git` / `.history`, KiCad
+`*-backups`, and the fab `production/` tree); it returns case-insensitively
+sorted, de-duplicated basenames. `Publication` gains `datasheets` +
+`description`; `PublishWorkflow.build_publication` populates them from
+`resolved.project_dir` alongside `libraries`, and
+`SitePublisher._build_project_index_content` renders a `## Datasheets` name-list
+(name-only for now; copying the PDFs to the site + link/preview UX are deferred
+follow-ups). The section-index body is compared after whitespace normalization,
+so a pre-datasheet README-only page stays a no-op on re-publish.
+
 ### Fixed - Hugo-safe version `date`; SPCoast YYYY.MM moves to `issue_date` (Phase G build fix)
 
 kproj emitted `date: '2026.05'` (the SPCoast YYYY.MM title-block convention), but

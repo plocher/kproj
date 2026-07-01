@@ -291,7 +291,7 @@ The comparison inputs:
 
 1. **Front-matter** of `<site_repo>/<site_profile.versions_dir>/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
 2. **Body markdown** of the same file vs the body kproj would emit (the audit/DRC/ERC tables).
-3. **Project section-index body** of `<site_repo>/<site_profile.versions_dir>/<P>/_index.md` vs the project's current `README.md` content (per ADR 0002, the project-global page body is always rewritten from README.md; one index per project).
+3. **Project section-index body** of `<site_repo>/<site_profile.versions_dir>/<P>/_index.md` vs the project's current project-global content (per ADR 0002, the section-index body is always rewritten; one index per project). The body stacks `README.md`, then the optional `DESCRIPTION` prose, then a `## Datasheets` name-list of the discovered PDFs (see § Project-global docs). Compared after whitespace normalization, so the pre-datasheet README-only output stays a no-op.
 4. **Asset manifest** for `<site_repo>/versions/<P>/<R>/`:
    - Every artifact listed in the front-matter `artifacts[]` and `images[]` must exist on disk.
    - Each artifact's mtime is compared against the corresponding source mtime (e.g. `<P>-<R>.top.png` vs `<pcb>.kicad_pcb`; `<P>-<R>.ibom.html` vs `<pcb>.kicad_pcb`; `<P>-<R>.source.zip` vs the latest mtime in the project's source-include set; `<P>-<R>.fab.zip` vs the latest mtime in `<project_dir>/production/`).
@@ -528,6 +528,17 @@ Classification precedence: a `fp-lib-table` / `sym-lib-table` entry wins over a 
 - **Field**: `Publication.libraries: tuple[LibraryRef, ...]` (frozen; defaults to `()`).
 - **Workflow**: `PublishWorkflow.build_publication(resolved, project_info, analysis_info)` calls the utility and threads the result onto the constructed `Publication`. This is DESIGN step 8.
 - **Rendering**: `SitePublisher` consumes `Publication.libraries` when emitting the version-page front-matter / body. Tracked by kproj#4 - not modified in this PR.
+
+### Project-global docs (datasheets + DESCRIPTION)
+
+Alongside the library list, the project-global content model (per the EAGLE reference UX) includes prose docs and reference datasheet PDFs that are constant across board revisions. These render on the project section index (`<versions_dir>/<P>/_index.md`), not the per-version page.
+
+- **Utilities**: `common.project_docs.discover_datasheets(project_dir) -> tuple[str, ...]` and `common.project_docs.read_description(project_dir) -> str`.
+- **Datasheet scan**: recursive walk of `project_dir` for `*.pdf` (case-insensitive on the extension), so datasheets are found wherever the maintainer stores them (project root, `docs/`, `ds-downloads/`, ...). Generated / VCS / backup subtrees are pruned: hidden dirs (`.git`, `.history`), KiCad `*-backups`, and the fab `production/` tree. Returns case-insensitively sorted, de-duplicated basenames (stable for reproducible publishes).
+- **DESCRIPTION**: first of `DESCRIPTION.md` / `DESCRIPTION.txt` / `DESCRIPTION` at the project root wins; empty string when none.
+- **Fields**: `Publication.datasheets: tuple[str, ...]` and `Publication.description: str` (both frozen; default `()` / `""`).
+- **Workflow**: `PublishWorkflow.build_publication` calls both utilities against `resolved.project_dir` and threads the result onto the constructed `Publication` (DESIGN step 9), alongside `libraries`.
+- **Rendering**: `SitePublisher._build_project_index_content` appends the DESCRIPTION prose and a `## Datasheets` markdown bullet list (name-only) after the README body. Copying the PDFs into the site + link/preview UX are deferred follow-ups.
 
 ### `ZipArchiver`
 

@@ -42,6 +42,7 @@ from ..common.kicad_install import (
     kicad_version,
 )
 from ..common.kicad_libraries import enumerate_libraries
+from ..common.project_docs import discover_datasheets, read_description
 from ..common.subprocess_runner import (
     DEFAULT_GIT_TIMEOUT,
     SubprocessFailedError,
@@ -512,10 +513,14 @@ class PublishWorkflow:
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
-        This is DESIGN step 9 (build Publication).  It calls
-        :func:`kproj.common.kicad_libraries.enumerate_libraries`
-        against ``resolved.project_dir`` and threads the resulting
-        library refs onto :attr:`Publication.libraries`.
+        This is DESIGN step 9 (build Publication).  It scans
+        ``resolved.project_dir`` for the project-global content model:
+        :func:`kproj.common.kicad_libraries.enumerate_libraries` for
+        library refs, and
+        :func:`kproj.common.project_docs.discover_datasheets` /
+        :func:`kproj.common.project_docs.read_description` for the
+        datasheet name-list + DESCRIPTION prose rendered on the project
+        section index.
 
         Args:
             resolved: The resolved project (provides ``project_dir``).
@@ -538,6 +543,8 @@ class PublishWorkflow:
             body_md=body_md,
             readme_md=readme_md,
             published_at=published_at,
+            datasheets=discover_datasheets(resolved.project_dir),
+            description=read_description(resolved.project_dir),
             images=images,
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
