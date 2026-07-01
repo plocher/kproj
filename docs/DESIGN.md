@@ -242,6 +242,7 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - This ordering is mandatory: a private project must not fail on "iBOM plugin missing" or "site repo dirty", since it neither invokes iBOM nor writes to the site
 5. Remaining pre-flight (non-private only)
    - ibom_script = common.kicad_install.find_ibom_script()       # ADR 0008; missing → exit 2
+   - kicad_python = common.kicad_install.find_kicad_python()     # ADR 0008 Amendment 1 / kproj#10; KiCad's bundled interpreter (has pcbnew); missing → exit 2
    - If not dry_run: check site_repo cleanliness (git -C <site_repo> status --porcelain); dirty → exit 2
    - Any failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
 6. New-release detection (consults site_repo)
@@ -306,7 +307,7 @@ Files emitted into `<site_repo>/versions/<Project>/<board_rev>/`. Filename token
 | `<P>-<R>.step` | `PcbExporter.export_step()` | `kicad-cli pcb export step --output <P>-<R>.step <pcb>` |
 | `<P>-<R>.sch.svg` | `SchematicExporter.export_svg(root_only=True)` | `kicad-cli sch export svg --output <P>-<R>.sch.svg <root.kicad_sch>` |
 | `<P>-<R>.sch.pdf` | `SchematicExporter.export_pdf(all_sheets=True)` | `kicad-cli sch export pdf --output <P>-<R>.sch.pdf <root.kicad_sch>` |
-| `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | direct invocation per ADR 0008: `<python> <ibom_script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>`. `<python>` = `sys.executable`; `<ibom_script>` = `common.kicad_install.find_ibom_script()`. |
+| `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | direct invocation per ADR 0008: `<python> <ibom_script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>`. `<python>` = `common.kicad_install.find_kicad_python()` (KiCad's bundled interpreter — the iBOM script needs `pcbnew`; ADR 0008 Amendment 1 / kproj#10, NOT `sys.executable`); `<ibom_script>` = `common.kicad_install.find_ibom_script()`. |
 | `<P>-<R>.fab.zip` | `FabPackager.package()` | reads jBOM-produced gerber pack from `<project_dir>/production/<title>_<rev>.zip` plus `bom.csv` + `pos.csv` → normalizes filenames inside the zip and assembles via `ZipArchiver` |
 | `<P>-<R>.source.zip` | `SourcePackager.package()` | walks `<project_dir>` per include/exclude rules → assembles via `ZipArchiver` |
 | `<P>-<R>.thumbnail.{png,svg}` | TBD Phase 6 | open: PIL crop of `top.png`, or PCB SVG outline |
@@ -390,7 +391,7 @@ class DesignAnalyzer:
         """kicad_cli is the discovered executable path from common.kicad_install.find_kicad_cli()."""
     def analyze(self, resolved: ResolvedProject) -> AnalysisInfo:
         """Invoke `<kicad_cli> pcb drc` and `<kicad_cli> sch erc`, parse JSON outputs into Findings.
-        Preserves KiCad's exclusion severity via Severity.exclusion."""
+        Violations flagged as excluded/ignored in KiCad are suppressed by default."""
 ```
 
 DRC subprocess: `<kicad_cli> pcb drc --format json --severity-all --output <tempfile> <resolved.pcb_file>`.
@@ -442,13 +443,18 @@ v1 emits only the root sheet as SVG (single file inline on version page) and the
 
 ```python path=null start=null
 class IbomGenerator:
-    def __init__(self, ibom_script: Path) -> None:
+    def __init__(self, ibom_script: Path, python_exe: Path) -> None:
         """ibom_script is the discovered generate_interactive_bom.py path
-        (from common.kicad_install.find_ibom_script(), run once in pre-flight)."""
+        (from common.kicad_install.find_ibom_script(), run once in pre-flight).
+        python_exe is KiCad's bundled Python interpreter
+        (from common.kicad_install.find_kicad_python(); ADR 0008 Amendment 1 /
+        kproj#10). Required, no default: the iBOM script imports pcbnew, which
+        only resolves under KiCad's interpreter - never kproj's venv."""
     def generate(self, pcb_path: Path, output_dir: Path, name_format: str) -> ExportResult:
         """Invoke iBOM directly per ADR 0008:
-          common.subprocess_runner.run([sys.executable, str(self.ibom_script), ...args..., str(pcb_path)])
-        Pre-flight already verified the script exists; this method assumes it does.
+          common.subprocess_runner.run([str(self.python_exe), str(self.ibom_script), ...args..., str(pcb_path)])
+        run with env INTERACTIVE_HTML_BOM_NO_DISPLAY=1 so iBOM runs headless.
+        Pre-flight already verified the script + interpreter exist; this method assumes they do.
         Returns ExportResult with path = produced HTML file."""
 ```
 

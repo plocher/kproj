@@ -6,6 +6,47 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - populate front-matter `tags` from company (kproj#10 Phase G finding)
+
+`KicadProjectReader.read` hardcoded `tags=()`, so every published version page
+emitted `tags: []` despite the DESIGN contract (`tags: [<company>, kicad]`).
+Surfaced by the first real publish (`cpNode-Xiao-68x90`, company `MRCS` → empty
+tags). New `_derive_tags(company)` splits the company on `/` (multi-org boards,
+e.g. `MRCS/SPCoast`) and appends the `kicad` discriminator tag; order preserved,
+duplicates removed; a blank company still yields `("kicad",)`.
+
+### Fixed - suppress ignored DRC/ERC violations by default
+
+Violations flagged as excluded/ignored by KiCad are now filtered out so they do not
+surface in stderr or the version-page tables, and they do not influence exit-code 1.
+
+### Fixed - iBOM runs under KiCad's bundled Python (kproj#10)
+
+The Phase G end-to-end publish failed at the iBOM step with
+`ModuleNotFoundError: No module named 'pcbnew'`. The PCM iBOM script
+(`generate_interactive_bom.py`) imports `pcbnew` unconditionally, and
+`pcbnew` only resolves inside KiCad's bundled Python interpreter - never
+in kproj's `uv` venv. kproj was invoking it with `sys.executable`.
+
+- **New `common.kicad_install.find_kicad_python()`** locates KiCad's
+  bundled interpreter. It derives from the same KiCad install anchor as
+  `find_kicad_cli` (single source of truth, so the interpreter always
+  matches the located `kicad-cli`) with a `KPROJ_KICAD_PYTHON` env
+  override. macOS derivation is implemented; Linux / Windows are
+  documented follow-ups (kproj#10).
+- **`IbomGenerator.__init__` now takes a required `python_exe: Path`**
+  (no default) and invokes iBOM with it instead of `sys.executable`.
+- **`PublishWorkflow`** resolves the interpreter in pre-flight (step 5a)
+  alongside the iBOM script via an injectable `kicad_python_locator`; a
+  miss is a hard exit-2 mechanical failure before any change journal
+  opens. The interpreter is threaded through `ArtifactGeneratorCallable`
+  into `IbomGenerator`.
+- **ADR 0008 amended in place** (Amendment 1) to correct the wrong
+  "`sys.executable` / any modern Python" claim.
+- **iBOM contract test de-skipped**: it now runs end-to-end under
+  `find_kicad_python()` instead of skipping when `pcbnew` is not
+  importable in the test interpreter.
+
 ### Changed - `SiteProfile` abstraction; Hugo path defaults (Phase F of Jekyll → Hugo migration)
 
 The production SPCoast site was migrated from Jekyll to Hugo in a

@@ -70,11 +70,12 @@ def _make_site_repo(base_dir: Path) -> Path:
 def _stub_artifact_generator(site_repo: Path) -> Any:
     """Return an artifact generator stub that writes placeholder files.
 
-    Wave-3 fix-ups: honours the new
-    ``(resolved, project_info, kicad_cli, ibom_script, site_repo, journal)``
-    signature and returns the 3-tuple ``(images, artifacts, diagnostics)``.
-    Derives ``basename`` / ``board_rev`` from ``project_info`` so path
-    layout matches BLOCKER 1's canonical shape.
+    Honours the artifact-generator signature
+    ``(resolved, project_info, kicad_cli, ibom_script, kicad_python,
+    site_repo, journal)`` and returns the 3-tuple
+    ``(images, artifacts, diagnostics)``.  Derives ``basename`` /
+    ``board_rev`` from ``project_info`` so path layout matches
+    BLOCKER 1's canonical shape.
     """
 
     def _gen(
@@ -82,6 +83,7 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
         project_info: Any,
         _kicad_cli: Path,
         _ibom_script: Path,
+        _kicad_python: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
@@ -143,6 +145,9 @@ def _build_workflow(context: Any) -> PublishWorkflow:
     fake_ibom = Path(context.tmpdir) / "generate_interactive_bom.py"
     if not fake_ibom.exists():
         fake_ibom.write_text("")
+    fake_python = Path(context.tmpdir) / "kicad-python3"
+    if not fake_python.exists():
+        fake_python.write_text("")
     site_repo = context.site_repo
     generator = getattr(context, "failing_generator", None) or _stub_artifact_generator(site_repo)
     design_analyzer_factory = (
@@ -152,6 +157,7 @@ def _build_workflow(context: Any) -> PublishWorkflow:
         project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
         design_analyzer_factory=design_analyzer_factory,
         ibom_script_locator=lambda: fake_ibom,
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=generator,
         site_publisher_factory=SitePublisher,
     )
@@ -301,6 +307,7 @@ def step_given_failing_producer(context: Any) -> None:
         project_info: Any,
         _kicad_cli: Path,
         _ibom_script: Path,
+        _kicad_python: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:

@@ -242,6 +242,55 @@ def test_active_project_fails_preflight_without_ibom(
     assert "iBOM" in result.message or "ibom" in result.message.lower()
 
 
+def test_active_project_fails_preflight_without_kicad_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kproj#10: a missing KiCad-bundled Python fails step 5a pre-flight.
+
+    The iBOM script needs the interpreter that can ``import pcbnew``.
+    When it cannot be located, pre-flight returns ``outcome="failed"``,
+    ``exit_code=2`` before any change journal opens - the same class as
+    a missing iBOM script.
+    """
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+
+    def _no_python() -> Path:
+        raise KicadNotFoundError(
+            "KiCad's bundled Python interpreter (the one that can 'import pcbnew') was not found."
+        )
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=_no_python,
+    )
+    result = workflow.run(_make_request(str(proj_dir), fake_cli))
+    assert result.outcome == "failed"
+    assert result.exit_code == 2
+    assert "pcbnew" in result.message
+
+
 def test_workflow_threads_findings_into_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -487,6 +536,7 @@ def _stub_artifact_generator(
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
@@ -560,10 +610,13 @@ def _full_pipeline_workflow(
     """Build a workflow with all external side-effects stubbed out."""
     fake_ibom = tmp_path / "generate_interactive_bom.py"
     fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
     return PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_stub_artifact_generator(site_repo),
         site_publisher_factory=_stub_site_publisher_factory(site_repo),
     )
@@ -744,6 +797,8 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
 
     fake_ibom = tmp_path / "generate_interactive_bom.py"
     fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
 
     captured: dict[str, object] = {}
 
@@ -752,6 +807,7 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
@@ -768,6 +824,7 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_recording_gen,
         site_publisher_factory=_stub_site_publisher_factory(site),
     )
@@ -817,12 +874,15 @@ def test_schematic_export_error_converts_to_failed_outcome(
 
     fake_ibom = tmp_path / "generate_interactive_bom.py"
     fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
 
     def _exploding_gen(
         resolved: object,
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
@@ -840,6 +900,7 @@ def test_schematic_export_error_converts_to_failed_outcome(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_exploding_gen,
         site_publisher_factory=_stub_site_publisher_factory(site),
     )
@@ -995,11 +1056,15 @@ def test_artifact_generator_diagnostics_flow_into_result(
         source="audit",
     )
 
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
+
     def _gen_with_diagnostics(
         resolved: object,
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
@@ -1010,6 +1075,7 @@ def test_artifact_generator_diagnostics_flow_into_result(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_gen_with_diagnostics,
         site_publisher_factory=_stub_site_publisher_factory(site),
     )

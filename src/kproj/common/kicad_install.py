@@ -7,13 +7,20 @@ artifact or raises :class:`KicadNotFoundError`.
 Per ADR 0009 + the v1 Version-support addendum, the probe order is:
 
 1. Explicit env var override (``KPROJ_KICAD_CLI`` /
-   ``KICAD10_3RD_PARTY`` / ``KICAD9_3RD_PARTY``); existence-checked
-   before returning.
+   ``KPROJ_KICAD_PYTHON`` / ``KICAD10_3RD_PARTY`` /
+   ``KICAD9_3RD_PARTY``); existence-checked before returning.
 2. Platform-specific defaults (macOS / Linux / Windows) declared in
    :data:`_PLATFORM_KICAD_CLI_CANDIDATES` /
    :data:`_PLATFORM_PLUGINS_DIR_CANDIDATES`, KiCad 10 paths tried
    ahead of KiCad 9 ones.
 3. PATH lookup via :func:`shutil.which` (for ``kicad-cli`` only).
+
+:func:`find_kicad_python` (ADR 0008 amendment / kproj#10) locates the
+**KiCad-bundled Python interpreter** the iBOM plugin script needs
+(``import pcbnew`` only resolves there).  It composes on
+:func:`find_kicad_cli`, deriving the interpreter from the same KiCad
+install anchor so the two always agree on version.  macOS derivation
+is implemented; Linux / Windows are marked follow-ups.
 
 KiCad 10 shipped while v1 was in design.  v1 supports KiCad 9 and 10
 (see :data:`SUPPORTED_KICAD_MAJORS`); future major versions get added
@@ -30,6 +37,7 @@ import sys
 from pathlib import Path
 
 _KICAD_CLI_ENV_VAR = "KPROJ_KICAD_CLI"
+_KICAD_PYTHON_ENV_VAR = "KPROJ_KICAD_PYTHON"
 _PLUGINS_DIR_ENV_VARS: tuple[str, ...] = ("KICAD10_3RD_PARTY", "KICAD9_3RD_PARTY")
 """Plugins-dir env vars in newest-first order."""
 
@@ -188,6 +196,93 @@ def find_ibom_script() -> Path:
             f"{_IBOM_PLUGIN_DIR}."
         )
     return script
+
+
+def find_kicad_python() -> Path:
+    """Locate the KiCad-bundled Python interpreter (ADR 0008 / kproj#10).
+
+    The PCM iBOM script (``generate_interactive_bom.py``) does
+    ``import pcbnew`` unconditionally, and ``pcbnew`` is a SWIG-bound
+    C-extension that resolves **only** inside KiCad's own Python
+    interpreter - never in kproj's ``uv``-managed venv.  This locator
+    returns that interpreter so :class:`~kproj.services.ibom_generator.IbomGenerator`
+    can invoke iBOM under it.
+
+    Probe order:
+
+    1. Explicit ``KPROJ_KICAD_PYTHON`` env override (existence-checked).
+    2. Derived from the located ``kicad-cli`` install anchor via
+       :func:`_kicad_python_for_cli` - one source of truth for "where
+       is KiCad", so the interpreter always matches the ``kicad-cli``
+       kproj already resolved (and honours ``KPROJ_KICAD_CLI``).
+
+    Returns:
+        Absolute :class:`pathlib.Path` to an existing interpreter.
+
+    Raises:
+        KicadNotFoundError: When the override does not exist, when the
+            platform has no derivation implemented yet (Linux / Windows),
+            or when the derived interpreter is absent.
+    """
+    explicit = os.environ.get(_KICAD_PYTHON_ENV_VAR)
+    if explicit:
+        candidate = Path(explicit)
+        if candidate.exists():
+            return candidate
+        raise KicadNotFoundError(
+            f"{_KICAD_PYTHON_ENV_VAR}={explicit!r} but that path does not exist."
+        )
+
+    derived = _kicad_python_for_cli(find_kicad_cli())
+    if derived is not None and derived.exists():
+        return derived
+
+    raise KicadNotFoundError(
+        "KiCad's bundled Python interpreter (the one that can "
+        "'import pcbnew') was not found. Set "
+        f"{_KICAD_PYTHON_ENV_VAR} to it explicitly. Automatic "
+        "derivation is implemented for macOS; Linux / Windows support "
+        "is pending (kproj#10)."
+    )
+
+
+def _kicad_python_for_cli(kicad_cli: Path) -> Path | None:
+    """Map a resolved ``kicad-cli`` path to its sibling bundled Python.
+
+    On macOS the interpreter lives in the same ``KiCad.app`` bundle as
+    ``kicad-cli``:
+
+        <bundle>/Contents/MacOS/kicad-cli
+        <bundle>/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
+
+    The cli path is ``resolve()``-d first so a PATH symlink still lands
+    inside the real bundle.
+
+    Linux / Windows return ``None`` for now (documented follow-up,
+    kproj#10): on Linux ``pcbnew`` is installed into a system
+    interpreter rather than a KiCad-private one, and on Windows the
+    interpreter sits beside ``kicad-cli.exe`` in ``<install>\\bin``;
+    both need their own mapping + fixture coverage before they ship.
+
+    Args:
+        kicad_cli: The located ``kicad-cli`` executable.
+
+    Returns:
+        The derived interpreter path (existence NOT checked here), or
+        ``None`` when the current platform has no mapping yet.
+    """
+    if sys.platform == "darwin":
+        contents = kicad_cli.resolve().parent.parent
+        return (
+            contents
+            / "Frameworks"
+            / "Python.framework"
+            / "Versions"
+            / "Current"
+            / "bin"
+            / "python3"
+        )
+    return None
 
 
 def kicad_version(kicad_cli: Path) -> tuple[int, int, int]:

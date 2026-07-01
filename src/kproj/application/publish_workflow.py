@@ -37,6 +37,7 @@ from ..common.kicad_install import (
     KicadNotFoundError,
     find_ibom_script,
     find_kicad_cli,
+    find_kicad_python,
     kicad_version,
 )
 from ..common.kicad_libraries import enumerate_libraries
@@ -94,8 +95,19 @@ inject a fake that returns a dummy path so the iBOM pre-flight succeeds
 without a real KiCad install.
 """
 
+KicadPythonLocator = Callable[[], Path]
+"""Callable that locates KiCad's bundled Python interpreter.
+
+Defaults to :func:`~kproj.common.kicad_install.find_kicad_python`. The
+iBOM script needs the interpreter that can ``import pcbnew`` (ADR 0008
+amendment / kproj#10), so it is resolved in pre-flight alongside the
+iBOM script and injected into :class:`~kproj.services.ibom_generator.IbomGenerator`.
+Tests inject a fake returning a dummy path so pre-flight succeeds
+without a real KiCad install.
+"""
+
 ArtifactGeneratorCallable = Callable[
-    ["ResolvedProject", "ProjectInfo", Path, Path, Path, "ChangeJournal"],
+    ["ResolvedProject", "ProjectInfo", Path, Path, Path, Path, "ChangeJournal"],
     tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple["Finding", ...]],
 ]
 """Callable that generates all release artifacts for a project.
@@ -107,9 +119,14 @@ Signature::
         project_info: ProjectInfo,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         site_repo: Path,
         journal: ChangeJournal,
     ) -> tuple[images_refs, artifact_refs, diagnostics]
+
+``kicad_python`` is KiCad's bundled interpreter (ADR 0008 amendment /
+kproj#10); it is passed to :class:`~kproj.services.ibom_generator.IbomGenerator`
+so the iBOM script runs under the Python that has ``pcbnew``.
 
 ``project_info`` carries the canonical ``board_rev`` (PCB-derived per
 ``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
@@ -136,6 +153,7 @@ __all__ = [
     "ArtifactGeneratorCallable",
     "DesignAnalyzerFactory",
     "IbomScriptLocator",
+    "KicadPythonLocator",
     "Outcome",
     "PublishRequest",
     "PublishResult",
@@ -160,6 +178,7 @@ class PublishWorkflow:
         metadata_analyzer: MetadataAnalyzer | None = None,
         design_analyzer_factory: DesignAnalyzerFactory | None = None,
         ibom_script_locator: IbomScriptLocator | None = None,
+        kicad_python_locator: KicadPythonLocator | None = None,
         artifact_generator: ArtifactGeneratorCallable | None = None,
         site_publisher_factory: SitePublisherFactory | None = None,
     ) -> None:
@@ -172,6 +191,9 @@ class PublishWorkflow:
                 :class:`DesignAnalyzer` for a given ``kicad-cli`` path.
             ibom_script_locator: Callable returning the iBOM script path.
                 Defaults to :func:`~kproj.common.kicad_install.find_ibom_script`.
+            kicad_python_locator: Callable returning KiCad's bundled
+                Python interpreter path.  Defaults to
+                :func:`~kproj.common.kicad_install.find_kicad_python`.
             artifact_generator: Callable that runs all exporters + packagers
                 and returns ``(images, artifacts)`` asset refs.  Defaults to
                 :func:`_default_artifact_generator`.
@@ -183,6 +205,7 @@ class PublishWorkflow:
         self._metadata_analyzer = metadata_analyzer or MetadataAnalyzer()
         self._design_analyzer_factory = design_analyzer_factory or DesignAnalyzer
         self._ibom_script_locator: IbomScriptLocator = ibom_script_locator or find_ibom_script
+        self._kicad_python_locator: KicadPythonLocator = kicad_python_locator or find_kicad_python
         self._artifact_generator: ArtifactGeneratorCallable = (
             artifact_generator or _default_artifact_generator
         )
@@ -263,9 +286,14 @@ class PublishWorkflow:
                 findings=analysis.findings,
             )
 
-        # ── Step 5a: iBOM pre-flight ──
+        # ── Step 5a: iBOM pre-flight (script + KiCad-bundled interpreter) ──
+        # kproj#10: the iBOM script needs the interpreter that can
+        # ``import pcbnew`` (KiCad's bundled Python, not kproj's venv).
+        # Resolve both here so a missing interpreter fails pre-flight
+        # with exit 2 before any change journal is opened.
         try:
             ibom_script = self._ibom_script_locator()
+            kicad_python = self._kicad_python_locator()
         except KicadNotFoundError as exc:
             return PublishResult.build(
                 "failed",
@@ -359,6 +387,7 @@ class PublishWorkflow:
                             project_info,
                             kicad_cli,
                             ibom_script,
+                            kicad_python,
                             site_repo,
                             journal,
                         )
@@ -670,6 +699,7 @@ def _default_artifact_generator(
     project_info: ProjectInfo,
     kicad_cli: Path,
     ibom_script: Path,
+    kicad_python: Path,
     site_repo: Path,
     journal: ChangeJournal,
 ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
@@ -698,6 +728,8 @@ def _default_artifact_generator(
             ``project`` + ``board_rev`` tokens.
         kicad_cli: Discovered kicad-cli path.
         ibom_script: Discovered iBOM script path.
+        kicad_python: KiCad's bundled Python interpreter (runs iBOM;
+            kproj#10 - the venv Python lacks ``pcbnew``).
         site_repo: Local site-repo checkout.
         journal: Open :class:`ChangeJournal` for rollback tracking.
 
@@ -709,7 +741,7 @@ def _default_artifact_generator(
     """
     pcb_exporter = PcbExporter(kicad_cli)
     sch_exporter = SchematicExporter(kicad_cli)
-    ibom_gen = IbomGenerator(ibom_script)
+    ibom_gen = IbomGenerator(ibom_script, kicad_python)
     archiver = ZipArchiver()
     fab_packager = FabPackager(archiver)
     source_packager = SourcePackager(archiver)
