@@ -17,7 +17,7 @@ None of that has to be solved to deliver kproj v1's value. The simpler runtime m
 
 ## Decision
 
-kproj v1 is a **local CLI tool**. Invoked manually by the user against a KiCad project on disk. Writes to a local checkout of the SPCoast site repo (path from `--site-repo` flag, `KPROJ_SITE_REPO` env var, `~/.kproj.yaml`'s `site_repo` key, or the hardcoded fallback `~/Dropbox/eagle/SPCoast.github.io`). Commits, pushes via the user's locally-configured git credentials.
+kproj v1 is a **local CLI tool**. Invoked manually by the user against a KiCad project on disk. Writes to a local checkout of the SPCoast site repo (path from `--site-repo` flag, `KPROJ_SITE_REPO` env var, `~/.kproj.yaml`'s `site_repo` key, or the hardcoded fallback in `src/kproj/config.py::DEFAULT_SITE_REPO`). Commits, pushes via the user's locally-configured git credentials.
 
 ### Specifically excluded from v1
 

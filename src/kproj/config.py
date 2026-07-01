@@ -7,7 +7,7 @@ Implements the four-tier precedence from ``docs/DESIGN.md`` §
 2. Environment variable (``KPROJ_SITE_REPO`` / ``KPROJ_NO_PUSH`` /
    ``KPROJ_KICAD_CLI``)
 3. ``~/.kproj.yaml`` key (``site_repo`` / ``no_push`` / ``kicad_cli``)
-4. Hardcoded fallback (``~/Dropbox/eagle/SPCoast.github.io``, ``False``,
+4. Hardcoded fallback (:data:`DEFAULT_SITE_REPO`, ``False``,
    ``None``)
 
 Per ADR 0006, this module never imports ``argparse``. The CLI builds a
@@ -24,8 +24,14 @@ from typing import Any
 
 import yaml
 
-DEFAULT_SITE_REPO: Path = Path.home() / "Dropbox" / "eagle" / "SPCoast.github.io"
-"""Hardcoded fallback site repo per ADR 0007."""
+DEFAULT_SITE_REPO: Path = Path.home() / "Dropbox" / "workspace" / "SPCoast.github.io"
+"""Canonical filesystem default for the SPCoast site-repo checkout.
+
+This is the **single source of truth** for the default ``site_repo`` path
+(the hardcoded fallback per ADR 0007). Other code MUST NOT re-declare the
+literal path; import this constant instead. Docs, templates, ADRs, and
+plan-level references use the generic ``$SITE_REPO`` placeholder and cite
+this constant when the actual filesystem location is needed."""
 
 DEFAULT_NO_PUSH: bool = False
 """Hardcoded fallback for ``--no-push`` (off by default)."""
