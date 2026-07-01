@@ -11,8 +11,9 @@ point in kproj) and write to a tempfile that is deleted before
 :meth:`analyze` returns; no DRC/ERC JSON persists on disk.
 
 KiCad's per-violation severity is preserved verbatim - including
-``exclusion``, which by ADR 0004's locked policy does NOT contribute
-to the ``exit_code=1`` "findings present" rule.
+``exclusion`` - but violations flagged as ``excluded`` (KiCad GUI's
+"ignored tests") are suppressed entirely so they do not surface as
+findings by default.
 
 Mechanical failures vs findings (ADR 0004, wave-3 M4 round-2):
 
@@ -86,6 +87,9 @@ _SEVERITY_BY_TOKEN: Mapping[str, Severity] = {
     "exclusion": Severity.EXCLUSION,
 }
 """KiCad-CLI severity tokens mapped to kproj :class:`Severity`."""
+
+_EXCLUSION_KEYS: tuple[str, ...] = ("excluded", "ignored", "suppressed")
+"""Keys that signal a violation has been explicitly ignored in KiCad."""
 
 _VIOLATION_ARRAYS: tuple[str, ...] = (
     "violations",
@@ -281,22 +285,29 @@ def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Se
     """
     if not isinstance(violation, dict):
         return ()
-    severity = _SEVERITY_BY_TOKEN.get(str(violation.get("severity", "")).lower(), Severity.WARNING)
+    severity_token = str(violation.get("severity", "")).lower()
+    if _is_excluded_violation(violation, severity_token=severity_token):
+        return ()
+    severity = _SEVERITY_BY_TOKEN.get(severity_token, Severity.WARNING)
     rule = str(violation.get("type", "unknown"))
     base_reason = str(violation.get("description", "")) or rule
     items = violation.get("items")
     if isinstance(items, list) and items:
-        return tuple(
-            Finding(
-                severity=severity,
-                field=rule,
-                value=_item_location(item),
-                reason=_item_reason(item, base_reason),
-                project=project,
-                source=origin,
+        findings: list[Finding] = []
+        for item in items:
+            if _is_excluded_item(item):
+                continue
+            findings.append(
+                Finding(
+                    severity=severity,
+                    field=rule,
+                    value=_item_location(item),
+                    reason=_item_reason(item, base_reason),
+                    project=project,
+                    source=origin,
+                )
             )
-            for item in items
-        )
+        return tuple(findings)
     return (
         Finding(
             severity=severity,
@@ -344,6 +355,25 @@ def _raise_if_mechanical_failure(*, result: SubprocessResult, origin: str) -> No
         origin=origin,
         returncode=rc,
     )
+
+
+def _is_excluded_violation(violation: Any, *, severity_token: str) -> bool:
+    """Return ``True`` when a violation is explicitly ignored in KiCad."""
+    if severity_token == "exclusion":
+        return True
+    return _has_exclusion_flag(violation)
+
+
+def _is_excluded_item(item: Any) -> bool:
+    """Return ``True`` when a violation item is explicitly ignored in KiCad."""
+    return _has_exclusion_flag(item)
+
+
+def _has_exclusion_flag(candidate: Any) -> bool:
+    """Return ``True`` when *candidate* carries a truthy exclusion flag."""
+    if not isinstance(candidate, dict):
+        return False
+    return any(candidate.get(key) for key in _EXCLUSION_KEYS)
 
 
 def _item_location(item: Any) -> str:

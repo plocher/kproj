@@ -95,8 +95,8 @@ def test_drc_violation_with_items_emits_per_item_finding(tmp_path: Path) -> None
     assert drc_findings[0].value == "10,20"
 
 
-def test_erc_exclusion_severity_preserved(tmp_path: Path) -> None:
-    """``exclusion`` severity is mapped to :attr:`Severity.EXCLUSION`."""
+def test_exclusion_severity_suppressed(tmp_path: Path) -> None:
+    """``exclusion`` severity violations are suppressed by default."""
     payload = {
         "violations": [
             {
@@ -110,10 +110,50 @@ def test_erc_exclusion_severity_preserved(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    erc_findings = [f for f in result.findings if f.source == "erc"]
-    assert erc_findings and erc_findings[0].severity is Severity.EXCLUSION
-    # Exclusions must NOT mark the analysis as "has_findings" per ADR 0004.
+    assert result.findings == ()
     assert result.has_findings is False
+
+
+def test_excluded_violation_is_suppressed(tmp_path: Path) -> None:
+    """Violations flagged as excluded are filtered out entirely."""
+    payload = {
+        "violations": [
+            {
+                "severity": "error",
+                "type": "courtyards_overlap",
+                "description": "Courtyard overlap",
+                "excluded": True,
+                "items": [{"description": "U1", "pos": "1,2"}],
+            }
+        ]
+    }
+    runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    result = analyzer.analyze(_resolved(tmp_path))
+    assert result.findings == ()
+
+
+def test_excluded_items_are_skipped(tmp_path: Path) -> None:
+    """Excluded items are skipped while non-excluded items still surface."""
+    payload = {
+        "violations": [
+            {
+                "severity": "warning",
+                "type": "silk_overlap",
+                "description": "Silkscreen overlap",
+                "items": [
+                    {"description": "U1", "pos": "1,2", "excluded": True},
+                    {"description": "U2", "pos": "3,4"},
+                ],
+            }
+        ]
+    }
+    runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    result = analyzer.analyze(_resolved(tmp_path))
+    drc_findings = [f for f in result.findings if f.source == "drc"]
+    assert len(drc_findings) == 1
+    assert drc_findings[0].value == "3,4"
 
 
 def test_runner_receives_severity_all_and_format_json(tmp_path: Path) -> None:
