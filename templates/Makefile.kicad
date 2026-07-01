@@ -1,10 +1,17 @@
 # Makefile.kicad — kproj-aware composition for a KiCad project
 #
 # Symlink this into a KiCad project directory:
-#     ln -s ~/Dropbox/KiCad/kproj/templates/Makefile.kicad Makefile
+#     ln -s /path/to/kproj/templates/Makefile.kicad Makefile
 #
-# Then `make publish` to fab, render, audit, and publish to the SPCoast site.
+# Then `make publish` to fab, render, audit, and publish to your site.
 # `make release` adds the (B) release-lifecycle layer (tag + gh release).
+#
+# SITE_REPO resolution order (matches kproj's own precedence):
+#   1. `SITE_REPO=...` on the command line (highest)
+#   2. `KPROJ_SITE_REPO` environment variable
+#   3. Edit the placeholder default below to your local site-repo checkout,
+#      or leave it unset and rely on kproj's `~/.kproj.yaml` `site_repo` key
+#      / `src/kproj/config.py::DEFAULT_SITE_REPO` fallback.
 
 PROJECT   = $(shell basename $$PWD)
 PCB       = $(PROJECT).kicad_pcb
@@ -12,7 +19,7 @@ SCH       = $(PROJECT).kicad_sch
 BOARD_REV = $(shell python3 -c "import re; t=open('$(PCB)').read(); m=re.search(r'\(rev \"([^\"]+)\"\)', t); print(m.group(1) if m else '')")
 FAB       ?= generic
 SITE_REPO ?= $(KPROJ_SITE_REPO)
-SITE_REPO ?= $(HOME)/Dropbox/eagle/SPCoast.github.io
+# SITE_REPO ?= $(HOME)/your-site-repo   # <-- edit + uncomment if you do not use KPROJ_SITE_REPO
 
 .PHONY: audit fab publish release clean status help
 
@@ -21,7 +28,7 @@ help:
 	@echo ""
 	@echo "  make audit        kproj --dry-run (side-effect-free preview)"
 	@echo "  make fab          jbom fab --fabricator $(FAB) (generates ./production/)"
-	@echo "  make publish      kproj (publishes snapshot to SPCoast site)"
+	@echo "  make publish      kproj (publishes snapshot to \$$(SITE_REPO))"
 	@echo "  make release      (B) release: tag the project repo + gh release create"
 	@echo "  make status       brief audit + dry-run output"
 	@echo "  make clean        rm -rf production/"

@@ -123,14 +123,14 @@ def load_config(overrides: ConfigOverrides) -> KprojConfig:
     #   1. ConfigOverrides field (set by a CLI flag)
     #   2. Environment variable (KPROJ_SITE_REPO, KPROJ_NO_PUSH, KPROJ_KICAD_CLI)
     #   3. ~/.kproj.yaml key (site_repo, no_push, kicad_cli)
-    #   4. Hardcoded fallback (~/Dropbox/eagle/SPCoast.github.io, false, None)
+    #   4. Hardcoded fallback (kproj.config.DEFAULT_SITE_REPO, false, None)
     ...
 ```
 
 `~/.kproj.yaml` schema (all keys optional):
 
 ```yaml path=null start=null
-site_repo: /Users/jplocher/Dropbox/eagle/SPCoast.github.io
+site_repo: $SITE_REPO   # single canonical filesystem default lives in src/kproj/config.py::DEFAULT_SITE_REPO
 no_push: false
 kicad_cli: /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli   # optional override; locator probes default if absent
 ```
@@ -527,7 +527,7 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 
 ## Front-matter shape
 
-What `SitePublisher` writes into `_versions/<Project>/<board_rev>.md` (YAML front-matter, then body). **This shape is the authoritative kproj contract.** The site (`/Users/jplocher/Dropbox/eagle/SPCoast.github.io`) evolves via the locked site-setup PR (Phase 1 closeout) to consume it. Reuse of `layout: eagle` and `publish: true` is a pragmatic v1 minimization that keeps the site-setup PR small — it is NOT a constraint that retrofits kproj to the EAGLE-era shape. KiCad has different capabilities and limits than EAGLE; the site is expected to grow new keys, new conditional branches, and (eventually) a dedicated `kicad.html` layout to match.
+What `SitePublisher` writes into `_versions/<Project>/<board_rev>.md` (YAML front-matter, then body). **This shape is the authoritative kproj contract.** The site at `$SITE_REPO` (see `src/kproj/config.py::DEFAULT_SITE_REPO` for the canonical filesystem default) evolves via the locked site-setup PR (Phase 1 closeout) to consume it. Reuse of `layout: eagle` and `publish: true` is a pragmatic v1 minimization that keeps the site-setup PR small — it is NOT a constraint that retrofits kproj to the EAGLE-era shape. KiCad has different capabilities and limits than EAGLE; the site is expected to grow new keys, new conditional branches, and (eventually) a dedicated `kicad.html` layout to match.
 
 ```yaml path=null start=null
 iskicad: true                      # Phase 1 closeout discriminator: true | 'obsolete'
