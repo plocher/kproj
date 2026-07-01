@@ -6,6 +6,18 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - site commit message reflects the real publish outcome (kproj#10 Phase G finding)
+
+The site commit prefix was chosen purely from file existence and ignored the
+resolved `outcome`, so a full re-publish of an existing version (SCH/PCB source
+changed -> assets stale -> artifacts regenerated) was mislabelled
+`refresh: <P>-<R> (metadata updated)` even though the run reported `published`.
+The classification now distinguishes four site-publish states: `add:`
+(first-ever project publish), `publish:` (brand-new version of an existing
+project), `republish:` (existing version, artifacts regenerated), and
+`refresh: (metadata updated)` (existing version, metadata-only). These verbs
+are informational for the site publish log, not source-repo semver drivers.
+
 ### Fixed - populate front-matter `tags` from company (kproj#10 Phase G finding)
 
 `KicadProjectReader.read` hardcoded `tags=()`, so every published version page

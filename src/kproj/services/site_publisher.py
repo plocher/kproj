@@ -15,11 +15,15 @@ this service:
 4. Runs ``git add``, ``git commit``, and (unless ``no_push``) ``git push``
    in the site repo.
 
-**Commit message patterns** (per DESIGN § *Per-service contracts*):
+**Commit message patterns** (per DESIGN § *Per-service contracts*).
+The four states are distinguished from ``project_is_new`` /
+``version_is_new`` (file existence) plus the resolved ``outcome``
+(``publish`` = artifacts written, ``refresh`` = metadata-only):
 
-- ``add: <Project> <board_rev>``    — first-ever publish for a project.
-- ``publish: <Project>-<board_rev>`` — new version for an existing project.
-- ``refresh: <Project>-<board_rev> (<reason>)`` — metadata-only update.
+- ``add: <Project> <board_rev>``       — first-ever publish of a project.
+- ``publish: <Project>-<board_rev>``    — brand-new version of an existing project.
+- ``republish: <Project>-<board_rev>``  — existing version, artifacts regenerated (source changed).
+- ``refresh: <Project>-<board_rev> (metadata updated)`` — existing version, metadata-only change.
 """
 
 from __future__ import annotations
@@ -184,6 +188,15 @@ class SitePublisher:
             )
 
         # ── determine commit message prefix ──
+        # Four distinct site-publish states, each meaningful in the
+        # site repo's publish log.  File existence separates new
+        # project / new version from a re-touch of an existing version;
+        # the resolved ``outcome`` separates a full artifact regen
+        # (publish) from a metadata-only rewrite (refresh):
+        #   add       - first-ever publish of this project
+        #   publish   - brand-new version of an existing project
+        #   republish - existing version, artifacts regenerated (source changed)
+        #   refresh   - existing version, metadata-only change
         project_is_new = not pages_file.exists()
         version_is_new = not version_file.exists()
 
@@ -191,7 +204,9 @@ class SitePublisher:
             commit_msg = f"add: {P} {R}"
         elif version_is_new:
             commit_msg = f"publish: {PR}"
-        else:
+        elif outcome == "publish":
+            commit_msg = f"republish: {PR}"
+        else:  # outcome == "refresh"
             commit_msg = f"refresh: {PR} (metadata updated)"
 
         would_be_version = _build_version_content(publication, site_profile)

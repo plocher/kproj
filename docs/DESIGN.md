@@ -555,10 +555,12 @@ class SitePublisher:
 
 Front-matter rendering happens inside `FrontMatterSummaryFormatter` (called from `SitePublisher`).  The formatter takes a `SiteProfile` and emits an explicit `layout:` field only when the profile declares one; under `GENERIC_SITE_PROFILE` (Hugo default) the field is omitted.  Body markdown comes from `Publication.body_md` (already rendered upstream with the audit/DRC tables).
 
-Commit message format:
-- New release: `publish: <Project>-<board_rev>`
-- Metadata refresh: `refresh: <Project>-<board_rev> (<reason>)`
-- First release for a new project: `add: <Project> <board_rev>`
+Commit message format. Four distinct site-publish states, each meaningful in the site repo's publish log. The verb is chosen from file existence (`project_is_new` / `version_is_new`) plus the resolved `outcome` (`publish` = artifacts (re)generated, `refresh` = metadata-only):
+- First-ever publish of a project: `add: <Project> <board_rev>`
+- Brand-new version of an existing project: `publish: <Project>-<board_rev>`
+- Existing version, artifacts regenerated because the SCH/PCB source changed: `republish: <Project>-<board_rev>`
+- Existing version, metadata-only change (no artifact regen): `refresh: <Project>-<board_rev> (metadata updated)`
+Note: this is the *site publish log*, not a source repo, so these verbs are informational/audit-oriented rather than driving semver/changelog automation.
 
 ### `ChangeJournal`
 

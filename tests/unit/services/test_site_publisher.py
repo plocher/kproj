@@ -205,7 +205,9 @@ class TestPublish:
         with patch("kproj.services.site_publisher._git_run") as mock_git:
             mock_git.return_value = None
             sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
+            result = sp.publish(
+                pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
 
         version_file = site / GENERIC_SITE_PROFILE.versions_dir / "Demo" / "1.0B.md"
         assert version_file.exists()
@@ -237,7 +239,9 @@ class TestPublish:
         with patch("kproj.services.site_publisher._git_run") as mock_git:
             mock_git.return_value = None
             sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
+            result = sp.publish(
+                pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
 
         assert result.outcome == "published"
 
@@ -382,7 +386,9 @@ class TestPublish:
         with patch("kproj.services.site_publisher._git_run") as mock_git:
             mock_git.return_value = None
             sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
+            result = sp.publish(
+                pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
 
         assert result.outcome == "noop"
 
@@ -462,6 +468,59 @@ class TestPublish:
 
         assert commit_msgs
         assert commit_msgs[0].startswith("refresh:")
+
+    def test_commit_message_republish_for_regenerated_existing_version(
+        self, tmp_path: Path
+    ) -> None:
+        """Existing version with regenerated artifacts uses 'republish:' prefix.
+
+        Regression for the outcome/commit-message mismatch found in Phase G:
+        when the workflow escalates to a full publish (source changed → assets
+        stale) for a version that already exists on the site, the commit must
+        be labelled ``republish:`` — NOT ``refresh: (metadata updated)`` — so
+        the site publish log distinguishes an artifact regen from a
+        metadata-only rewrite. The bug: the prefix was chosen purely from
+        file existence and ignored the resolved ``outcome``.
+        """
+        site = tmp_path / "site"
+        site.mkdir()
+        pub = _pub()
+
+        # Pre-populate an existing, up-to-date version + pages file so the
+        # publisher sees neither project nor version as new.
+        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
+
+        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
+        content = f"---\n{fm}---\n{pub.body_md}\n"
+        _write_version_file(site, "Demo", "1.0B", content)
+        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
+
+        journal = _open_journal(site, dry_run=True)
+        commit_msgs: list[str] = []
+
+        def _fake_git(cmd: list[str], **kwargs: Any) -> None:
+            if cmd and cmd[0] == "commit":
+                for i, tok in enumerate(cmd):
+                    if tok == "-m" and i + 1 < len(cmd):
+                        commit_msgs.append(cmd[i + 1])
+
+        with patch("kproj.services.site_publisher._git_run", side_effect=_fake_git):
+            sp = SitePublisher(journal)
+            # force_outcome="publish" mirrors the workflow's stale-asset
+            # escalation for a version that already exists on the site.
+            sp.publish(
+                pub,
+                site,
+                no_push=True,
+                dry_run=False,
+                site_profile=GENERIC_SITE_PROFILE,
+                force_outcome="publish",
+            )
+
+        assert commit_msgs
+        assert commit_msgs[0].startswith("republish:"), (
+            f"expected republish: prefix for regenerated existing version; got {commit_msgs[0]!r}"
+        )
 
     def test_publish_stages_every_journaled_path(self, tmp_path: Path) -> None:
         """BLOCKER 2 regression: ``git add`` must cover ALL journal paths.
@@ -549,7 +608,9 @@ class TestPublish:
         with patch("kproj.services.site_publisher._git_run") as mock_git:
             mock_git.return_value = None
             sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
+            result = sp.publish(
+                pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
 
         assert any(f.field == "comment9_missing" for f in result.findings)
 
