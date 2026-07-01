@@ -86,7 +86,7 @@ During the post-round-2 architecture review, the user surfaced two cascading con
 - Amended PRD Story 6 to document v1's honest behavior: any SCH edit triggers a full publish; smart refresh deferred pending profile data.
 
 **Follow-up issues filed on `plocher/kproj`**:
-- **Profile hooks** — per-step wall-clock instrumentation wired to `-v` verbose mode (or its own mechanism; the trace-vs-findings design question is open). Produces the baseline data needed to make evidence-based optimization decisions.
-- **Smart refresh** — gated on profile data pointing at metadata-refresh as a real bottleneck. If the profile shows title-block-only edits aren't a hot path, this stays deferred.
+- **[kproj#17 — Profile hooks](https://github.com/plocher/kproj/issues/17)** — per-step wall-clock instrumentation for `PublishWorkflow.run()`. Includes the open trace-vs-findings design question (does timing data flow through the existing `Finding` channel or a new `ProfileEvent` model?). Produces the baseline data needed to make evidence-based optimization decisions.
+- **[kproj#18 — Smart refresh](https://github.com/plocher/kproj/issues/18)** — gated on kproj#17's profile data pointing at metadata-refresh as a real bottleneck. Design constraints locked from the M11 rip-out lessons (kproj-owned state, graceful degradation, real end-to-end Behave scenarios, `--force` escape hatch).
 
 **Lesson**: any v1 code that exists to make things "faster" or "cheaper" (versus "correct" or "safe") should have a measurement anchor before landing. Also: state kproj needs for its own correctness should live in storage kproj owns, not storage kproj writes to as a side effect.

@@ -330,8 +330,8 @@ class PublishWorkflow:
         # subsequent COMMENT9 edit could skip artifact regen.  That state
         # persistence made the site-repo YAML a public API surface and
         # was ripped out as premature optimization pending profile data.
-        # See docs/PRD.md § Story 6 v1 note + kproj#NN (profile hooks) +
-        # kproj#NN (smart refresh).  In v1, any SCH/PCB edit — including
+        # See docs/PRD.md § Story 6 v1 note + kproj#17 (profile hooks) +
+        # kproj#18 (smart refresh).  In v1, any SCH/PCB edit — including
         # a title-block-only edit — triggers a full publish.
         if preliminary_outcome != "publish" and _assets_are_stale(
             images=images_refs,
