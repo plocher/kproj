@@ -55,6 +55,7 @@ Compiled 2026-07-01 after the SiteProfile abstraction PR (#21) merged. Distills 
 - **CI on `plocher/kproj`: not configured.** Local test run is the gate. If merged PRs break something, it won't show up until the next local run.
 - **Homebrew installs used this cycle**: `hugo` (extended, 0.163.3), `uv`. Both re-installable via `brew install <name>`.
 - **Worktrees clean up manually.** After each wave PR merges, remove the merged branch's worktree (`git worktree remove ../kproj-wt-<name>`) and delete the local branch. Don't leave stale worktrees on disk.
+- **Commit messages: plain ASCII only.** zsh double-quoted strings do NOT expand `\u2014` / `\u2192` / other unicode escapes, so `git commit -m "...\u2014..."` stores the literal 6-character escape in the commit subject. Use ASCII hyphen `-` (not em-dash), `->` (not arrow), and plain punctuation everywhere in commit messages / gh CLI arguments. Reserve Unicode typography for markdown files where it renders correctly.
 ## User working style
 - **TDD.** Red-green-refactor. Behave scenarios for user-facing stories; unit tests for internal abstractions. All tests pass before commit.
 - **Feature branches + PRs.** Never work directly on `main`. Semantic-commit messages. `Closes #N` trailers required in PR descriptions for GitHub to auto-close.
