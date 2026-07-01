@@ -196,6 +196,56 @@ def test_violation_without_items_emits_single_finding(tmp_path: Path) -> None:
     assert drc_findings[0].severity is Severity.ERROR
 
 
+def test_erc_reads_kicad10_per_sheet_shape(tmp_path: Path) -> None:
+    """KiCad 10 ERC nests findings under ``sheets[].violations``.
+
+    Wave-3 M12 fix-up: the M12 contract test caught a real drift —
+    KiCad 10 ERC no longer emits a top-level ``violations`` array but
+    instead a ``sheets`` array whose elements each carry a
+    ``violations`` list.  Pre-fix DesignAnalyzer silently returned
+    zero findings for KiCad 10 ERC.  This unit test locks the new
+    per-sheet parser branch with a canned KiCad-10-shape payload.
+    """
+    payload = {
+        "$schema": "...",
+        "kicad_version": "10.0.1",
+        "sheets": [
+            {
+                "path": "/",
+                "uuid_path": "/root-uuid",
+                "violations": [
+                    {
+                        "severity": "warning",
+                        "type": "unconnected_pin",
+                        "description": "U3.5 is floating",
+                        "items": [{"description": "U3.5", "pos": "60,70"}],
+                    }
+                ],
+            },
+            {
+                "path": "/subsheet",
+                "uuid_path": "/sub-uuid",
+                "violations": [
+                    {
+                        "severity": "error",
+                        "type": "pin_conflict",
+                        "description": "conflicting drivers",
+                    }
+                ],
+            },
+        ],
+    }
+    runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    result = analyzer.analyze(_resolved(tmp_path))
+    erc_findings = [f for f in result.findings if f.source == "erc"]
+    fields = {f.field for f in erc_findings}
+    assert "unconnected_pin" in fields, (
+        f"M12: KiCad 10 ERC per-sheet violation not surfaced; got fields={fields}"
+    )
+    assert "pin_conflict" in fields, f"M12: nested per-sheet violation missed; got fields={fields}"
+
+
 def test_erc_reads_unconnected_items_array(tmp_path: Path) -> None:
     """ERC's ``unconnected_items`` array surfaces as findings."""
     payload = {

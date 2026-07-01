@@ -176,22 +176,47 @@ class DesignAnalyzer:
 def _findings_from_payload(payload: Any, *, origin: str, project: str) -> Sequence[Finding]:
     """Walk a parsed DRC/ERC JSON payload and yield kproj :class:`Finding`s.
 
-    The function is intentionally tolerant of slight shape variations
-    between kicad-cli minor versions: any of the keys in
-    :data:`_VIOLATION_ARRAYS` may carry a violations list, and each
-    violation may carry an ``items`` list.  When ``items`` is empty or
-    absent, a single :class:`Finding` is emitted at the violation
-    granularity.
+    The function is tolerant of shape variations between kicad-cli
+    minor versions.  Two shapes are supported:
+
+    1. **Top-level arrays** (KiCad 9.x DRC + 9.x ERC; KiCad 10.x DRC).
+       Any of the keys in :data:`_VIOLATION_ARRAYS` may carry a
+       violations list at the payload root.
+    2. **Per-sheet arrays** (KiCad 10.x ERC).  The payload root has a
+       ``sheets`` array; each sheet is an object containing a
+       ``violations`` list (and optionally ``unconnected_items`` /
+       ``schematic_parity`` for forward-compat).  Wave-3 M12 contract
+       test caught this shape drift; pre-fix kproj silently produced
+       zero findings from KiCad 10 ERC output.
+
+    Each violation may carry an ``items`` list.  When ``items`` is
+    empty or absent, a single :class:`Finding` is emitted at the
+    violation granularity.
     """
     if not isinstance(payload, dict):
         return ()
     findings: list[Finding] = []
+    # Shape 1: top-level violation arrays.
     for key in _VIOLATION_ARRAYS:
         violations = payload.get(key)
         if not isinstance(violations, list):
             continue
         for violation in violations:
             findings.extend(_findings_from_violation(violation, origin=origin, project=project))
+    # Shape 2: KiCad 10 ERC per-sheet nesting.
+    sheets = payload.get("sheets")
+    if isinstance(sheets, list):
+        for sheet in sheets:
+            if not isinstance(sheet, dict):
+                continue
+            for key in _VIOLATION_ARRAYS:
+                sheet_violations = sheet.get(key)
+                if not isinstance(sheet_violations, list):
+                    continue
+                for violation in sheet_violations:
+                    findings.extend(
+                        _findings_from_violation(violation, origin=origin, project=project)
+                    )
     return findings
 
 
