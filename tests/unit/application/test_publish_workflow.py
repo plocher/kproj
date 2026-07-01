@@ -263,6 +263,152 @@ def test_workflow_threads_findings_into_result(
     assert any(f.field == "comment9_missing" for f in result.findings)
 
 
+def test_drc_erc_mechanical_failure_returns_failed_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4 round-2 regression: DesignAnalysisError → failed/exit 2.
+
+    When ``kicad-cli pcb drc`` (or ``sch erc``) fails mechanically
+    (nonzero return, no JSON emitted), :class:`DesignAnalyzer` raises
+    :class:`DesignAnalysisError`.  The workflow catches it *before*
+    opening the change journal and returns
+    ``PublishResult(outcome="failed", exit_code=2)`` with no site
+    writes — the mechanical-vs-findings split locked in ADR 0004.
+    """
+    from kproj.services.design_analyzer import DesignAnalysisError
+
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    class _CrashingAnalyzer:
+        """Analyzer that always crashes mechanically."""
+
+        def __init__(self, _cli: Path) -> None: ...
+
+        def analyze(self, _resolved: object) -> object:
+            raise DesignAnalysisError(
+                "kicad-cli pcb drc failed without producing JSON (rc=2): "
+                "kicad-cli: segfault probing board",
+                origin="drc",
+                returncode=2,
+            )
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_CrashingAnalyzer,
+    )
+    result = workflow.run(_make_request(str(proj_dir), fake_cli))
+    assert result.outcome == "failed", (
+        f"M4: DesignAnalysisError must convert to outcome=failed; got {result.outcome!r}"
+    )
+    assert result.exit_code == 2
+    assert "drc" in result.message.lower(), (
+        f"expected drc context in failure message; got {result.message!r}"
+    )
+
+
+def test_drc_erc_mechanical_failure_does_not_open_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4 round-2: mechanical failure must occur BEFORE any site writes.
+
+    The DesignAnalyzer runs at step 3 (before the change journal is
+    opened at step 7).  A mechanical failure raised there must never
+    reach the artifact generator or site publisher, guaranteeing zero
+    partial writes on disk.
+    """
+    from kproj.services.design_analyzer import DesignAnalysisError
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    class _CrashingAnalyzer:
+        def __init__(self, _cli: Path) -> None: ...
+
+        def analyze(self, _resolved: object) -> object:
+            raise DesignAnalysisError(
+                "kicad-cli sch erc failed without producing JSON (rc=1): schematic unreadable",
+                origin="erc",
+                returncode=1,
+            )
+
+    called = {"artifact_gen": False}
+
+    def _generator(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        _site_repo: Path,
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        called["artifact_gen"] = True
+        return (), (), ()
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_CrashingAnalyzer,
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        artifact_generator=_generator,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+    with patch("kproj.services.site_publisher._git_run") as mock_git:
+        result = workflow.run(request)
+
+    assert result.outcome == "failed"
+    assert result.exit_code == 2
+    # No site writes at all: no artifact generator, no git operations.
+    assert not called["artifact_gen"], (
+        "M4: artifact generator must not run when DesignAnalyzer raises mechanically"
+    )
+    assert not mock_git.call_args_list, (
+        "M4: no git operations expected on mechanical failure; got "
+        f"{[c.args for c in mock_git.call_args_list]!r}"
+    )
+    # No partial version/page markdown on disk.
+    versions_dir = site / "_versions"
+    pages_dir = site / "pages"
+    assert not versions_dir.exists() or not list(versions_dir.rglob("*.md"))
+    assert not pages_dir.exists() or not list(pages_dir.rglob("*.md"))
+
+
 def test_workflow_uses_injected_design_analyzer_factory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -713,6 +859,13 @@ def test_stale_pcb_forces_publish_outcome(tmp_path: Path, monkeypatch: pytest.Mo
     on the site forever.  The workflow now compares asset mtimes
     against their source mtimes and escalates to ``publish`` when
     any asset is stale.
+
+    Wave-3 M11 round-2 tightens the escalation: pure mtime bumps
+    without a content change no longer force a publish (that would
+    conflict with PRD Story 6's cheap metadata refresh).  This test
+    now performs a real content edit outside the title-block so the
+    title-block-stripped hash changes and the M1 escalation still
+    fires.
     """
     import os as _os
     import time as _time
@@ -762,10 +915,19 @@ def test_stale_pcb_forces_publish_outcome(tmp_path: Path, monkeypatch: pytest.Mo
         f"setup: idempotent re-run should be noop; got {noop_run.outcome!r}"
     )
 
-    # Step 3: bump the PCB mtime to simulate a board edit.  Existing
-    # on-disk assets are now older than the source PCB.
+    # Step 3: perform a real PCB content edit outside the title-block
+    # subtree.  With M11 round-2, a pure mtime bump would leave the
+    # title-block-stripped hash unchanged and the workflow would
+    # correctly refuse to escalate (metadata-only edits stay refresh
+    # per Story 6).  A genuine content edit changes both the mtime
+    # AND the hash — the intended M1 mechanical-stale-asset trigger.
+    pcb_path = proj_dir / "demo.kicad_pcb"
+    pcb_path.write_text(
+        pcb_path.read_text(encoding="utf-8").rstrip("\n)") + '\n\t(net 0 "")\n)\n',
+        encoding="utf-8",
+    )
     future = _time.time() + 120
-    _os.utime(proj_dir / "demo.kicad_pcb", (future, future))
+    _os.utime(pcb_path, (future, future))
 
     with patch("kproj.services.site_publisher._git_run"):
         stale_run = workflow.run(request)

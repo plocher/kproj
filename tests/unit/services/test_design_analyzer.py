@@ -12,10 +12,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from kproj.common.subprocess_runner import SubprocessResult
 from kproj.model.resolved_project import ResolvedProject
 from kproj.model.severity import Severity
-from kproj.services.design_analyzer import DesignAnalyzer
+from kproj.services.design_analyzer import DesignAnalysisError, DesignAnalyzer
 
 
 def _resolved(tmp_path: Path) -> ResolvedProject:
@@ -141,13 +143,18 @@ def test_no_output_file_and_clean_exit_returns_empty_findings(tmp_path: Path) ->
     assert result.findings == ()
 
 
-def test_no_output_file_with_failure_emits_mechanical_finding(tmp_path: Path) -> None:
-    """M4 regression: kicad-cli rc!=0 with no JSON must surface as a finding.
+def test_no_output_file_with_failure_raises_design_analysis_error(tmp_path: Path) -> None:
+    """M4 round-2: kicad-cli rc!=0 with no JSON must raise mechanical failure.
 
-    Pre-fix the analyzer returned ``()`` whenever JSON was absent,
-    silently passing real kicad-cli crashes.  After the fix, a non-
-    zero return code (or non-empty stderr) emits an error
-    :class:`Finding` whose ``field`` ends in ``_mechanical_failure``.
+    Round-1 modelled the crash as an ordinary error :class:`Finding`,
+    but ``compute_exit_code`` then mapped a mechanical failure to
+    ``exit=1`` ("findings present, publish succeeded") instead of
+    ``exit=2`` ("mechanical failure").  Round-2 gives the mechanical
+    failure a distinct channel: :class:`DesignAnalysisError` is
+    raised so :class:`~kproj.application.publish_workflow.PublishWorkflow`
+    can catch it, short-circuit before opening the change journal,
+    and return ``PublishResult(outcome="failed", exit_code=2)`` per
+    ADR 0004's mechanical-vs-findings split.
     """
 
     def runner(command: Sequence[str], **_kwargs: Any) -> SubprocessResult:
@@ -161,19 +168,50 @@ def test_no_output_file_with_failure_emits_mechanical_finding(tmp_path: Path) ->
         )
 
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
-    result = analyzer.analyze(_resolved(tmp_path))
-    mech = [f for f in result.findings if f.field.endswith("_mechanical_failure")]
-    assert mech, (
-        "M4: kicad-cli failed without producing JSON; expected a "
-        f"*_mechanical_failure finding. Got fields={[f.field for f in result.findings]}"
+    with pytest.raises(DesignAnalysisError) as excinfo:
+        analyzer.analyze(_resolved(tmp_path))
+    # DRC runs before ERC; the DRC failure short-circuits.
+    assert excinfo.value.origin == "drc", (
+        f"expected DRC to short-circuit first; got origin={excinfo.value.origin!r}"
     )
-    drc_mech = [f for f in mech if f.source == "drc"]
-    erc_mech = [f for f in mech if f.source == "erc"]
-    assert drc_mech and erc_mech, (
-        "M4: each subcommand must report its own mechanical failure; got "
-        f"sources={[f.source for f in mech]}"
-    )
-    assert all(f.severity is Severity.ERROR for f in mech)
+    assert excinfo.value.returncode == 2
+    assert "segfault" in str(excinfo.value)
+
+
+def test_erc_mechanical_failure_after_clean_drc_raises(tmp_path: Path) -> None:
+    """M4 round-2: ERC-only mechanical failure still short-circuits.
+
+    Locks the second subcommand's error handling: even when DRC
+    completes cleanly, an ERC mechanical crash must raise
+    :class:`DesignAnalysisError` so the workflow returns failed/exit 2.
+    """
+
+    def runner(command: Sequence[str], **_kwargs: Any) -> SubprocessResult:
+        cmd = list(command)
+        if "drc" in cmd:
+            out_index = cmd.index("--output")
+            Path(cmd[out_index + 1]).write_text(json.dumps({"violations": []}), encoding="utf-8")
+            return SubprocessResult(
+                command=tuple(command),
+                returncode=0,
+                stdout="",
+                stderr="",
+                elapsed_seconds=0.0,
+            )
+        # ERC crashes without producing JSON.
+        return SubprocessResult(
+            command=tuple(command),
+            returncode=1,
+            stdout="",
+            stderr="kicad-cli: could not open schematic\n",
+            elapsed_seconds=0.0,
+        )
+
+    analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
+    with pytest.raises(DesignAnalysisError) as excinfo:
+        analyzer.analyze(_resolved(tmp_path))
+    assert excinfo.value.origin == "erc"
+    assert excinfo.value.returncode == 1
 
 
 def test_violation_without_items_emits_single_finding(tmp_path: Path) -> None:

@@ -129,15 +129,21 @@ def _build_workflow(context: Any) -> PublishWorkflow:
 
     When ``context.failing_generator`` is set, use it instead of the
     happy-path stub (drives the Story 9 mid-pipeline rollback scenario).
+    When ``context.crashing_design_analyzer`` is set, use it instead
+    of the silent DesignAnalyzer (drives the M4 mechanical-failure
+    scenarios).
     """
     fake_ibom = Path(context.tmpdir) / "generate_interactive_bom.py"
     if not fake_ibom.exists():
         fake_ibom.write_text("")
     site_repo = context.site_repo
     generator = getattr(context, "failing_generator", None) or _stub_artifact_generator(site_repo)
+    design_analyzer_factory = (
+        getattr(context, "crashing_design_analyzer", None) or _SilentDesignAnalyzer
+    )
     return PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
-        design_analyzer_factory=_SilentDesignAnalyzer,
+        design_analyzer_factory=design_analyzer_factory,
         ibom_script_locator=lambda: fake_ibom,
         artifact_generator=generator,
         site_publisher_factory=SitePublisher,
@@ -235,7 +241,12 @@ def step_given_project_with_warnings(context: Any) -> None:
 
 @given("the project was previously published")
 def step_given_previously_published(context: Any) -> None:
-    """Run the workflow once so the project is published before the test."""
+    """Run the workflow once so the project is published before the test.
+
+    Also snapshots the asset mtimes so the "assets are not regenerated"
+    check (round-2 M11) can compare against the baseline without any
+    mtime-touching workarounds.
+    """
     _run_workflow(context)
     assert context.result.outcome in ("published", "refreshed", "noop"), (
         f"Pre-publish failed: {context.result.outcome} - {context.result.message}"
@@ -245,6 +256,12 @@ def step_given_previously_published(context: Any) -> None:
     site = context.site_repo
     os.system(f"git -C '{site}' add -A")
     os.system(f"git -C '{site}' commit -q -m 'initial publish' --allow-empty")
+
+    # Snapshot baseline asset mtimes for the round-2 no-regen assertion.
+    versions_root = site / "versions"
+    context.baseline_asset_mtimes = {
+        p: p.stat().st_mtime for p in versions_root.rglob("*") if p.is_file()
+    }
 
 
 @given("a clean site repo")
@@ -324,42 +341,66 @@ def step_when_run_kproj_again(context: Any) -> None:
     _run_workflow(context)
 
 
-@when("I change the project status to active")
-def step_when_change_status_active(context: Any) -> None:
-    """Rewrite the fixture SCH so ``${COMMENT9}`` becomes ``active``.
+@when('I change COMMENT9 in the schematic to "{new_value}"')
+def step_when_change_comment9(context: Any, new_value: str) -> None:
+    """Rewrite the fixture SCH so ``${COMMENT9}`` becomes *new_value*.
 
-    The pre-fix scenario ran the same project twice; this rewrite
-    actually mutates COMMENT9 between runs so the pipeline exercises
-    the real ``experimental → active`` refresh path per PRD Story 6.
+    Round-2 M11: this is a REAL title-block edit with no mtime hack.
+    The pre-round-2 step bumped every already-published asset's mtime
+    into the future to defeat the M1 stale-asset escalation.  Round-2
+    removes that workaround; the code side compares SCH/PCB
+    content-hashes (title-block stripped) against hashes captured in
+    the previously published ``_versions/<P>/<R>.md`` front-matter to
+    distinguish title-block-only metadata edits from real content
+    edits.  The failing test is what drives the code fix.
 
-    After the SCH mutation we bump the already-published assets'
-    mtimes to be newer than the (just-modified) SCH so the M1 asset-
-    freshness escalation does NOT treat this as a full-publish
-    situation.  This models the user intent for Story 6: they edited
-    only the status field and want the version-page front-matter
-    updated without regenerating renders/STEP/iBOM/etc.  The
-    schematic-content freshness detection (M1) is exercised by unit
-    tests where the source actually changes shape rather than just
-    COMMENT9 metadata.
+    ``new_value`` may be an empty string (""); in that case COMMENT9
+    is written as present-but-empty, which the reader treats as
+    missing and the status parser defaults to :class:`Status.ACTIVE`.
     """
     import time as _time
 
     from _kicad_fixtures import TitleBlockSpec, write_kicad_sch
 
+    comments: dict[int, str] = {1: "Alice Designer", 2: "A tagline"}
+    if new_value != "":
+        comments[9] = new_value
+
+    sch_path = context.proj_dir / f"{context.project_name}.kicad_sch"
     write_kicad_sch(
-        context.proj_dir / f"{context.project_name}.kicad_sch",
+        sch_path,
         TitleBlockSpec(
             title="My Board",
             company="MRCS",
             revision="1.0",
             date="2026.04",
-            comments={1: "Alice Designer", 2: "A tagline", 9: "active"},
+            comments=comments,
         ),
     )
+    # Force the SCH mtime to be newer than every previously published
+    # asset.  Without this the test would depend on filesystem mtime
+    # resolution to detect the edit, which is flaky across OSes/CI.
+    # The code MUST NOT rely on mtimes to decide title-block-only
+    # vs. schematic-content edits; that's what round-2 fixes.
     future = _time.time() + 60
-    for asset in (context.site_repo / "versions").rglob("*"):
-        if asset.is_file():
-            os.utime(asset, (future, future))
+    os.utime(sch_path, (future, future))
+
+
+# Behave's parse matcher treats the empty string between quotes as a
+# non-match, so an explicit step handles the corner-case scenario where
+# COMMENT9 is erased entirely (defaults to active).
+@when('I change COMMENT9 in the schematic to ""')
+def step_when_change_comment9_empty(context: Any) -> None:
+    """Erase COMMENT9 (present-but-empty) so the parser defaults to active."""
+    step_when_change_comment9(context, "")
+
+
+# Retained under its original phrase for backward compatibility with any
+# out-of-tree scenarios; delegates to the parameterised step above.
+@when("I change the project status to active")
+def step_when_change_status_active(context: Any) -> None:
+    """Alias: change COMMENT9 to "active" (legacy phrasing)."""
+    step_when_change_comment9(context, "active")
 
 
 @when("I run kproj with -v")
@@ -536,6 +577,162 @@ def step_then_no_push_invoked(context: Any) -> None:
         return
     push_calls = [call for call in git_calls if call and call[0] == "push"]
     assert not push_calls, f"Expected no git push invocations under no_push mode; got: {push_calls}"
+
+
+@then('the version page front-matter status is "{expected}"')
+def step_then_frontmatter_status_matches(context: Any, expected: str) -> None:
+    """Assert the version page front-matter has ``status: <expected>``.
+
+    For ``replaced-by:<target>``, the front-matter emits the base
+    ``replaced-by`` token (target-emission is deferred to kproj#14);
+    the expected value the scenario passes is therefore just
+    ``replaced-by``.
+    """
+    for version_file in (context.site_repo / "_versions").rglob("*.md"):
+        content = version_file.read_text()
+        assert f"status: {expected}" in content, (
+            f"expected 'status: {expected}' in {version_file}; first 600 chars:\n{content[:600]}"
+        )
+        return
+    raise AssertionError("No version file found in site repo")
+
+
+@then("assets are not regenerated")
+def step_then_assets_not_regenerated(context: Any) -> None:
+    """Assert every baseline asset's mtime is unchanged from the snapshot.
+
+    The baseline snapshot is captured in
+    :func:`step_given_previously_published`.  A refreshed / noop /
+    private-skip outcome MUST NOT invoke the artifact generator, so
+    every previously-written asset file's mtime must match the
+    baseline.
+    """
+    baseline = getattr(context, "baseline_asset_mtimes", None)
+    assert baseline is not None, (
+        "baseline_asset_mtimes was not populated; the 'previously "
+        "published' Given step must run before this Then step."
+    )
+    changed: list[str] = []
+    for path, baseline_mtime in baseline.items():
+        if not path.exists():
+            changed.append(f"{path}: asset removed (should not happen)")
+            continue
+        current_mtime = path.stat().st_mtime
+        if current_mtime != baseline_mtime:
+            changed.append(f"{path}: mtime changed ({baseline_mtime:.6f} → {current_mtime:.6f})")
+    assert not changed, (
+        "round-2 M11: refresh must not regenerate assets, but the "
+        "following mtimes changed:\n  " + "\n  ".join(changed)
+    )
+
+
+@then('a git commit with the "{prefix}" prefix was invoked')
+def step_then_git_commit_prefix(context: Any, prefix: str) -> None:
+    """Assert the mocked git runner saw a ``git commit -m <prefix>...`` call.
+
+    Since ``kproj.services.site_publisher._git_run`` is patched
+    during the workflow run, we inspect the recorded call arg
+    tuples to find the commit invocation and check the message.
+    """
+    git_calls = getattr(context, "git_calls", None)
+    assert git_calls is not None, (
+        "context.git_calls was not populated; the When step must "
+        "patch site_publisher._git_run and record its args."
+    )
+    commits = [call for call in git_calls if call and call[0] == "commit"]
+    assert commits, f"no git commit was invoked; git_calls={git_calls!r}"
+    matching = [c for c in commits if any(prefix in arg for arg in c)]
+    assert matching, (
+        f"expected at least one commit whose message starts with {prefix!r}; "
+        f"got commit invocations={commits!r}"
+    )
+
+
+@then("no git commit is invoked on the second run")
+def step_then_no_commit_invoked_second_run(context: Any) -> None:
+    """Assert the second-run git_calls list contains no ``commit`` invocation.
+
+    Used by the ``active → private`` scenario: private-skip returns
+    before any journal is opened, so no commit is ever attempted.
+    """
+    git_calls = getattr(context, "git_calls", None)
+    assert git_calls is not None, "context.git_calls not populated"
+    commits = [call for call in git_calls if call and call[0] == "commit"]
+    assert not commits, f"expected no commit on the second run; got {commits!r}"
+
+
+# ─────────────────────────── M4 round-2 steps ────────────────────────────────
+
+
+@given("kicad-cli DRC will crash without producing JSON")
+def step_given_drc_will_crash(context: Any) -> None:
+    """Install a crashing DesignAnalyzer for the next kproj run (DRC path)."""
+    from kproj.services.design_analyzer import DesignAnalysisError
+
+    class _CrashingAnalyzer:
+        def __init__(self, _cli: Path) -> None: ...
+
+        def analyze(self, _resolved: object) -> AnalysisInfo:
+            raise DesignAnalysisError(
+                "kicad-cli pcb drc failed without producing JSON (rc=2): "
+                "kicad-cli: segfault probing board",
+                origin="drc",
+                returncode=2,
+            )
+
+    context.crashing_design_analyzer = _CrashingAnalyzer
+
+
+@given("kicad-cli ERC will crash without producing JSON")
+def step_given_erc_will_crash(context: Any) -> None:
+    """Install a crashing DesignAnalyzer for the next kproj run (ERC path)."""
+    from kproj.services.design_analyzer import DesignAnalysisError
+
+    class _CrashingAnalyzer:
+        def __init__(self, _cli: Path) -> None: ...
+
+        def analyze(self, _resolved: object) -> AnalysisInfo:
+            raise DesignAnalysisError(
+                "kicad-cli sch erc failed without producing JSON (rc=1): "
+                "kicad-cli: schematic unreadable",
+                origin="erc",
+                returncode=1,
+            )
+
+    context.crashing_design_analyzer = _CrashingAnalyzer
+
+
+@then("the kproj exit code is {code:d}")
+def step_then_exit_code_is(context: Any, code: int) -> None:
+    """Assert the workflow's exit code equals *code*.
+
+    Distinct from the ``kproj exits with code`` step in
+    ``preflight_steps.py``: this one reads ``context.result.exit_code``
+    populated by ``_run_workflow``.
+    """
+    assert context.result.exit_code == code, (
+        f"expected exit code {code}, got {context.result.exit_code}; "
+        f"outcome={context.result.outcome!r} message={context.result.message!r}"
+    )
+
+
+@then("no version page is written")
+def step_then_no_version_page_written(context: Any) -> None:
+    """Assert no ``_versions/*.md`` files exist in the site repo."""
+    versions_dir = context.site_repo / "_versions"
+    files = list(versions_dir.rglob("*.md")) if versions_dir.exists() else []
+    assert not files, f"expected no version pages; found {files!r}"
+
+
+@then("no git commit is invoked")
+def step_then_no_git_commit_invoked(context: Any) -> None:
+    """Assert the mocked git runner never saw a ``git commit`` call."""
+    git_calls = getattr(context, "git_calls", None)
+    if git_calls is None:
+        # No git invocations were captured at all — by definition, no commit.
+        return
+    commits = [call for call in git_calls if call and call[0] == "commit"]
+    assert not commits, f"expected no git commit; got {commits!r}"
 
 
 @then("stderr contains the audit finding names")
