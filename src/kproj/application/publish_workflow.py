@@ -49,6 +49,7 @@ from ..common.subprocess_runner import run as subprocess_run
 from ..config import KprojConfig
 from ..formatters.markdown_table_formatter import MarkdownTableFormatter
 from ..model.analysis_info import AnalysisInfo
+from ..model.finding import Finding
 from ..model.project_info import ProjectInfo, Status
 from ..model.publication import AssetRef, Publication
 from ..model.publish_request import PublishRequest
@@ -95,7 +96,7 @@ without a real KiCad install.
 
 ArtifactGeneratorCallable = Callable[
     ["ResolvedProject", "ProjectInfo", Path, Path, Path, "ChangeJournal"],
-    tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]],
+    tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple["Finding", ...]],
 ]
 """Callable that generates all release artifacts for a project.
 
@@ -108,7 +109,7 @@ Signature::
         ibom_script: Path,
         site_repo: Path,
         journal: ChangeJournal,
-    ) -> tuple[images_refs, artifact_refs]
+    ) -> tuple[images_refs, artifact_refs, diagnostics]
 
 ``project_info`` carries the canonical ``board_rev`` (PCB-derived per
 ``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
@@ -116,6 +117,12 @@ use for the on-disk asset directory layout and AssetRef paths.  The
 project basename (``<P>``) and board revision (``<R>``) together form
 the ``<P>-<R>`` token in every asset filename per ``docs/DESIGN.md``
 § *Release asset set*.
+
+``diagnostics`` is the third-tuple element added in wave-3 (M6
+fix-up): every :class:`ExportResult.diagnostics` from the invoked
+producers is accumulated here so the workflow can merge them into
+the final analysis (front-matter counts, Markdown body, stderr,
+exit code).
 
 The default implementation calls all real exporters + packagers.
 Tests inject a stub that creates placeholder files and returns the
@@ -320,19 +327,44 @@ class PublishWorkflow:
         try:
             with ChangeJournal(site_repo, dry_run=request.dry_run) as journal:
                 # Step 8: Generate artifacts (only for "publish"; skip on "refresh")
+                producer_diagnostics: tuple[Finding, ...] = ()
                 if preliminary_outcome == "publish" and not request.dry_run:
-                    actual_images, actual_artifacts = self._artifact_generator(
-                        resolved, project_info, kicad_cli, ibom_script, site_repo, journal
+                    actual_images, actual_artifacts, producer_diagnostics = (
+                        self._artifact_generator(
+                            resolved,
+                            project_info,
+                            kicad_cli,
+                            ibom_script,
+                            site_repo,
+                            journal,
+                        )
                     )
                 else:
                     actual_images, actual_artifacts = images_refs, artifact_refs
+
+                # M6 fix-up: merge producer-stage diagnostics into the
+                # final analysis + rebuild body markdown so front-matter
+                # counts, stderr, and Markdown tables all reflect the
+                # artifact-generation warnings (production_incomplete,
+                # production_stale, fab_gerber_ambiguous, etc.) that were
+                # previously discarded.
+                final_analysis = (
+                    AnalysisInfo(findings=analysis.findings + producer_diagnostics)
+                    if producer_diagnostics
+                    else analysis
+                )
+                final_body_md = (
+                    MarkdownTableFormatter().render(final_analysis.findings)
+                    if producer_diagnostics
+                    else body_md
+                )
 
                 # Step 9: Build final publication
                 final_pub = PublishWorkflow.build_publication(
                     resolved,
                     project_info,
-                    analysis,
-                    body_md=body_md,
+                    final_analysis,
+                    body_md=final_body_md,
                     readme_md=readme_md,
                     images=actual_images,
                     artifacts=actual_artifacts,
@@ -615,7 +647,7 @@ def _default_artifact_generator(
     ibom_script: Path,
     site_repo: Path,
     journal: ChangeJournal,
-) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
     """Generate all release artifacts using real kicad-cli + iBOM.
 
     This is the production artifact-generator injected into
@@ -645,8 +677,10 @@ def _default_artifact_generator(
         journal: Open :class:`ChangeJournal` for rollback tracking.
 
     Returns:
-        A 2-tuple ``(images, artifacts)`` of :class:`AssetRef` tuples
-        for the artifacts actually produced.
+        A 3-tuple ``(images, artifacts, diagnostics)`` where
+        ``diagnostics`` is the accumulated union of
+        :attr:`ExportResult.diagnostics` from every producer that ran
+        (wave-3 M6 fix-up).
     """
     pcb_exporter = PcbExporter(kicad_cli)
     sch_exporter = SchematicExporter(kicad_cli)
@@ -663,23 +697,39 @@ def _default_artifact_generator(
 
     base_site = f"/versions/{P}/{R}"
 
+    diagnostics: list[Finding] = []
+
     # PCB renders
     top_path = asset_dir / f"{PR}.top.png"
-    pcb_exporter.export_render(resolved.pcb_file, "top", top_path, journal=journal)
+    diagnostics.extend(
+        pcb_exporter.export_render(resolved.pcb_file, "top", top_path, journal=journal).diagnostics
+    )
     bottom_path = asset_dir / f"{PR}.bottom.png"
-    pcb_exporter.export_render(resolved.pcb_file, "bottom", bottom_path, journal=journal)
+    diagnostics.extend(
+        pcb_exporter.export_render(
+            resolved.pcb_file, "bottom", bottom_path, journal=journal
+        ).diagnostics
+    )
     step_path = asset_dir / f"{PR}.step"
-    pcb_exporter.export_step(resolved.pcb_file, step_path, journal=journal)
+    diagnostics.extend(
+        pcb_exporter.export_step(resolved.pcb_file, step_path, journal=journal).diagnostics
+    )
 
     # Schematic exports
     svg_path = asset_dir / f"{PR}.sch.svg"
-    sch_exporter.export_svg(resolved.root_schematic, svg_path, journal=journal)
+    diagnostics.extend(
+        sch_exporter.export_svg(resolved.root_schematic, svg_path, journal=journal).diagnostics
+    )
     pdf_path = asset_dir / f"{PR}.sch.pdf"
-    sch_exporter.export_pdf(resolved.root_schematic, pdf_path, journal=journal)
+    diagnostics.extend(
+        sch_exporter.export_pdf(resolved.root_schematic, pdf_path, journal=journal).diagnostics
+    )
 
     # iBOM (kproj#10: may fail; ChangeJournal rolls back on exception)
     ibom_path = asset_dir / f"{PR}.ibom.html"
-    ibom_gen.generate(resolved.pcb_file, ibom_path, f"{PR}.ibom", journal=journal)
+    diagnostics.extend(
+        ibom_gen.generate(resolved.pcb_file, ibom_path, f"{PR}.ibom", journal=journal).diagnostics
+    )
 
     # Fab pack (optional — skipped when production/ is missing)
     prod_dir = resolved.project_dir / "production"
@@ -691,10 +741,15 @@ def _default_artifact_generator(
         pcb_path=resolved.pcb_file,
         journal=journal,
     )
+    diagnostics.extend(fab_result.diagnostics)
 
     # Source archive
     source_path = asset_dir / f"{PR}.source.zip"
-    source_packager.package(resolved.project_dir, source_path, title=P, rev=R, journal=journal)
+    diagnostics.extend(
+        source_packager.package(
+            resolved.project_dir, source_path, title=P, rev=R, journal=journal
+        ).diagnostics
+    )
 
     images: tuple[AssetRef, ...] = (
         AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),
@@ -725,4 +780,4 @@ def _default_artifact_generator(
             path=f"{base_site}/{PR}.source.zip", tag="source-archive", post="KiCad source archive"
         )
     )
-    return images, tuple(artifact_list)
+    return images, tuple(artifact_list), tuple(diagnostics)

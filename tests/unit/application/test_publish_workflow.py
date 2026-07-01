@@ -336,7 +336,7 @@ def _stub_artifact_generator(
         ibom_script: Path,
         _site_repo: Path,
         journal: ChangeJournal,
-    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
 
         # Use the canonical project + board_rev from project_info per the
@@ -383,7 +383,7 @@ def _stub_artifact_generator(
                 post="KiCad source archive",
             ),
         )
-        return images, artifacts
+        return images, artifacts, ()
 
     return _gen
 
@@ -600,7 +600,7 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         ibom_script: Path,
         _site_repo: Path,
         journal: ChangeJournal,
-    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         captured["project"] = getattr(project_info, "project", None)
         captured["board_rev"] = getattr(project_info, "board_rev", None)
         # Emit asset refs in the same shape the workflow's preliminary
@@ -608,7 +608,7 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         # consistent (the test does not need real files on disk —
         # detect_outcome sees the version file as absent so returns
         # "publish" before checking assets).
-        return (), ()
+        return (), (), ()
 
     workflow = PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=tmp_path),
@@ -671,7 +671,7 @@ def test_schematic_export_error_converts_to_failed_outcome(
         ibom_script: Path,
         _site_repo: Path,
         journal: ChangeJournal,
-    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...]]:
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         # Simulate the schematic-export shape-mismatch path: register
         # one output then raise.  The workflow must convert this into
         # outcome=failed/exit 2 rather than letting it propagate.
@@ -772,4 +772,86 @@ def test_stale_pcb_forces_publish_outcome(tmp_path: Path, monkeypatch: pytest.Mo
 
     assert stale_run.outcome == "published", (
         f"M1: stale assets vs PCB source must escalate to publish; got {stale_run.outcome!r}"
+    )
+
+
+def test_artifact_generator_diagnostics_flow_into_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M6 regression: producer diagnostics must reach PublishResult.findings.
+
+    Pre-fix ``_default_artifact_generator`` inspected only
+    ``fab_result.skipped`` and discarded ``fab_result.diagnostics``;
+    the final ``Publication`` used the pre-artifact ``analysis``
+    (built before generation), so artifact-stage warnings never
+    reached stderr, the Markdown tables, front-matter counts, or the
+    exit-code calculation.  After the fix the artifact-generator
+    callable returns ``(images, artifacts, diagnostics)``, the
+    workflow merges the diagnostics into the analysis, and rebuilds
+    the body markdown before final publication.
+    """
+    from kproj.model.finding import Finding
+    from kproj.model.severity import Severity
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Demo",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Demo",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+
+    producer_warning = Finding(
+        severity=Severity.WARNING,
+        field="production_stale",
+        value=str(proj_dir / "production"),
+        reason="production/ outputs are older than the PCB",
+        project="demo",
+        source="audit",
+    )
+
+    def _gen_with_diagnostics(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        _site_repo: Path,
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
+        # Return no asset refs; just surface a producer-stage diagnostic.
+        return (), (), (producer_warning,)
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        artifact_generator=_gen_with_diagnostics,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+
+    with patch("kproj.services.site_publisher._git_run"):
+        result = workflow.run(request)
+
+    assert any(
+        f.field == "production_stale" and f.reason == producer_warning.reason
+        for f in result.findings
+    ), (
+        "M6: producer-stage diagnostic did not reach PublishResult.findings. "
+        f"result.findings={[f.field for f in result.findings]}"
     )
