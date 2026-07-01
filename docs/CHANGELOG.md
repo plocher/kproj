@@ -6,7 +6,61 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
-### Fixed - issue #4 wave-3 review fix-up (PR #11 re-review response)
+### Fixed - issue #4 wave-3 review fix-up round-2 (post re-review)
+
+The gpt-5-5-xhigh re-review of the round-1 fix-up (see the `## Re-review
+(post-fix-up)` appendix in `docs/wave3-review.md` on branch
+`review/wave-3` commit `58e0d55`) found 2 MAJOR partials and 1 MINOR.
+Both MAJORs are addressed here on the same `feat/issue-4-publishing`
+branch, driven by failing tests first per the user-locked TDD workflow.
+
+- **M4 (round-2)** — DRC/ERC mechanical-failure channel. Round-1 modelled
+  a `kicad-cli` crash (nonzero rc + no JSON) as an ordinary error
+  `Finding`, but `compute_exit_code` then mapped a mechanical failure to
+  `exit=1` ("findings present, publish succeeded") instead of the
+  contracted `exit=2`. Round-2 gives mechanical failures a distinct
+  channel: `DesignAnalyzer` raises the new `DesignAnalysisError`
+  (carrying `origin` and `returncode`) and `PublishWorkflow.run()`
+  catches it *before* opening the change journal, returning
+  `PublishResult(outcome="failed", exit_code=2)` with no site writes.
+  Parseable DRC/ERC violations continue to flow as non-blocking
+  findings per ADR 0004. New Behave feature
+  `tests/features/drc_erc_mechanical_failure.feature` locks the
+  contract for both DRC and ERC crash paths.
+- **M11 (round-2)** — Story 6 metadata-refresh is now a real functional
+  gate. Round-1's Behave step artificially bumped every published
+  asset's mtime into the future to defeat the M1 stale-asset rule;
+  that hid the real behavior. Round-2 removes the workaround and
+  drives the code fix from failing tests per the user's GIVEN/WHEN/
+  THEN framing ("kproj-published baseline; edit COMMENT9 in SCH;
+  outcome=refreshed; no artifact regen; commit uses `refresh:` prefix").
+  Six scenarios cover experimental→active, active→{broken, retired,
+  replaced-by:<other>, private, empty (defaults to active)}.
+
+  **Code fix (Option B: title-block-only refresh detection)** chosen
+  over Option A (full content hash) and Option C (explicit
+  `--refresh` flag). New `kproj/common/content_hash.py` walks the
+  KiCad S-expression paren tree (quoted-string aware) and computes
+  `sha256(sch_content_minus_title_block)` and the same for the PCB.
+  Both hashes are threaded onto `Publication` and persisted in the
+  version-page YAML front-matter under `kproj_source_hashes: {sch,
+  pcb}`. On a subsequent run the workflow reads back the persisted
+  hashes; when they match the current hashes the M1 stale-asset
+  escalation is skipped (title-block-only edits stay `refresh` /
+  `noop`). Real content edits still flip the hash and the M1
+  escalation fires exactly as before. `test_stale_pcb_forces_publish_
+  outcome` updated to modify PCB content (not just mtime) so the M1
+  guarantee is exercised against a genuine content change; pure
+  mtime touches no longer cause spurious publishes.
+- **MINOR (CHANGELOG accuracy)** — the round-1 CHANGELOG entry
+  characterised M4 and M11 as fully fixed; the re-review found both
+  were only partial. The round-1 wording below has been corrected to
+  say "round-1 partial" and point at the round-2 completion above.
+
+All unit tests (355) + contract tests + Behave scenarios (16) pass;
+ruff + mypy clean.
+
+### Fixed - issue #4 wave-3 review fix-up (PR #11 re-review response, round-1)
 
 Adversarial cross-family review of PR #11 (see `docs/wave3-review.md` on
 branch `review/wave-3` commit `e5d7483`) surfaced 5 BLOCKERs + 12 MAJORs.
@@ -54,19 +108,30 @@ follow-up issues (see below).
   (the actual KiCad coordinate / uuid / sheet); new Source column surfaces
   the origin (`drc` / `erc`). Section discriminator uses `source` first,
   falls back to `AUDIT_FIELDS` for legacy findings.
-- **M4** — DesignAnalyzer captures the `SubprocessResult`; missing JSON with a
-  non-zero return code or non-empty stderr now emits an error
-  `<origin>_mechanical_failure` finding instead of silently returning `()`.
+- **M4 (round-1 partial)** — DesignAnalyzer captured the
+  `SubprocessResult` and emitted a `<origin>_mechanical_failure`
+  error `Finding` instead of silently returning `()`. The re-review
+  flagged that this still resolved to `exit=1` rather than the
+  contracted `exit=2`; **round-2 completes the fix** by giving
+  mechanical failures a distinct exception channel
+  (`DesignAnalysisError`) that the workflow catches before opening
+  the journal. See the round-2 entry above.
 - **M6** — artifact-generator diagnostics flow into the final analysis. New
   3-tuple contract: `(images, artifacts, diagnostics)`. Workflow merges the
   diagnostics into a fresh `AnalysisInfo`, rebuilds the body markdown, and
   passes the merged findings to `build_publication` so producer warnings reach
   the front-matter counts, Markdown tables, stderr, and exit code.
-- **M11** — Behave scenarios rewritten as real functional gates:
-  `metadata_refresh.feature` now mutates COMMENT9 between runs; `batch_safety.
-  feature` Story 9 injects a failing producer instead of running `--dry-run`;
-  `verbose.feature` actually passes `-v` and asserts findings on stderr.
-  Shared `_stub_artifact_generator` updated for the new 3-tuple signature.
+- **M11 (round-1 partial)** — Behave scenarios were rewritten as real
+  functional gates: Story 9 now injects a failing producer instead
+  of running `--dry-run`; `verbose.feature` actually passes `-v`.
+  However, the re-review flagged that Story 6 still masked the
+  workflow behavior by artificially bumping asset mtimes to defeat
+  the M1 stale-asset rule. **Round-2 completes the fix** by
+  removing the mtime workaround, driving six status-transition
+  scenarios, and adding title-block-stripped source-hash comparison
+  to distinguish metadata-only from content edits. See the round-2
+  entry above. Shared `_stub_artifact_generator` was updated in
+  round-1 for the new 3-tuple signature and remains correct.
 - **M12** — new contract tests `tests/contract/test_kicad_cli_drc.py` and
   `test_kicad_cli_erc.py` run the real local kicad-cli 10 and assert the JSON
   shapes kproj depends on. The tests caught a real drift: KiCad 10 ERC nests
@@ -81,8 +146,9 @@ follow-up issues (see below).
 - kproj#15 (M9): implement thumbnail generation (long-deferred).
 - kproj#16 (M10): wire `-v` through subprocess + git command logging.
 
-All unit tests (334) + contract tests + Behave scenarios (14) pass; ruff
-+ mypy clean.
+Round-1 baseline: unit tests + contract tests + Behave scenarios all
+passed; ruff + mypy clean. Post-round-2 totals appear in the round-2
+entry above.
 
 ### Added - issue #4 (Phase 6 wave-4: publishing + formatters + Behave)
 
