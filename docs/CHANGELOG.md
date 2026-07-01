@@ -6,6 +6,84 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - issue #4 wave-3 review fix-up (PR #11 re-review response)
+
+Adversarial cross-family review of PR #11 (see `docs/wave3-review.md` on
+branch `review/wave-3` commit `e5d7483`) surfaced 5 BLOCKERs + 12 MAJORs.
+All 5 BLOCKERs plus the correctness MAJORs are fixed here on the same
+`feat/issue-4-publishing` branch; the remaining MAJORs are filed as
+follow-up issues (see below).
+
+**BLOCKERs (all 5 fixed):**
+- **BLOCKER 1** — production artifact paths used the project name as the board
+  revision (`_default_artifact_generator` read `resolved.project_file.stem`).
+  Fix threads `ProjectInfo` (carrying canonical PCB-derived `board_rev`) into
+  `ArtifactGeneratorCallable`; generator now uses `project_info.project` and
+  `project_info.board_rev` for on-disk layout, filenames, and AssetRef paths.
+- **BLOCKER 2** — `SitePublisher.publish` staged only the version-page and
+  project-page markdown, leaving producer-generated assets untracked while the
+  committed markdown linked to them. Fix stages every path from
+  `ChangeJournal.all_paths()` per ADR 0005.
+- **BLOCKER 3** — every artifact producer called `journal.will_create` without
+  checking existence; a re-publish's rollback would unlink already-committed
+  assets. Fix adds `ChangeJournal.register_output(path)` helper that dispatches
+  to `will_modify` when the path exists and `will_create` otherwise; every
+  producer routes through it.
+- **BLOCKER 4** — findings never reached the user's terminal (ADR 0004 violation).
+  Fix wires `StderrFormatter` into `cli.main()` so every audit/DRC/ERC finding
+  is printed on stderr as a one-liner before the result message.
+- **BLOCKER 5** — `SchematicExportError` and iBOM's `FileNotFoundError` escaped
+  the workflow as tracebacks instead of becoming `outcome="failed"`/exit 2. Fix
+  extends the exception ladder in `PublishWorkflow.run`.
+
+**Correctness MAJORs fixed in this PR:**
+- **M1** — asset freshness detection: `_assets_are_stale(images, artifacts,
+  resolved, site_repo)` compares each asset's mtime against its source (PCB /
+  SCH / project source set / production/). Workflow escalates `noop`/`refresh`
+  to `publish` when any asset is stale. `SitePublisher.publish` grows a
+  `force_outcome=` keyword so post-generation asset mtimes cannot re-decide
+  the outcome inside the publisher.
+- **M2** — front-matter counts partitioned by `Finding.source`. New `source:
+  str = ""` field on `Finding` (closed taxonomy: `audit` / `drc` / `erc` /
+  `read` / empty). `MetadataAnalyzer` stamps `source="audit"` on every emitted
+  finding via `dataclasses.replace`. `KicadProjectReader` stamps `source="read"`.
+  `AnalysisInfo` gains `count_by_source(severity, sources)`.
+  `FrontMatterSummaryFormatter` counts audit / drc / erc from their own
+  sources so a DRC error no longer inflates all three blocks.
+- **M3** — DRC/ERC Markdown table Location column now renders `Finding.value`
+  (the actual KiCad coordinate / uuid / sheet); new Source column surfaces
+  the origin (`drc` / `erc`). Section discriminator uses `source` first,
+  falls back to `AUDIT_FIELDS` for legacy findings.
+- **M4** — DesignAnalyzer captures the `SubprocessResult`; missing JSON with a
+  non-zero return code or non-empty stderr now emits an error
+  `<origin>_mechanical_failure` finding instead of silently returning `()`.
+- **M6** — artifact-generator diagnostics flow into the final analysis. New
+  3-tuple contract: `(images, artifacts, diagnostics)`. Workflow merges the
+  diagnostics into a fresh `AnalysisInfo`, rebuilds the body markdown, and
+  passes the merged findings to `build_publication` so producer warnings reach
+  the front-matter counts, Markdown tables, stderr, and exit code.
+- **M11** — Behave scenarios rewritten as real functional gates:
+  `metadata_refresh.feature` now mutates COMMENT9 between runs; `batch_safety.
+  feature` Story 9 injects a failing producer instead of running `--dry-run`;
+  `verbose.feature` actually passes `-v` and asserts findings on stderr.
+  Shared `_stub_artifact_generator` updated for the new 3-tuple signature.
+- **M12** — new contract tests `tests/contract/test_kicad_cli_drc.py` and
+  `test_kicad_cli_erc.py` run the real local kicad-cli 10 and assert the JSON
+  shapes kproj depends on. The tests caught a real drift: KiCad 10 ERC nests
+  findings under `sheets[<n>].violations` instead of a top-level `violations`
+  array, and pre-fix `DesignAnalyzer` silently produced zero findings from
+  KiCad 10 ERC output. `_findings_from_payload` now walks both shapes.
+
+**Follow-up issues filed (unfixed MAJORs):**
+- kproj#12 (M5): dry-run should render a full path/would-be-write preview.
+- kproj#13 (M7): project page front-matter contract (layout/sidebar/tags/etc.).
+- kproj#14 (M8): production emission drops tags and `replaced-by:<target>`.
+- kproj#15 (M9): implement thumbnail generation (long-deferred).
+- kproj#16 (M10): wire `-v` through subprocess + git command logging.
+
+All unit tests (334) + contract tests + Behave scenarios (14) pass; ruff
++ mypy clean.
+
 ### Added - issue #4 (Phase 6 wave-4: publishing + formatters + Behave)
 
 - `src/kproj/formatters/stderr_formatter.py`: `StderrFormatter.format_findings()`
