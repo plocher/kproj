@@ -20,16 +20,16 @@ what front-matter shape gets emitted) decoupled from a specific site
 backend.  Two built-in profiles ship in v1:
 
 * :data:`GENERIC_SITE_PROFILE` — the abstract test-anchor.  Values are
-  intentionally backend-neutral (``versions/``, ``pages/``, no explicit
-  layout field) so Behave scenarios and unit-test fixtures can validate
+  intentionally backend-neutral (``versions/``, no explicit layout
+  field) so Behave scenarios and unit-test fixtures can validate
   contract behaviour without pinning to any real backend.  It is
   **not** intended for deployment against a live site; real backends
   ship their own concrete profile.
 * :data:`HUGO_SITE_PROFILE` — the concrete Hugo backend.  Fills in the
   structural bones a Hugo GitHub Pages deployment expects
-  (``content/versions/``, ``content/pages/``, ``layout:`` field
-  omitted so Hugo picks by section).  This is what
-  :func:`load_config` selects for production callers today.
+  (``content/versions/``, ``layout:`` field omitted so Hugo picks by
+  section).  This is what :func:`load_config` selects for production
+  callers today.
 
 Future named profiles (Jekyll, Astro, custom) plug into the same
 abstraction via a future ``--profile`` / ``--type`` / ``--theme`` CLI
@@ -71,11 +71,18 @@ class SiteProfile:
 
     * Where per-version markdown files land (``content/versions/`` for
       Hugo, ``_versions/`` for Jekyll, etc.).
-    * Where the per-project overview page lands (``content/pages/`` for
-      Hugo, ``pages/`` for Jekyll).
+    * Where per-version asset files land (``assets_dir``).
     * Whether an explicit ``layout:`` front-matter field is required
       (Jekyll's ``layout: eagle`` selector; Hugo picks layout by
       section and typically omits the field).
+
+    The per-project overview is emitted as the project section's index
+    page — ``<versions_dir>/<Project>/_index.md`` — so a project is a
+    Hugo section and each version a page in it (see
+    :meth:`project_index_path`). There is one index per project,
+    rewritten on each publish to reflect the most-recent-publish
+    project-global state; kproj no longer writes a separate
+    ``pages/<Project>.md``.
 
     A :class:`SiteProfile` captures these knobs so :class:`SitePublisher`,
     :class:`FrontMatterSummaryFormatter`, and every other backend-facing
@@ -89,10 +96,20 @@ class SiteProfile:
         name: Short identifier (used for logging and future
             ``--profile <name>`` CLI selection).
         versions_dir: Subpath, relative to the site-repo root, where the
-            per-version markdown files (``<Revision>.md``) are written
-            — one directory per project below this dir.
-        pages_dir: Subpath where the per-project overview markdown file
-            (``<Project>.md``) is written.
+            per-version markdown files (``<Revision>.md``) and the
+            per-project section index (``<Project>/_index.md``) are
+            written — one directory per project below this dir.
+        assets_dir: Subpath, relative to the site-repo root, where the
+            per-version **asset files** (renders, STEP, SVG/PDF, iBOM,
+            fab/source zips) are physically written. This is distinct
+            from the public asset URL, which is always
+            ``/versions/<Project>/<Revision>/<file>``: a backend whose
+            web root differs from its repo root (Hugo serves ``static/``
+            at ``/``) sets ``assets_dir`` so the physical file resolves
+            at that fixed URL. Kept a **required** field (no default) so
+            every backend must state where its served assets live —
+            an implicit fallback is exactly what let Hugo assets land
+            outside ``static/`` and 404 (kproj#10 Phase G finding).
         layout_field: Optional value for the ``layout:`` front-matter
             field. ``None`` means the field is omitted from the emitted
             YAML entirely. Non-``None`` means emit ``layout: <value>``
@@ -101,14 +118,55 @@ class SiteProfile:
 
     name: str
     versions_dir: str
-    pages_dir: str
+    assets_dir: str
     layout_field: str | None = None
+
+    def version_page_path(self, site_repo: Path, project: str, board_rev: str) -> Path:
+        """Return the on-disk path of a version page (``<P>/<R>.md``)."""
+        return site_repo / self.versions_dir / project / f"{board_rev}.md"
+
+    def project_index_path(self, site_repo: Path, project: str) -> Path:
+        """Return the on-disk path of the project section index.
+
+        The per-project overview lives at
+        ``<versions_dir>/<Project>/_index.md`` so that a project is a
+        Hugo section (identity = index page) with its versions as pages.
+        One index per project, rewritten each publish.
+        """
+        return site_repo / self.versions_dir / project / "_index.md"
+
+    def asset_disk_path(self, site_repo: Path, public_asset_path: str) -> Path:
+        """Map a public asset URL to its on-disk location under this profile.
+
+        Release assets are referenced in front-matter by their public
+        site URL (always ``/versions/<Project>/<Revision>/<file>``), but
+        the physical file may live elsewhere so the backend's web server
+        serves it at that URL. Hugo, for example, serves ``static/`` at
+        the site root, so its assets live under ``static/versions/`` yet
+        must resolve at ``/versions/``. This swaps the leading public
+        URL segment (the served mount point) for this profile's
+        :attr:`assets_dir`.
+
+        Args:
+            site_repo: Local site-repo checkout root.
+            public_asset_path: The public asset URL (e.g.
+                ``/versions/<P>/<R>/<file>``) as stored in
+                :attr:`~kproj.model.publication.AssetRef.path`.
+
+        Returns:
+            The absolute on-disk path where that asset is written / read.
+        """
+        rel = public_asset_path.lstrip("/")
+        # Drop the leading public mount segment (e.g. ``versions``) and
+        # re-root the remainder under this profile's physical assets_dir.
+        _, _, tail = rel.partition("/")
+        return site_repo / self.assets_dir / tail
 
 
 GENERIC_SITE_PROFILE: SiteProfile = SiteProfile(
     name="generic",
     versions_dir="versions",
-    pages_dir="pages",
+    assets_dir="versions",
     layout_field=None,
 )
 """The abstract, backend-neutral **test-anchor** site profile.
@@ -124,7 +182,7 @@ abstraction*).
 HUGO_SITE_PROFILE: SiteProfile = SiteProfile(
     name="hugo",
     versions_dir="content/versions",
-    pages_dir="content/pages",
+    assets_dir="static/versions",
     layout_field=None,
 )
 """The concrete Hugo backend site profile.
@@ -133,8 +191,8 @@ Fills in the structural bones a Hugo GitHub Pages deployment expects:
 
 * ``content/versions/<Project>/<Revision>.md`` — per-version markdown
   lives under Hugo's ``content/`` root, one directory per project.
-* ``content/pages/<Project>.md`` — per-project overview lives under
-  Hugo's ``content/`` root.
+* ``content/versions/<Project>/_index.md`` — the project section index
+  (project-global overview); one per project, rewritten each publish.
 * No ``layout:`` field — Hugo picks the layout by section (files under
   ``content/versions/`` render via ``layouts/versions/single.html`` if
   present, else ``layouts/_default/single.html``).

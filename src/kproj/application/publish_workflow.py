@@ -28,8 +28,10 @@ tests.
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..common.kicad_install import (
@@ -37,16 +39,22 @@ from ..common.kicad_install import (
     KicadNotFoundError,
     find_ibom_script,
     find_kicad_cli,
+    find_kicad_python,
     kicad_version,
 )
 from ..common.kicad_libraries import enumerate_libraries
+from ..common.project_docs import (
+    discover_datasheet_files,
+    discover_datasheets,
+    read_description,
+)
 from ..common.subprocess_runner import (
     DEFAULT_GIT_TIMEOUT,
     SubprocessFailedError,
     SubprocessTimeoutError,
 )
 from ..common.subprocess_runner import run as subprocess_run
-from ..config import KprojConfig
+from ..config import KprojConfig, SiteProfile
 from ..formatters.markdown_table_formatter import MarkdownTableFormatter
 from ..model.analysis_info import AnalysisInfo
 from ..model.finding import Finding
@@ -68,6 +76,7 @@ from ..services.pcb_exporter import PcbExporter
 from ..services.schematic_exporter import SchematicExporter, SchematicExportError
 from ..services.site_publisher import SitePublisher
 from ..services.source_packager import SourcePackager
+from ..services.thumbnail_generator import ThumbnailGenerator
 from ..services.zip_archiver import ZipArchiver
 
 _log = logging.getLogger(__name__)
@@ -94,8 +103,19 @@ inject a fake that returns a dummy path so the iBOM pre-flight succeeds
 without a real KiCad install.
 """
 
+KicadPythonLocator = Callable[[], Path]
+"""Callable that locates KiCad's bundled Python interpreter.
+
+Defaults to :func:`~kproj.common.kicad_install.find_kicad_python`. The
+iBOM script needs the interpreter that can ``import pcbnew`` (ADR 0008
+amendment / kproj#10), so it is resolved in pre-flight alongside the
+iBOM script and injected into :class:`~kproj.services.ibom_generator.IbomGenerator`.
+Tests inject a fake returning a dummy path so pre-flight succeeds
+without a real KiCad install.
+"""
+
 ArtifactGeneratorCallable = Callable[
-    ["ResolvedProject", "ProjectInfo", Path, Path, Path, "ChangeJournal"],
+    ["ResolvedProject", "ProjectInfo", Path, Path, Path, Path, SiteProfile, "ChangeJournal"],
     tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple["Finding", ...]],
 ]
 """Callable that generates all release artifacts for a project.
@@ -107,9 +127,20 @@ Signature::
         project_info: ProjectInfo,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         site_repo: Path,
+        site_profile: SiteProfile,
         journal: ChangeJournal,
     ) -> tuple[images_refs, artifact_refs, diagnostics]
+
+``kicad_python`` is KiCad's bundled interpreter (ADR 0008 amendment /
+kproj#10); it is passed to :class:`~kproj.services.ibom_generator.IbomGenerator`
+so the iBOM script runs under the Python that has ``pcbnew``.
+
+``site_profile`` supplies :attr:`~kproj.config.SiteProfile.assets_dir` so
+asset files are written where the backend serves them (Hugo's
+``static/versions/`` resolves at the public ``/versions/`` URL); the
+public AssetRef paths stay ``/versions/...`` regardless of backend.
 
 ``project_info`` carries the canonical ``board_rev`` (PCB-derived per
 ``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
@@ -136,6 +167,7 @@ __all__ = [
     "ArtifactGeneratorCallable",
     "DesignAnalyzerFactory",
     "IbomScriptLocator",
+    "KicadPythonLocator",
     "Outcome",
     "PublishRequest",
     "PublishResult",
@@ -160,6 +192,7 @@ class PublishWorkflow:
         metadata_analyzer: MetadataAnalyzer | None = None,
         design_analyzer_factory: DesignAnalyzerFactory | None = None,
         ibom_script_locator: IbomScriptLocator | None = None,
+        kicad_python_locator: KicadPythonLocator | None = None,
         artifact_generator: ArtifactGeneratorCallable | None = None,
         site_publisher_factory: SitePublisherFactory | None = None,
     ) -> None:
@@ -172,6 +205,9 @@ class PublishWorkflow:
                 :class:`DesignAnalyzer` for a given ``kicad-cli`` path.
             ibom_script_locator: Callable returning the iBOM script path.
                 Defaults to :func:`~kproj.common.kicad_install.find_ibom_script`.
+            kicad_python_locator: Callable returning KiCad's bundled
+                Python interpreter path.  Defaults to
+                :func:`~kproj.common.kicad_install.find_kicad_python`.
             artifact_generator: Callable that runs all exporters + packagers
                 and returns ``(images, artifacts)`` asset refs.  Defaults to
                 :func:`_default_artifact_generator`.
@@ -183,6 +219,7 @@ class PublishWorkflow:
         self._metadata_analyzer = metadata_analyzer or MetadataAnalyzer()
         self._design_analyzer_factory = design_analyzer_factory or DesignAnalyzer
         self._ibom_script_locator: IbomScriptLocator = ibom_script_locator or find_ibom_script
+        self._kicad_python_locator: KicadPythonLocator = kicad_python_locator or find_kicad_python
         self._artifact_generator: ArtifactGeneratorCallable = (
             artifact_generator or _default_artifact_generator
         )
@@ -263,9 +300,14 @@ class PublishWorkflow:
                 findings=analysis.findings,
             )
 
-        # ── Step 5a: iBOM pre-flight ──
+        # ── Step 5a: iBOM pre-flight (script + KiCad-bundled interpreter) ──
+        # kproj#10: the iBOM script needs the interpreter that can
+        # ``import pcbnew`` (KiCad's bundled Python, not kproj's venv).
+        # Resolve both here so a missing interpreter fails pre-flight
+        # with exit 2 before any change journal is opened.
         try:
             ibom_script = self._ibom_script_locator()
+            kicad_python = self._kicad_python_locator()
         except KicadNotFoundError as exc:
             return PublishResult.build(
                 "failed",
@@ -297,7 +339,7 @@ class PublishWorkflow:
                     findings=analysis.findings,
                 )
 
-        # ── Step 6: New-release detection ──
+        # ── Step 6: assemble render inputs + decide Make-style regeneration ──
         body_md = MarkdownTableFormatter().render(analysis.findings)
         readme_md = _read_readme(resolved.project_dir)
 
@@ -307,59 +349,47 @@ class PublishWorkflow:
             project_info.project, project_info.board_rev, include_fab=include_fab
         )
 
-        preliminary_pub = PublishWorkflow.build_publication(
-            resolved,
-            project_info,
-            analysis,
-            body_md=body_md,
-            readme_md=readme_md,
-            images=images_refs,
-            artifacts=artifact_refs,
-        )
+        # Publish timestamp = kproj execution time, emitted as Hugo's
+        # reserved ``date`` field.  SitePublisher preserves the on-disk
+        # value on an unchanged re-run so the markdown stays byte-identical
+        # (git then sees no change); the fresh value lands only when
+        # something else changed.
+        published_at = _publish_timestamp()
 
-        preliminary_outcome = SitePublisher.detect_outcome(
-            preliminary_pub,
-            site_repo,
-            request.config.site_profile,
+        version_file = request.config.site_profile.version_page_path(
+            site_repo, project_info.project, project_info.board_rev
         )
-        # M1 fix-up: docs/DESIGN.md § New-release detection requires
-        # comparing each asset's mtime against its source.  When the
-        # PCB has been edited since the last publish but the title
-        # block is stable, detect_outcome alone returns ``noop`` and
-        # leaves stale renders/STEP/iBOM/source/fab on the site.
-        # Force a full publish when any asset is older than its source.
-        #
-        # v1 note: an earlier "title-block-only" escape hatch (M11 round-2)
-        # persisted content hashes in the site-repo version file so a
-        # subsequent COMMENT9 edit could skip artifact regen.  That state
-        # persistence made the site-repo YAML a public API surface and
-        # was ripped out as premature optimization pending profile data.
-        # See docs/PRD.md § Story 6 v1 note + kproj#17 (profile hooks) +
-        # kproj#18 (smart refresh).  In v1, any SCH/PCB edit — including
-        # a title-block-only edit — triggers a full publish.
-        if preliminary_outcome != "publish" and _assets_are_stale(
+        # Make-style regeneration decision ("ancient makefile" semantics):
+        # (re)run the artifact producers only when a KiCad source is newer
+        # than its on-disk artifact, or an artifact / the version page is
+        # missing.  There is NO kproj-internal content-comparison no-op:
+        # git decides whether the publish commits anything (unchanged
+        # sources -> byte-identical outputs -> empty ``git diff --cached``).
+        needs_regen = _needs_regeneration(
             images=images_refs,
             artifacts=artifact_refs,
             resolved=resolved,
             site_repo=site_repo,
-        ):
-            preliminary_outcome = "publish"
-        if preliminary_outcome == "noop":
-            return PublishResult.build("noop", findings=analysis.findings)
+            site_profile=request.config.site_profile,
+            version_file=version_file,
+        )
 
         # ── Steps 7-11: Open journal, generate artifacts, publish ──
         try:
             with ChangeJournal(site_repo, dry_run=request.dry_run) as journal:
-                # Step 8: Generate artifacts (only for "publish"; skip on "refresh")
+                # Step 8: (re)generate artifacts only when Make-style
+                # staleness says so; skip when everything is up to date.
                 producer_diagnostics: tuple[Finding, ...] = ()
-                if preliminary_outcome == "publish" and not request.dry_run:
+                if needs_regen and not request.dry_run:
                     actual_images, actual_artifacts, producer_diagnostics = (
                         self._artifact_generator(
                             resolved,
                             project_info,
                             kicad_cli,
                             ibom_script,
+                            kicad_python,
                             site_repo,
+                            request.config.site_profile,
                             journal,
                         )
                     )
@@ -392,12 +422,12 @@ class PublishWorkflow:
                     readme_md=readme_md,
                     images=actual_images,
                     artifacts=actual_artifacts,
+                    published_at=published_at,
                 )
 
-                # Step 10: SitePublisher.publish.  Pass the workflow's
-                # pre-computed outcome so SitePublisher does not re-
-                # decide against post-generation asset mtimes and
-                # short-circuit an M1-escalated publish back to noop.
+                # Step 10: SitePublisher.publish writes the markdown,
+                # stages the journalled paths, and lets git decide whether
+                # to commit (empty ``git diff --cached`` -> no-op).
                 site_publisher = self._site_publisher_factory(journal)
                 result = site_publisher.publish(
                     final_pub,
@@ -405,7 +435,6 @@ class PublishWorkflow:
                     request.config.no_push,
                     request.dry_run,
                     request.config.site_profile,
-                    force_outcome=preliminary_outcome,
                 )
 
                 # Step 11: ChangeJournal closed via context-manager __exit__
@@ -461,22 +490,30 @@ class PublishWorkflow:
         readme_md: str = "",
         images: tuple[AssetRef, ...] = (),
         artifacts: tuple[AssetRef, ...] = (),
+        published_at: str = "",
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
-        This is DESIGN step 9 (build Publication).  It calls
-        :func:`kproj.common.kicad_libraries.enumerate_libraries`
-        against ``resolved.project_dir`` and threads the resulting
-        library refs onto :attr:`Publication.libraries`.
+        This is DESIGN step 9 (build Publication).  It scans
+        ``resolved.project_dir`` for the project-global content model:
+        :func:`kproj.common.kicad_libraries.enumerate_libraries` for
+        library refs, and
+        :func:`kproj.common.project_docs.discover_datasheets` /
+        :func:`kproj.common.project_docs.read_description` for the
+        datasheet name-list + DESCRIPTION prose rendered on the project
+        section index.
 
         Args:
             resolved: The resolved project (provides ``project_dir``).
             project_info: Title-block + audit-ready facts.
             analysis_info: Audit + DRC/ERC findings merged.
             body_md: Pre-rendered Markdown body (audit + DRC/ERC tables).
-            readme_md: Project README.md content for ``pages/<P>.md``.
+            readme_md: Project README.md content for the project section
+                index ``<versions_dir>/<P>/_index.md``.
             images: Image asset refs.
             artifacts: Artifact asset refs.
+            published_at: Publish timestamp for Hugo's ``date`` field
+                (empty string omits it).
 
         Returns:
             A populated :class:`Publication`.
@@ -486,6 +523,9 @@ class PublishWorkflow:
             analysis_info=analysis_info,
             body_md=body_md,
             readme_md=readme_md,
+            published_at=published_at,
+            datasheets=discover_datasheets(resolved.project_dir),
+            description=read_description(resolved.project_dir),
             images=images,
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
@@ -501,6 +541,17 @@ def _read_readme(project_dir: Path) -> str:
     if readme.is_file():
         return readme.read_text(encoding="utf-8")
     return ""
+
+
+def _publish_timestamp() -> str:
+    """Return the current UTC time as an RFC3339 string for Hugo's ``date``.
+
+    Hugo requires its reserved ``date`` front-matter field to be a
+    parseable date; the kproj execution time serves as the page's
+    publish timestamp.  Seconds precision (microseconds dropped) keeps
+    the value tidy.
+    """
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _compute_standard_asset_refs(
@@ -569,12 +620,44 @@ def _compute_standard_asset_refs(
     return images, tuple(artifact_list)
 
 
+def _needs_regeneration(
+    *,
+    images: tuple[AssetRef, ...],
+    artifacts: tuple[AssetRef, ...],
+    resolved: ResolvedProject,
+    site_repo: Path,
+    site_profile: SiteProfile,
+    version_file: Path,
+) -> bool:
+    """Return ``True`` when the artifact producers must (re)run (Make-style).
+
+    Regeneration is needed when the version page is absent, any expected
+    asset is missing, or any existing asset is older than its KiCad
+    source (:func:`_assets_are_stale`).  When nothing is stale the
+    producers are skipped so their timestamped binaries stay
+    byte-identical and the run stays a git no-op.
+    """
+    if not version_file.exists():
+        return True
+    for ref in (*images, *artifacts):
+        if not site_profile.asset_disk_path(site_repo, ref.path).exists():
+            return True
+    return _assets_are_stale(
+        images=images,
+        artifacts=artifacts,
+        resolved=resolved,
+        site_repo=site_repo,
+        site_profile=site_profile,
+    )
+
+
 def _assets_are_stale(
     *,
     images: tuple[AssetRef, ...],
     artifacts: tuple[AssetRef, ...],
     resolved: ResolvedProject,
     site_repo: Path,
+    site_profile: SiteProfile,
 ) -> bool:
     """Return ``True`` when any standard asset is older than its source.
 
@@ -594,6 +677,9 @@ def _assets_are_stale(
         artifacts: AssetRef tuple for downloadable-type assets.
         resolved: The resolved project carrying PCB / SCH paths.
         site_repo: Local site-repo checkout.
+        site_profile: Profile mapping the public asset URL to its
+            physical on-disk location (Hugo assets live under
+            ``static/versions/`` yet resolve at ``/versions/``).
 
     Returns:
         ``True`` when at least one existing asset is older than its
@@ -605,7 +691,7 @@ def _assets_are_stale(
         source = source_for_tag.get(ref.tag)
         if source is None or not source.exists():
             continue
-        asset_path = site_repo / ref.path.lstrip("/")
+        asset_path = site_profile.asset_disk_path(site_repo, ref.path)
         if not asset_path.exists():
             continue
         if asset_path.stat().st_mtime < source.stat().st_mtime:
@@ -665,12 +751,41 @@ def _newest_source_file(directory: Path) -> Path | None:
     return newest
 
 
+def _copy_datasheets(
+    project_dir: Path,
+    site_repo: Path,
+    site_profile: SiteProfile,
+    project: str,
+    journal: ChangeJournal,
+) -> None:
+    """Copy project-global datasheet PDFs into the site (Make-style).
+
+    Each discovered PDF is copied to
+    ``<site_repo>/<assets_dir>/<project>/datasheets/<name>`` (served at the
+    public ``/versions/<project>/datasheets/<name>`` URL) so the project page
+    can link it. A file is copied only when the destination is missing or the
+    source is newer (mtime), mirroring the Make-style artifact regeneration;
+    :func:`shutil.copy2` preserves the source mtime so an unchanged re-run is
+    a git no-op. Each write is journaled for ADR-0005 rollback.
+    """
+    dest_dir = site_repo / site_profile.assets_dir / project / "datasheets"
+    for src in discover_datasheet_files(project_dir):
+        dest = dest_dir / src.name
+        if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        journal.register_output(dest)
+        shutil.copy2(src, dest)
+
+
 def _default_artifact_generator(
     resolved: ResolvedProject,
     project_info: ProjectInfo,
     kicad_cli: Path,
     ibom_script: Path,
+    kicad_python: Path,
     site_repo: Path,
+    site_profile: SiteProfile,
     journal: ChangeJournal,
 ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
     """Generate all release artifacts using real kicad-cli + iBOM.
@@ -698,7 +813,13 @@ def _default_artifact_generator(
             ``project`` + ``board_rev`` tokens.
         kicad_cli: Discovered kicad-cli path.
         ibom_script: Discovered iBOM script path.
+        kicad_python: KiCad's bundled Python interpreter (runs iBOM;
+            kproj#10 - the venv Python lacks ``pcbnew``).
         site_repo: Local site-repo checkout.
+        site_profile: Backend profile; its ``assets_dir`` decides where
+            asset files are physically written (e.g. Hugo's
+            ``static/versions/``), while the public AssetRef URLs stay
+            ``/versions/...``.
         journal: Open :class:`ChangeJournal` for rollback tracking.
 
     Returns:
@@ -709,7 +830,8 @@ def _default_artifact_generator(
     """
     pcb_exporter = PcbExporter(kicad_cli)
     sch_exporter = SchematicExporter(kicad_cli)
-    ibom_gen = IbomGenerator(ibom_script)
+    ibom_gen = IbomGenerator(ibom_script, kicad_python)
+    thumbnail_gen = ThumbnailGenerator()
     archiver = ZipArchiver()
     fab_packager = FabPackager(archiver)
     source_packager = SourcePackager(archiver)
@@ -717,7 +839,9 @@ def _default_artifact_generator(
     P = project_info.project
     R = project_info.board_rev
     PR = f"{P}-{R}"
-    asset_dir = site_repo / "versions" / P / R
+    # Physical write location comes from the profile (Hugo -> static/versions);
+    # the public URL below stays /versions/ regardless of backend.
+    asset_dir = site_repo / site_profile.assets_dir / P / R
     asset_dir.mkdir(parents=True, exist_ok=True)
 
     base_site = f"/versions/{P}/{R}"
@@ -728,6 +852,13 @@ def _default_artifact_generator(
     top_path = asset_dir / f"{PR}.top.png"
     diagnostics.extend(
         pcb_exporter.export_render(resolved.pcb_file, "top", top_path, journal=journal).diagnostics
+    )
+    # Thumbnail (v1 grey-scale recipe: a copy of the top render, so the
+    # front-matter image_path resolves on the built site; real scaling is
+    # a tracked follow-up). Derived from top_path, so it runs right after.
+    thumbnail_path = asset_dir / f"{PR}.thumbnail.png"
+    diagnostics.extend(
+        thumbnail_gen.generate(top_path, thumbnail_path, journal=journal).diagnostics
     )
     bottom_path = asset_dir / f"{PR}.bottom.png"
     diagnostics.extend(
@@ -775,6 +906,10 @@ def _default_artifact_generator(
             resolved.project_dir, source_path, title=P, rev=R, journal=journal
         ).diagnostics
     )
+
+    # Project-global datasheets: copy the discovered PDFs into the site so the
+    # project page can link them (served at /versions/<P>/datasheets/<name>).
+    _copy_datasheets(resolved.project_dir, site_repo, site_profile, P, journal)
 
     images: tuple[AssetRef, ...] = (
         AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),

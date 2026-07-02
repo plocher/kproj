@@ -1,20 +1,24 @@
 """Unit tests for :class:`kproj.services.site_publisher.SitePublisher`.
 
-Covers:
-- :meth:`SitePublisher.detect_outcome` — noop / refresh / publish discrimination
-  based on file existence, asset manifest, and rendered content comparison.
-- :meth:`SitePublisher.publish` — atomic writes, journaled registration, git
-  add/commit/push with ChangeJournal bookkeeping.
+Change detection is delegated to git (see the module docstring), so the
+noop/refresh/publish discrimination is proven interactively rather than
+with mocked-git unit tests.  What remains here is the git-independent
+behaviour:
 
-All git subprocess calls are monkeypatched so no real git repo is needed.
+- :meth:`SitePublisher.publish` - atomic writes, journal registration,
+  the ``git add`` staging set, dry-run, no-push, findings passthrough.
+- :func:`_build_project_index_content` - the project section-index body.
+- :class:`ChangeJournal` rollback of files written by ``publish``.
+
+``_git_run`` is monkeypatched so no real git repo is required; the git
+diff/commit path itself is validated interactively, not here.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import yaml
 
@@ -22,11 +26,11 @@ from kproj.config import GENERIC_SITE_PROFILE
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.finding import Finding
 from kproj.model.project_info import ProjectInfo, Status
-from kproj.model.publication import AssetRef, Publication
+from kproj.model.publication import Publication
 from kproj.model.publish_result import PublishResult
 from kproj.model.severity import Severity
 from kproj.services.change_journal import ChangeJournal
-from kproj.services.site_publisher import SitePublisher
+from kproj.services.site_publisher import SitePublisher, _build_project_index_content
 
 # Tests reference GENERIC_SITE_PROFILE's directory constants rather than
 # string literals so they exercise the abstraction contract ("the version
@@ -64,17 +68,6 @@ def _pub(project_info: ProjectInfo | None = None, **kwargs: Any) -> Publication:
     )
 
 
-def _make_site_repo(tmp_path: Path) -> Path:
-    """Create a minimal site-repo directory structure."""
-    site = tmp_path / "site"
-    site.mkdir()
-    # Initialise as a bare git repo for git commands
-    os.system(f"git -C '{site}' init -q")
-    os.system(f"git -C '{site}' config user.email 'test@test.com'")
-    os.system(f"git -C '{site}' config user.name 'Test'")
-    return site
-
-
 def _open_journal(site_repo: Path, *, dry_run: bool = False) -> ChangeJournal:
     return ChangeJournal(site_repo, dry_run=dry_run)
 
@@ -93,110 +86,21 @@ def _write_version_file(
 
 
 def _write_pages_file(site_repo: Path, P: str, content: str) -> Path:
-    path = site_repo / GENERIC_SITE_PROFILE.pages_dir / f"{P}.md"
+    """Write the project section index (``<versions_dir>/<P>/_index.md``)."""
+    path = GENERIC_SITE_PROFILE.project_index_path(site_repo, P)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
-
-
-# ──────────────────────────── detect_outcome ─────────────────────────────────
-
-
-class TestDetectOutcome:
-    """Tests for :meth:`SitePublisher.detect_outcome`."""
-
-    def test_publish_when_version_file_absent(self, tmp_path: Path) -> None:
-        """No existing version file → outcome is 'publish'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
-        assert outcome == "publish"
-
-    def test_publish_when_asset_missing(self, tmp_path: Path) -> None:
-        """Version file exists but a referenced asset is missing → 'publish'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub(
-            images=(
-                AssetRef(
-                    path="/versions/Demo/1.0B/Demo-1.0B.top.png",
-                    tag="render-top",
-                    title="Top",
-                ),
-            ),
-        )
-        # Write a version file so absence test doesn't short-circuit
-        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
-
-        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
-        content = f"---\n{fm}---\n{pub.body_md}\n"
-        _write_version_file(site, "Demo", "1.0B", content)
-
-        outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
-        assert outcome == "publish"
-
-    def test_noop_when_all_matches(self, tmp_path: Path) -> None:
-        """Existing file matches would-be output and no assets → 'noop'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        # Write the version file with exactly the would-be content
-        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
-
-        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
-        content = f"---\n{fm}---\n{pub.body_md}\n"
-        _write_version_file(site, "Demo", "1.0B", content)
-        # Write matching pages file
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
-
-        outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
-        assert outcome == "noop"
-
-    def test_refresh_when_front_matter_differs(self, tmp_path: Path) -> None:
-        """On-disk front-matter differs → 'refresh'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        # Write a version file with DIFFERENT status
-        stale = "---\nstatus: experimental\n---\nbody\n"
-        _write_version_file(site, "Demo", "1.0B", stale)
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
-
-        outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
-        assert outcome in ("refresh", "publish")
-
-    def test_refresh_when_readme_differs(self, tmp_path: Path) -> None:
-        """On-disk pages/<P>.md body differs from publication.readme_md → 'refresh'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
-
-        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
-        content = f"---\n{fm}---\n{pub.body_md}\n"
-        _write_version_file(site, "Demo", "1.0B", content)
-        # Write a DIFFERENT readme
-        _write_pages_file(site, "Demo", "---\nproject: Demo\n---\n# OLD README\n")
-
-        outcome = SitePublisher.detect_outcome(pub, site, GENERIC_SITE_PROFILE)
-        assert outcome in ("refresh", "publish")
 
 
 # ──────────────────────────── publish ────────────────────────────────────────
 
 
 class TestPublish:
-    """Tests for :meth:`SitePublisher.publish`."""
-
-    def _patched_subprocess_run(self, mocker: Any | None = None) -> MagicMock:
-        """Return a MagicMock that patches subprocess_runner.run to a no-op."""
-        mock = MagicMock()
-        mock.return_value = MagicMock(returncode=0, stdout="", stderr="", command=())
-        return mock
+    """Tests for :meth:`SitePublisher.publish` (git-independent behaviour)."""
 
     def test_publish_writes_version_file(self, tmp_path: Path) -> None:
-        """publish() creates _versions/<P>/<R>.md."""
+        """publish() creates <versions_dir>/<P>/<R>.md."""
         site = tmp_path / "site"
         site.mkdir()
         pub = _pub()
@@ -205,14 +109,16 @@ class TestPublish:
         with patch("kproj.services.site_publisher._git_run") as mock_git:
             mock_git.return_value = None
             sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
+            result = sp.publish(
+                pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
 
         version_file = site / GENERIC_SITE_PROFILE.versions_dir / "Demo" / "1.0B.md"
         assert version_file.exists()
         assert isinstance(result, PublishResult)
 
-    def test_publish_writes_pages_file(self, tmp_path: Path) -> None:
-        """publish() creates pages/<P>.md."""
+    def test_publish_writes_project_index(self, tmp_path: Path) -> None:
+        """publish() creates the project section index <versions_dir>/<P>/_index.md."""
         site = tmp_path / "site"
         site.mkdir()
         pub = _pub()
@@ -223,26 +129,12 @@ class TestPublish:
             sp = SitePublisher(journal)
             sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
 
-        pages_file = site / GENERIC_SITE_PROFILE.pages_dir / "Demo.md"
-        assert pages_file.exists()
-        assert "demo project" in pages_file.read_text().lower()
-
-    def test_publish_returns_published_outcome(self, tmp_path: Path) -> None:
-        """First publish returns outcome='published'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        journal = _open_journal(site, dry_run=True)
-
-        with patch("kproj.services.site_publisher._git_run") as mock_git:
-            mock_git.return_value = None
-            sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
-
-        assert result.outcome == "published"
+        index_file = GENERIC_SITE_PROFILE.project_index_path(site, "Demo")
+        assert index_file.exists()
+        assert "demo project" in index_file.read_text().lower()
 
     def test_publish_version_file_contains_valid_yaml_front_matter(self, tmp_path: Path) -> None:
-        """The written _versions/<P>/<R>.md has parseable YAML front-matter."""
+        """The written version page has parseable YAML front-matter."""
         site = tmp_path / "site"
         site.mkdir()
         pub = _pub()
@@ -276,7 +168,7 @@ class TestPublish:
 
         tracked = list(journal.all_paths())
         assert any("1.0B.md" in str(p) for p in tracked)
-        assert any("Demo.md" in str(p) for p in tracked)
+        assert any("_index.md" in str(p) for p in tracked)
 
     def test_dry_run_does_not_write_files(self, tmp_path: Path) -> None:
         """dry_run=True must not write any files to site_repo."""
@@ -308,173 +200,13 @@ class TestPublish:
         push_calls = [c for c in mock_git.call_args_list if "push" in (c.args[0] if c.args else [])]
         assert not push_calls
 
-    def test_publish_calls_git_add_and_commit(self, tmp_path: Path) -> None:
-        """publish() invokes git add and git commit (not a dry-run)."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        journal = _open_journal(site, dry_run=True)
-
-        called_commands: list[list[str]] = []
-
-        def _fake_git(cmd: list[str], **kwargs: Any) -> None:
-            called_commands.append(cmd)
-
-        with patch("kproj.services.site_publisher._git_run", side_effect=_fake_git):
-            sp = SitePublisher(journal)
-            sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
-
-        verbs = [cmd[0] for cmd in called_commands if cmd]
-        assert "add" in verbs
-        assert "commit" in verbs
-
-    def test_refresh_returns_refreshed_outcome(self, tmp_path: Path) -> None:
-        """Re-publish of existing version returns outcome='refreshed'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        journal = _open_journal(site, dry_run=True)
-
-        # Pre-populate an existing version file with the same publication content
-        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
-
-        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
-        content = f"---\n{fm}---\n{pub.body_md}\n"
-        _write_version_file(site, "Demo", "1.0B", content)
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
-
-        # Now publish with a changed body (to force refresh not noop)
-        pub_changed = Publication(
-            project_info=pub.project_info,
-            analysis_info=pub.analysis_info,
-            body_md="## Metadata Audit\n\n| warning | comment9_missing | | |",
-            readme_md=pub.readme_md,
-        )
-
-        with patch("kproj.services.site_publisher._git_run") as mock_git:
-            mock_git.return_value = None
-            sp = SitePublisher(journal)
-            result = sp.publish(
-                pub_changed,
-                site,
-                no_push=True,
-                dry_run=False,
-                site_profile=GENERIC_SITE_PROFILE,
-            )
-
-        assert result.outcome == "refreshed"
-
-    def test_noop_when_content_unchanged(self, tmp_path: Path) -> None:
-        """Re-publish with unchanged content returns outcome='noop'."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-
-        # Write the exact content that publish() would emit
-        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
-
-        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
-        content = f"---\n{fm}---\n{pub.body_md}\n"
-        _write_version_file(site, "Demo", "1.0B", content)
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
-
-        journal = _open_journal(site, dry_run=True)
-        with patch("kproj.services.site_publisher._git_run") as mock_git:
-            mock_git.return_value = None
-            sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
-
-        assert result.outcome == "noop"
-
-    def test_commit_message_add_for_new_project(self, tmp_path: Path) -> None:
-        """First-ever publish for a project uses 'add:' commit prefix."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        journal = _open_journal(site, dry_run=True)
-
-        commit_msgs: list[str] = []
-
-        def _fake_git(cmd: list[str], **kwargs: Any) -> None:
-            if cmd and cmd[0] == "commit":
-                # Extract the -m argument
-                for i, tok in enumerate(cmd):
-                    if tok == "-m" and i + 1 < len(cmd):
-                        commit_msgs.append(cmd[i + 1])
-
-        with patch("kproj.services.site_publisher._git_run", side_effect=_fake_git):
-            sp = SitePublisher(journal)
-            sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
-
-        assert commit_msgs
-        assert commit_msgs[0].startswith("add:") or "Demo" in commit_msgs[0]
-
-    def test_commit_message_publish_for_new_version(self, tmp_path: Path) -> None:
-        """New version for existing project uses 'publish:' commit prefix."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-        # Create an existing pages/<P>.md (project already known)
-        _write_pages_file(site, "Demo", "---\nproject: Demo\n---\nOld README\n")
-        journal = _open_journal(site, dry_run=True)
-
-        commit_msgs: list[str] = []
-
-        def _fake_git(cmd: list[str], **kwargs: Any) -> None:
-            if cmd and cmd[0] == "commit":
-                for i, tok in enumerate(cmd):
-                    if tok == "-m" and i + 1 < len(cmd):
-                        commit_msgs.append(cmd[i + 1])
-
-        with patch("kproj.services.site_publisher._git_run", side_effect=_fake_git):
-            sp = SitePublisher(journal)
-            sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
-
-        assert commit_msgs
-        assert commit_msgs[0].startswith("publish:")
-
-    def test_commit_message_refresh(self, tmp_path: Path) -> None:
-        """Metadata refresh uses 'refresh:' commit prefix."""
-        site = tmp_path / "site"
-        site.mkdir()
-        pub = _pub()
-
-        # Write existing version with different body
-        from kproj.formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
-
-        fm = FrontMatterSummaryFormatter().render(pub, GENERIC_SITE_PROFILE)
-        content = f"---\n{fm}---\nOLD BODY\n"
-        _write_version_file(site, "Demo", "1.0B", content)
-        _write_pages_file(site, "Demo", f"---\nproject: Demo\n---\n{pub.readme_md}\n")
-
-        journal = _open_journal(site, dry_run=True)
-        commit_msgs: list[str] = []
-
-        def _fake_git(cmd: list[str], **kwargs: Any) -> None:
-            if cmd and cmd[0] == "commit":
-                for i, tok in enumerate(cmd):
-                    if tok == "-m" and i + 1 < len(cmd):
-                        commit_msgs.append(cmd[i + 1])
-
-        with patch("kproj.services.site_publisher._git_run", side_effect=_fake_git):
-            sp = SitePublisher(journal)
-            sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
-
-        assert commit_msgs
-        assert commit_msgs[0].startswith("refresh:")
-
     def test_publish_stages_every_journaled_path(self, tmp_path: Path) -> None:
-        """BLOCKER 2 regression: ``git add`` must cover ALL journal paths.
+        """``git add`` must cover ALL journal paths (ADR 0005 / BLOCKER 2).
 
-        Producers (PcbExporter, SchematicExporter, IbomGenerator,
-        FabPackager, SourcePackager) register every generated asset
-        with the :class:`ChangeJournal` via ``will_create`` /
-        ``will_modify``.  Before the fix, ``SitePublisher.publish``
-        staged only the version-page and project-page markdown, so the
-        committed markdown linked to asset files that were never
-        staged or pushed.  After the fix, every path in
-        ``journal.all_paths()`` is added (deduplicated, relative to
-        ``site_repo``).
+        Producers register every generated asset with the
+        :class:`ChangeJournal`; ``SitePublisher.publish`` must stage every
+        path in ``journal.all_paths()`` (deduplicated, relative to
+        ``site_repo``) plus the version page + project section index.
         """
         site = tmp_path / "site"
         site.mkdir()
@@ -482,8 +214,7 @@ class TestPublish:
         journal = _open_journal(site, dry_run=True)
 
         # Simulate producer side-effects: real asset files on disk plus
-        # journal registration.  These mirror what PcbExporter et al do
-        # before SitePublisher.publish() is called from the workflow.
+        # journal registration.
         asset_dir = site / "versions" / "Demo" / "1.0B"
         asset_dir.mkdir(parents=True, exist_ok=True)
         asset_files = [
@@ -499,8 +230,7 @@ class TestPublish:
             asset.write_bytes(b"placeholder")
             journal.will_create(asset)
 
-        # Capture the arguments passed to git so we can assert every
-        # journaled path is in the final `git add` set.
+        # Capture the arguments passed to git add.
         added_paths: list[str] = []
 
         def _fake_git(cmd: list[str], **kwargs: Any) -> None:
@@ -511,17 +241,15 @@ class TestPublish:
             sp = SitePublisher(journal)
             sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
 
-        # Every asset must appear in git add's argv (as paths relative to site_repo).
         for asset in asset_files:
             rel = str(asset.relative_to(site))
             assert rel in added_paths, (
                 f"asset {rel} was not staged for commit; "
-                f"BLOCKER 2: SitePublisher must stage every journal.all_paths() entry. "
+                f"SitePublisher must stage every journal.all_paths() entry. "
                 f"added_paths={added_paths}"
             )
-        # And the version + pages markdown still need to be in there.
         assert f"{GENERIC_SITE_PROFILE.versions_dir}/Demo/1.0B.md" in added_paths
-        assert f"{GENERIC_SITE_PROFILE.pages_dir}/Demo.md" in added_paths
+        assert f"{GENERIC_SITE_PROFILE.versions_dir}/Demo/_index.md" in added_paths
 
     def test_findings_passed_through_result(self, tmp_path: Path) -> None:
         """Findings from the publication appear in the returned PublishResult."""
@@ -549,7 +277,9 @@ class TestPublish:
         with patch("kproj.services.site_publisher._git_run") as mock_git:
             mock_git.return_value = None
             sp = SitePublisher(journal)
-            result = sp.publish(pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE)
+            result = sp.publish(
+                pub, site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
 
         assert any(f.field == "comment9_missing" for f in result.findings)
 
@@ -579,3 +309,48 @@ class TestJournalRollback:
         journal.rollback()
 
         assert not version_file.exists()
+
+
+# ──────────────────────────── project index rendering ─────────────────────────
+
+
+class TestBuildProjectIndexContent:
+    """Tests for the project section-index body (README + DESCRIPTION + datasheets)."""
+
+    def test_readme_only_matches_legacy_output(self) -> None:
+        """A README-only project renders exactly as the pre-datasheet format."""
+        pub = _pub()  # readme set, description="", datasheets=()
+        assert _build_project_index_content(pub) == (
+            "---\ntitle: Demo\nproject: Demo\n---\n# Demo\nA demo project.\n"
+        )
+
+    def test_bare_when_no_docs(self) -> None:
+        """No README / DESCRIPTION / datasheets yields an empty body."""
+        pub = Publication(
+            project_info=_pi(), analysis_info=AnalysisInfo(), body_md="", readme_md=""
+        )
+        assert _build_project_index_content(pub) == ("---\ntitle: Demo\nproject: Demo\n---\n\n")
+
+    def test_datasheets_in_front_matter_body_is_description(self) -> None:
+        """Datasheets are front-matter data; the body is README + DESCRIPTION."""
+        pub = _pub(
+            description="Prose about the board.",
+            datasheets=("Cap-Foo.pdf", "Regulator-Bar.pdf"),
+        )
+        content = _build_project_index_content(pub)
+        assert "datasheets:\n- Cap-Foo.pdf\n- Regulator-Bar.pdf\n" in content
+        body = content.split("---\n", 2)[2]
+        assert body == "# Demo\nA demo project.\n\nProse about the board.\n"
+
+    def test_datasheets_only_front_matter_empty_body(self) -> None:
+        """Datasheets-only project: names in front-matter, empty body."""
+        pub = Publication(
+            project_info=_pi(),
+            analysis_info=AnalysisInfo(),
+            body_md="",
+            readme_md="",
+            datasheets=("Only.pdf",),
+        )
+        content = _build_project_index_content(pub)
+        assert "datasheets:\n- Only.pdf\n" in content
+        assert content.split("---\n", 2)[2] == "\n"

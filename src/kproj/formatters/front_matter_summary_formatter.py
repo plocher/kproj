@@ -84,22 +84,34 @@ class FrontMatterSummaryFormatter:
         if site_profile.layout_field is not None:
             data["layout"] = site_profile.layout_field
 
-        data.update({
-            "sidebar": "spcoast_sidebar",
-            "project": P,
-            "title": R,
-            "date": pi.date,
-            "design_rev": pi.design_rev,
-            "board_rev": R,
-            "designer": pi.designer,
-            "tagline": pi.tagline,
-            "overview": pi.overview,
-            "company": pi.company,
-            "tags": list(pi.tags),
-            "status": pi.status.value,
-            "publish": True,
-            "image_path": f"/versions/{P}/{R}/{PR}.thumbnail.png",
-        })
+        data.update(
+            {
+                "sidebar": "spcoast_sidebar",
+                "project": P,
+                "title": R,
+            }
+        )
+        # Hugo's reserved ``date`` = the publish time (must be parseable).
+        # Emitted only when known; unit fixtures that don't set it omit
+        # the field so no unparseable placeholder reaches Hugo.  The
+        # SPCoast title-block ``YYYY.MM`` value lives in ``issue_date``.
+        if publication.published_at:
+            data["date"] = publication.published_at
+        data.update(
+            {
+                "issue_date": pi.date,
+                "design_rev": pi.design_rev,
+                "board_rev": R,
+                "designer": pi.designer,
+                "tagline": pi.tagline,
+                "overview": pi.overview,
+                "company": pi.company,
+                "tags": list(pi.tags),
+                "status": pi.status.value,
+                "publish": True,
+                "image_path": f"/versions/{P}/{R}/{PR}.thumbnail.png",
+            }
+        )
 
         # Fabrication fields — only when set.
         if pi.fabricated:

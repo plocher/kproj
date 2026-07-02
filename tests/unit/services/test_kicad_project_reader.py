@@ -216,6 +216,51 @@ def test_read_sch_canonical_comments(tmp_path: Path) -> None:
     assert info.status is Status.EXPERIMENTAL
 
 
+def test_read_derives_tags_from_company(tmp_path: Path) -> None:
+    """tags = [<company>, kicad] per docs/DESIGN.md § Front-matter shape."""
+    proj_dir = _populated_project(tmp_path)  # company = ACME
+    reader = _reader(tmp_path)
+    info, _ = reader.read(reader.resolve(proj_dir))
+    assert info.tags == ("ACME", "kicad")
+
+
+def test_read_splits_multi_org_company_into_tags(tmp_path: Path) -> None:
+    """A ``/``-joined company (e.g. MRCS/SPCoast) splits into separate tags."""
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="X",
+            company="MRCS/SPCoast",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="X",
+            company="MRCS/SPCoast",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    reader = _reader(tmp_path)
+    info, _ = reader.read(reader.resolve(proj_dir))
+    assert info.tags == ("MRCS", "SPCoast", "kicad")
+
+
+def test_read_tags_kicad_only_when_company_blank(tmp_path: Path) -> None:
+    """A project with no company still gets the ``kicad`` discriminator tag."""
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(revision="1.0", comments={1: "Alice", 9: "active"}),
+        pcb_title_block=TitleBlockSpec(revision="1.0"),
+    )
+    reader = _reader(tmp_path)
+    info, _ = reader.read(reader.resolve(proj_dir))
+    assert info.tags == ("kicad",)
+
+
 def test_read_designer_first_non_empty(tmp_path: Path) -> None:
     """COMMENT1 (designer) takes the first non-empty source (SCH first)."""
     proj_dir = make_minimal_project(

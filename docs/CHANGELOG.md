@@ -6,6 +6,170 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - datasheet PDFs copied into the site for linking (Phase G)
+
+`_default_artifact_generator` now copies each discovered datasheet PDF to
+`<site>/<assets_dir>/<P>/datasheets/<name>` (served at
+`/versions/<P>/datasheets/<name>`), Make-style (copied only when missing or
+the source is newer; `shutil.copy2` preserves mtime so an unchanged re-run
+stays a git no-op) and journaled for ADR-0005 rollback. New
+`common.project_docs.discover_datasheet_files` returns the datasheet source
+paths. The Hugo project page links the datasheet names to these copies.
+
+### Changed - datasheets emitted as _index.md front-matter data (Phase G)
+
+`_build_project_index_content` now emits the discovered datasheet
+filenames as a `datasheets:` YAML list in the project section-index
+front-matter, with a README + DESCRIPTION body (previously a
+`## Datasheets` list baked into the body). The datasheets are data, so
+the Hugo site layer decides presentation (a collapsible list today; a
+download bundle later) instead of the format being fixed in the page.
+
+### Changed - delegate publish change-detection to git; Make-style artifact regen (Phase G)
+
+kproj no longer re-derives no-op/refresh/publish via a bespoke content
+comparison. `SitePublisher.detect_outcome`, `_strip_volatile`, and the
+`force_outcome` plumbing are removed. New flow: the workflow regenerates
+artifacts only when a KiCad source is newer than its on-disk artifact
+(Make-style mtime staleness via `_needs_regeneration`); the version
+page's Hugo `date` is preserved from disk so an unchanged run is
+byte-identical; and `SitePublisher.publish` stages the journalled paths
+and lets `git diff --cached` decide whether to commit (empty -> no-op).
+Commit-prefix verbs (`add`/`publish`/`republish`/`refresh`) are derived
+from the staged path set. Rationale: the content comparison was premature
+optimisation without a measured baseline and its all-or-nothing regen
+fought the git no-op; mtime staleness persists no state in the site repo
+(unlike the ripped-out M11 content-hash), so it does not reintroduce that
+boundary violation. Git-dependent behaviours are validated interactively
+(the Behave/pytest suites mock git); the obsolete `detect_outcome` /
+outcome-assertion unit tests and the Story 13 no-op Behave scenario were
+removed accordingly. PRD Stories 6 + 13 and DESIGN section New-release
+detection updated to match.
+
+### Added - project-global datasheet + DESCRIPTION discovery on the section index (Phase G)
+
+The project section index (`content/versions/<P>/_index.md`) now lists the
+project's reference datasheets and optional `DESCRIPTION` prose below the README,
+completing the project-global content model (README + DESCRIPTION + datasheets +
+libraries) from the EAGLE reference UX. New `common.project_docs` provides
+`discover_datasheets(project_dir)` and `read_description(project_dir)`.
+`discover_datasheets` walks the project tree recursively so PDFs are found
+wherever they live (project root, `docs/`, `ds-downloads/`, ...), pruning
+generated / VCS / backup subtrees (hidden dirs like `.git` / `.history`, KiCad
+`*-backups`, and the fab `production/` tree); it returns case-insensitively
+sorted, de-duplicated basenames. `Publication` gains `datasheets` +
+`description`; `PublishWorkflow.build_publication` populates them from
+`resolved.project_dir` alongside `libraries`, and
+`SitePublisher._build_project_index_content` renders a `## Datasheets` name-list
+(name-only for now; copying the PDFs to the site + link/preview UX are deferred
+follow-ups). The section-index body is compared after whitespace normalization,
+so a pre-datasheet README-only page stays a no-op on re-publish.
+
+### Fixed - Hugo-safe version `date`; SPCoast YYYY.MM moves to `issue_date` (Phase G build fix)
+
+kproj emitted `date: '2026.05'` (the SPCoast YYYY.MM title-block convention), but
+`date` is a Hugo-reserved front-matter field that must be a parseable date, so
+`hugo` failed the whole build (and the GitHub Pages deploy would have failed too;
+caught by a local build during Phase G). Now the version page emits Hugo's `date`
+as the **kproj execution/publish timestamp** (RFC3339, parseable) and carries the
+YYYY.MM title-block value in a new custom `issue_date` key (Hugo ignores it). The
+publish `date` is treated as a **volatile** key in new-release detection - a
+content-identical re-run still resolves to `noop` (no-op detection is a
+performance optimisation, not a correctness gate). `Publication` gains
+`published_at`; the workflow computes it once per run.
+
+### Changed - project overview is a Hugo section index (content/versions/<P>/_index.md)
+
+The per-project overview page moved from a flat `content/pages/<P>.md` to the
+project section index `content/versions/<P>/_index.md`, so a project is a Hugo
+section (its identity = the index page) with each version a page in it - the
+EAGLE "one project page + version tabs" model. One index per project, rewritten
+each publish to reflect the most-recent-publish project-global state; kproj no
+longer writes `content/pages/<P>.md`. `SiteProfile.pages_dir` is removed;
+`SiteProfile` gains `version_page_path()` and `project_index_path()` helpers.
+`SitePublisher` (write + detect_outcome + staging + commit classification) and
+the workflow route through them.
+
+### Added - version thumbnail generation (Phase G: `image_path` now resolves)
+
+The version front-matter has always advertised
+`image_path: /versions/<P>/<R>/<P>-<R>.thumbnail.png`, but kproj never
+emitted that asset (it was marked "Phase 6 TBD"), so the URL 404'd on the
+built site. New `ThumbnailGenerator` produces `<P>-<R>.thumbnail.png` as
+part of the standard asset set. v1 grey-scale recipe: a deterministic
+copy of the top render (`<P>-<R>.top.png`) - lowest-dependency, no image
+library - so `image_path` resolves now; a real scaled/cropped thumbnail
+(Pillow or `kicad-cli pcb render --width/--height`) is a tracked
+follow-up. Written under the profile's `assets_dir` (Hugo:
+`static/versions/`), journaled for rollback like every other artifact.
+
+### Fixed - Hugo assets written under static/ so they are actually served (kproj#10 Phase G finding)
+
+Release assets were written to a repo-root `versions/` directory, but Hugo only
+serves `static/` at the site root, so every front-matter `/versions/<P>/<R>/*`
+URL (renders, STEP, SVG/PDF, iBOM, zips) would 404 on the built site. Added a
+required `assets_dir` field to `SiteProfile` (`GENERIC="versions"`,
+`HUGO="static/versions"`) plus `SiteProfile.asset_disk_path()`, which maps the
+fixed public `/versions/...` URL to the profile's physical directory. The
+default artifact generator writes there, and both disk-existence checks
+(`SitePublisher.detect_outcome`, `_assets_are_stale`) read through the same
+mapping so writer and readers agree. Public AssetRef URLs are unchanged
+(`/versions/...`); only the physical location moved. `assets_dir` is required
+(no default) so a backend can't silently reintroduce the un-served-assets bug.
+
+### Fixed - site commit message reflects the real publish outcome (kproj#10 Phase G finding)
+
+The site commit prefix was chosen purely from file existence and ignored the
+resolved `outcome`, so a full re-publish of an existing version (SCH/PCB source
+changed -> assets stale -> artifacts regenerated) was mislabelled
+`refresh: <P>-<R> (metadata updated)` even though the run reported `published`.
+The classification now distinguishes four site-publish states: `add:`
+(first-ever project publish), `publish:` (brand-new version of an existing
+project), `republish:` (existing version, artifacts regenerated), and
+`refresh: (metadata updated)` (existing version, metadata-only). These verbs
+are informational for the site publish log, not source-repo semver drivers.
+
+### Fixed - populate front-matter `tags` from company (kproj#10 Phase G finding)
+
+`KicadProjectReader.read` hardcoded `tags=()`, so every published version page
+emitted `tags: []` despite the DESIGN contract (`tags: [<company>, kicad]`).
+Surfaced by the first real publish (`cpNode-Xiao-68x90`, company `MRCS` → empty
+tags). New `_derive_tags(company)` splits the company on `/` (multi-org boards,
+e.g. `MRCS/SPCoast`) and appends the `kicad` discriminator tag; order preserved,
+duplicates removed; a blank company still yields `("kicad",)`.
+
+### Fixed - suppress ignored DRC/ERC violations by default
+
+Violations flagged as excluded/ignored by KiCad are now filtered out so they do not
+surface in stderr or the version-page tables, and they do not influence exit-code 1.
+
+### Fixed - iBOM runs under KiCad's bundled Python (kproj#10)
+
+The Phase G end-to-end publish failed at the iBOM step with
+`ModuleNotFoundError: No module named 'pcbnew'`. The PCM iBOM script
+(`generate_interactive_bom.py`) imports `pcbnew` unconditionally, and
+`pcbnew` only resolves inside KiCad's bundled Python interpreter - never
+in kproj's `uv` venv. kproj was invoking it with `sys.executable`.
+
+- **New `common.kicad_install.find_kicad_python()`** locates KiCad's
+  bundled interpreter. It derives from the same KiCad install anchor as
+  `find_kicad_cli` (single source of truth, so the interpreter always
+  matches the located `kicad-cli`) with a `KPROJ_KICAD_PYTHON` env
+  override. macOS derivation is implemented; Linux / Windows are
+  documented follow-ups (kproj#10).
+- **`IbomGenerator.__init__` now takes a required `python_exe: Path`**
+  (no default) and invokes iBOM with it instead of `sys.executable`.
+- **`PublishWorkflow`** resolves the interpreter in pre-flight (step 5a)
+  alongside the iBOM script via an injectable `kicad_python_locator`; a
+  miss is a hard exit-2 mechanical failure before any change journal
+  opens. The interpreter is threaded through `ArtifactGeneratorCallable`
+  into `IbomGenerator`.
+- **ADR 0008 amended in place** (Amendment 1) to correct the wrong
+  "`sys.executable` / any modern Python" claim.
+- **iBOM contract test de-skipped**: it now runs end-to-end under
+  `find_kicad_python()` instead of skipping when `pcbnew` is not
+  importable in the test interpreter.
+
 ### Changed - `SiteProfile` abstraction; Hugo path defaults (Phase F of Jekyll → Hugo migration)
 
 The production SPCoast site was migrated from Jekyll to Hugo in a

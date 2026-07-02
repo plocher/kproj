@@ -20,10 +20,14 @@ The argv, fixed by ADR 0008:
         --include-tracks
         <pcb>
 
-``<python>`` is :data:`sys.executable` (kproj's own interpreter, so
-the iBOM script runs in the kproj venv environment). ``<ibom_script>``
-is resolved by :func:`kproj.common.kicad_install.find_ibom_script`
-during pre-flight and injected at construction time.
+``<python>`` is **KiCad's bundled Python interpreter**, resolved by
+:func:`kproj.common.kicad_install.find_kicad_python` during pre-flight
+and injected at construction time.  It is NOT :data:`sys.executable`:
+the iBOM script does ``import pcbnew`` unconditionally, and ``pcbnew``
+is a SWIG C-extension that resolves only inside KiCad's own
+interpreter, never in kproj's ``uv``-managed venv (see ADR 0008's
+amendment / kproj#10).  ``<ibom_script>`` is likewise resolved by
+:func:`kproj.common.kicad_install.find_ibom_script` during pre-flight.
 
 The script writes ``<staging>/<name-format>.html``. The service moves
 that file to the caller's *output_file* via :func:`os.replace` so the
@@ -33,7 +37,6 @@ release-asset filename is independent of the iBOM staging directory.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -60,7 +63,7 @@ class IbomGenerator:
     per ADR 0008.
     """
 
-    def __init__(self, ibom_script: Path) -> None:
+    def __init__(self, ibom_script: Path, python_exe: Path) -> None:
         """Construct an iBOM generator.
 
         Args:
@@ -68,8 +71,15 @@ class IbomGenerator:
                 resolved by
                 :func:`kproj.common.kicad_install.find_ibom_script`
                 during pre-flight.
+            python_exe: KiCad's bundled Python interpreter (the one
+                that can ``import pcbnew``), as resolved by
+                :func:`kproj.common.kicad_install.find_kicad_python`
+                during pre-flight.  Required (no default) so callers
+                cannot silently fall back to ``sys.executable``, which
+                lacks ``pcbnew`` (ADR 0008 amendment / kproj#10).
         """
         self._ibom_script = ibom_script
+        self._python_exe = python_exe
 
     def generate(
         self,
@@ -115,7 +125,7 @@ class IbomGenerator:
         with tempfile.TemporaryDirectory(prefix="kproj-ibom-") as staging:
             staging_dir = Path(staging)
             argv = [
-                sys.executable,
+                str(self._python_exe),
                 str(self._ibom_script),
                 "--no-browser",
                 "--no-compression",

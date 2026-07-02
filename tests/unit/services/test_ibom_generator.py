@@ -8,8 +8,9 @@ Validates the contract per ADR 0008 + ``docs/DESIGN.md`` §
   --dest-dir <staging> --name-format <P>-<R>.ibom
   --extra-data-file <pcb> --dnp-field kicad_dnp
   --extra-fields MPN,Manufacturer --include-tracks <pcb>``.
-- The Python interpreter is :data:`sys.executable` (so iBOM runs
-  under the same Python as kproj per ADR 0008).
+- The Python interpreter is the injected KiCad-bundled Python
+  (``python_exe``), NOT :data:`sys.executable` (ADR 0008 amendment /
+  kproj#10: the iBOM script needs ``pcbnew``).
 - The produced ``<dest-dir>/<name_format>.html`` file is moved into
   the caller's *output_file*.
 - ChangeJournal injection is optional via method parameter.
@@ -17,7 +18,6 @@ Validates the contract per ADR 0008 + ``docs/DESIGN.md`` §
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -66,8 +66,16 @@ def ibom_script(tmp_path: Path) -> Path:
     return script
 
 
+@pytest.fixture
+def kicad_python(tmp_path: Path) -> Path:
+    """A synthetic KiCad-bundled Python interpreter path (subprocess is mocked)."""
+    python_exe = tmp_path / "kicad-python3"
+    python_exe.write_text("# stub interpreter")
+    return python_exe
+
+
 def test_generate_emits_canonical_argv(
-    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The argv matches the ADR 0008 contract token-for-token."""
     fake_run, captured = _make_fake_ibom_run()
@@ -77,7 +85,7 @@ def test_generate_emits_canonical_argv(
     pcb.write_text("(kicad_pcb)")
     output = tmp_path / "demo-1.0.ibom.html"
 
-    result = IbomGenerator(ibom_script=ibom_script).generate(
+    result = IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
         pcb_path=pcb,
         output_file=output,
         name_format="demo-1.0.ibom",
@@ -87,8 +95,9 @@ def test_generate_emits_canonical_argv(
     assert result.path == output
     assert output.exists()
     argv = captured[0]
-    # Python interpreter is sys.executable per ADR 0008.
-    assert argv[0] == sys.executable
+    # Interpreter is KiCad's bundled Python (ADR 0008 amendment / kproj#10),
+    # NOT sys.executable which lacks pcbnew.
+    assert argv[0] == str(kicad_python)
     assert argv[1] == str(ibom_script)
     # All required flags present in stable, predictable order.
     assert "--no-browser" in argv
@@ -112,7 +121,7 @@ def test_generate_emits_canonical_argv(
 
 
 def test_generate_moves_html_from_staging_dir_to_output_file(
-    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The produced ``<dest-dir>/<name-format>.html`` is moved into ``output_file``."""
     fake_run, _ = _make_fake_ibom_run()
@@ -122,7 +131,7 @@ def test_generate_moves_html_from_staging_dir_to_output_file(
     pcb.write_text("(kicad_pcb)")
     output = tmp_path / "out" / "demo-1.0.ibom.html"
 
-    IbomGenerator(ibom_script=ibom_script).generate(
+    IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
         pcb_path=pcb,
         output_file=output,
         name_format="demo-1.0.ibom",
@@ -132,7 +141,7 @@ def test_generate_moves_html_from_staging_dir_to_output_file(
 
 
 def test_generate_raises_when_html_missing(
-    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When iBOM exits 0 but produces no HTML, the service raises a clear error."""
     fake_run, _ = _make_fake_ibom_run(write_html=False)
@@ -143,7 +152,7 @@ def test_generate_raises_when_html_missing(
     output = tmp_path / "out.html"
 
     with pytest.raises(FileNotFoundError):
-        IbomGenerator(ibom_script=ibom_script).generate(
+        IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
             pcb_path=pcb,
             output_file=output,
             name_format="demo-1.0.ibom",
@@ -151,7 +160,7 @@ def test_generate_raises_when_html_missing(
 
 
 def test_generate_registers_with_change_journal(
-    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The final HTML path is registered via :meth:`ChangeJournal.will_create`."""
     fake_run, _ = _make_fake_ibom_run()
@@ -164,7 +173,7 @@ def test_generate_registers_with_change_journal(
     output = site_repo / "demo.ibom.html"
 
     with ChangeJournal(site_repo) as journal:
-        IbomGenerator(ibom_script=ibom_script).generate(
+        IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
             pcb_path=pcb,
             output_file=output,
             name_format="demo.ibom",
@@ -174,7 +183,7 @@ def test_generate_registers_with_change_journal(
 
 
 def test_generate_sets_interactive_html_bom_no_display_env(
-    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The subprocess env must include ``INTERACTIVE_HTML_BOM_NO_DISPLAY=1``.
 
@@ -206,7 +215,7 @@ def test_generate_sets_interactive_html_bom_no_display_env(
     pcb = tmp_path / "demo.kicad_pcb"
     pcb.write_text("(kicad_pcb)")
     output = tmp_path / "demo.ibom.html"
-    IbomGenerator(ibom_script=ibom_script).generate(
+    IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
         pcb_path=pcb,
         output_file=output,
         name_format="demo.ibom",
@@ -215,7 +224,7 @@ def test_generate_sets_interactive_html_bom_no_display_env(
 
 
 def test_generate_propagates_subprocess_failure(
-    ibom_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failing iBOM script surfaces SubprocessFailedError unchanged."""
 
@@ -231,7 +240,7 @@ def test_generate_propagates_subprocess_failure(
     output = tmp_path / "out.html"
 
     with pytest.raises(subprocess_runner.SubprocessFailedError):
-        IbomGenerator(ibom_script=ibom_script).generate(
+        IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
             pcb_path=pcb,
             output_file=output,
             name_format="demo.ibom",

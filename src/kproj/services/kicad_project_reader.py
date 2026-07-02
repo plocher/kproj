@@ -236,7 +236,7 @@ class KicadProjectReader:
             fabricated=bool(pcb_metadata.date),
             fab_date=pcb_metadata.date,
             replaced_by_target=replaced_by_target,
-            tags=(),
+            tags=_derive_tags(company),
             raw_sch=raw_sch,
             raw_pcb=raw_pcb,
         )
@@ -358,6 +358,34 @@ def _join_overview(tagline: str, tail: str) -> str:
     """Join comment2 + comment3 with a single separator, skipping empties."""
     parts = [part for part in (tagline, tail) if part]
     return " ".join(parts)
+
+
+def _derive_tags(company: str) -> tuple[str, ...]:
+    """Derive the kproj-authoritative front-matter tag set from *company*.
+
+    Per ``docs/DESIGN.md`` § *Front-matter shape*: ``tags: [<company>, kicad]``.
+    The company string is split on ``/`` (the SPCoast convention for a
+    board owned by more than one org, e.g. ``MRCS/SPCoast``); each
+    non-empty part becomes a tag, in order, followed by the literal
+    ``kicad`` discriminator tag. Duplicates are removed while preserving
+    first-seen order. An empty company yields ``("kicad",)``.
+
+    Args:
+        company: The canonical company string (PCB-canonical, SCH
+            fallback) resolved in :meth:`KicadProjectReader.read`.
+
+    Returns:
+        The ordered, de-duplicated tag tuple kproj emits into the
+        version-page front-matter ``tags:`` field.
+    """
+    tags: list[str] = []
+    for part in company.split("/"):
+        cleaned = part.strip()
+        if cleaned and cleaned not in tags:
+            tags.append(cleaned)
+    if "kicad" not in tags:
+        tags.append("kicad")
+    return tuple(tags)
 
 
 def _parse_status(value: str) -> tuple[Status, str | None]:

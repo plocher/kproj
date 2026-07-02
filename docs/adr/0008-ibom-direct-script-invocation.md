@@ -1,6 +1,6 @@
 # ADR 0008: iBOM via Direct Script Invocation
 Date: 2026-06-29
-Status: Accepted
+Status: Accepted (amended 2026-07-01, see Amendment 1)
 Related: ADR 0007 (Local-CLI v1), ADR 0009 (KicadInstallLocator)
 Supersedes: Plan § Phase 1 Closeout / Locked Decisions / iBOM invocation
 
@@ -35,7 +35,7 @@ kproj v1 invokes the iBOM generator script **directly** via `subprocess.run`:
 
 The `<ibom-script>` path is discovered by the `KicadInstallLocator` utility (ADR 0009), not hardcoded. Pre-flight failure when the iBOM plugin is not installed is a hard exit-2 mechanical failure (per user direction during Phase 4 resolution).
 
-The `<python>` interpreter is the same Python that runs kproj — the iBOM script is a portable Python module shipped by the PCM package and runnable in any modern Python environment.
+The `<python>` interpreter is **KiCad's bundled Python** (see Amendment 1 below). The original decision claimed it could be `sys.executable`; that was wrong and is corrected there.
 
 ## Consequences
 
@@ -54,6 +54,18 @@ The `<python>` interpreter is the same Python that runs kproj — the iBOM scrip
 ### Reversibility
 
 If `kicad-cli jobset run` ever gains a headless mode (or KiCad's plugin architecture changes such that the job runner no longer requires a GUI), kproj can revert to the jobset approach by replacing the iBOM subprocess command — the rest of the pipeline is unaffected. The IbomGenerator service contract isolates the invocation from the rest of kproj.
+
+## Amendment 1 (2026-07-01): the interpreter is KiCad's bundled Python, not `sys.executable`
+
+The original Decision stated the `<python>` interpreter "is the same Python that runs kproj — the iBOM script is a portable Python module ... runnable in any modern Python environment." **This is incorrect.** The PCM iBOM script (`generate_interactive_bom.py`) does `import pcbnew` unconditionally, and `pcbnew` is a SWIG-bound C-extension that resolves **only** inside KiCad's own bundled Python interpreter — never in kproj's `uv`-managed venv. Invoking iBOM with `sys.executable` fails immediately with `ModuleNotFoundError: No module named 'pcbnew'` (surfaced as the Phase G blocker; see [kproj#10](https://github.com/plocher/kproj/issues/10)).
+
+Corrected decision:
+
+- `<python>` is **KiCad's bundled Python interpreter**, located by `common.kicad_install.find_kicad_python()` (ADR 0009 locator family). The interpreter is derived from the same KiCad install anchor as `kicad-cli` (single source of truth), with a `KPROJ_KICAD_PYTHON` env override. macOS derivation is implemented; Linux / Windows are documented follow-ups in kproj#10.
+- `IbomGenerator.__init__` takes a **required** `python_exe: Path` (no default, so no caller can silently fall back to `sys.executable`). The workflow resolves it in pre-flight (step 5a) alongside the iBOM script; a miss is the same hard exit-2 mechanical failure as a missing iBOM plugin, before any change journal opens.
+- The `INTERACTIVE_HTML_BOM_NO_DISPLAY=1` env var (already set by `IbomGenerator`) remains required so the script runs headless without wxPython.
+
+The direct-script-invocation decision itself (vs `kicad-cli jobset run`) is unchanged; only the interpreter-choice nuance is corrected.
 
 ### Plan staleness
 

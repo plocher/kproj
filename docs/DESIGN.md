@@ -139,15 +139,20 @@ Missing file is fine; defaults apply.
 
 ## SiteProfile abstraction
 
-kproj isolates site-backend-specific decisions (per-version markdown location, per-project overview page location, whether an explicit `layout:` front-matter field is emitted) behind a `SiteProfile` dataclass in `src/kproj/config.py`. **Two built-in profiles ship in v1** — an abstract test anchor and one concrete backend — mirroring jBOM ADR 0008's `generic` vs. named-profile pattern.
+kproj isolates site-backend-specific decisions (per-version markdown location, per-project overview page location, where per-version **asset files** are physically written, whether an explicit `layout:` front-matter field is emitted) behind a `SiteProfile` dataclass in `src/kproj/config.py`. **Two built-in profiles ship in v1** — an abstract test anchor and one concrete backend — mirroring jBOM ADR 0008's `generic` vs. named-profile pattern.
 
 ```python path=null start=null
 @dataclass(frozen=True)
 class SiteProfile:
     name: str
-    versions_dir: str          # relative to site_repo root
-    pages_dir: str             # relative to site_repo root
+    versions_dir: str          # per-version markdown dir, relative to site_repo root
+    pages_dir: str             # per-project overview dir, relative to site_repo root
+    assets_dir: str            # per-version ASSET files dir (Hugo: static/versions), relative to site_repo root
     layout_field: str | None   # None omits ``layout:``; "eagle" emits Jekyll's field
+
+    def asset_disk_path(self, site_repo: Path, public_asset_path: str) -> Path:
+        """Map a public asset URL (/versions/<P>/<R>/<file>) to its on-disk path
+        by swapping the leading served-mount segment for ``assets_dir``."""
 
 
 # Abstract test anchor — backend-neutral defaults.
@@ -155,6 +160,7 @@ GENERIC_SITE_PROFILE = SiteProfile(
     name="generic",
     versions_dir="versions",
     pages_dir="pages",
+    assets_dir="versions",
     layout_field=None,
 )
 
@@ -164,9 +170,12 @@ HUGO_SITE_PROFILE = SiteProfile(
     name="hugo",
     versions_dir="content/versions",
     pages_dir="content/pages",
+    assets_dir="static/versions",   # Hugo serves static/ at /, so files resolve at /versions/
     layout_field=None,   # Hugo picks by section
 )
 ```
+
+**Public asset URL vs physical location.** Asset files are referenced in front-matter by their fixed public URL — always `/versions/<Project>/<Revision>/<file>` — but the *physical* file lands under `assets_dir`. Hugo serves `static/` at the site root, so `static/versions/...` resolves at `/versions/...`. `assets_dir` is a **required** profile field (no default): an implicit fallback to a repo-root `versions/` is exactly what let Hugo assets land outside `static/` and 404 (kproj#10 Phase G finding). `SiteProfile.asset_disk_path()` centralises the URL→disk mapping; `_default_artifact_generator` (writing) and both disk-existence checks (`SitePublisher.detect_outcome`, `_assets_are_stale`) route through the profile so writer and readers agree.
 
 ### Two-profile split — rationale
 
@@ -179,16 +188,16 @@ HUGO_SITE_PROFILE = SiteProfile(
 **The profile has no in-code default value.** It is a required parameter on every consumer, and is resolved exactly once — at `load_config` time (v1) or at argparse time (v1.1+ when a `--profile` CLI flag lands) — then passed down through the entire call chain.
 
 * `KprojConfig.site_profile` is a required field (no dataclass default). Callers must always specify it. `load_config` computes it via a new `_resolve_site_profile()` helper that mirrors the existing `_resolve_site_repo` / `_resolve_no_push` / `_resolve_kicad_cli` precedence chain. v1 hard-codes the return value to `HUGO_SITE_PROFILE`; v1.1+ grows the CLI flag + env var + yaml key precedence with argparse-time default = `generic`.
-* `SitePublisher.publish`, `SitePublisher.detect_outcome`, `FrontMatterSummaryFormatter.render`, and `_build_version_content` all require `site_profile` explicitly. **No** `= GENERIC_SITE_PROFILE` fallback defaults anywhere in the service or formatter layer.
+* `SitePublisher.publish`, `FrontMatterSummaryFormatter.render`, and `_build_version_content` all require `site_profile` explicitly. **No** `= GENERIC_SITE_PROFILE` fallback defaults anywhere in the service or formatter layer.
 * Test fixtures that construct :class:`KprojConfig` (or call a service directly) pass `site_profile=GENERIC_SITE_PROFILE` explicitly. This is deliberate: the abstraction is only safe if every caller has to think about the profile.
 
 The motivation: DRY-hardcoded defaults on multiple function signatures create a maintenance hazard — if the "what profile should we use when unspecified?" answer ever changes, every function default has to be updated in lockstep, and a new function author can silently forget the default entirely. jBOM's ADR 0008 avoids this by keeping the argparse layer as the *only* place the default lives; kproj follows the same discipline.
 
 ### Consumer contract
 
-* `SitePublisher.publish` and `.detect_outcome` read `versions_dir` / `pages_dir` from the (required) caller-supplied profile.
+* `SitePublisher.publish` derives the version-page (`versions_dir/<P>/<R>.md`) and project section-index (`versions_dir/<P>/_index.md`) paths from the (required) caller-supplied profile via `version_page_path()` / `project_index_path()`.
 * `FrontMatterSummaryFormatter.render` emits `layout: <value>` only when `profile.layout_field is not None`.
-* Behave scenarios and unit-test fixtures reference `GENERIC_SITE_PROFILE.versions_dir` / `.pages_dir` — never literal path strings.
+* Behave scenarios and unit-test fixtures reference `GENERIC_SITE_PROFILE.versions_dir` / `.project_index_path()` — never literal path strings.
 * Adding a new backend (Jekyll, Astro, custom) means declaring a new `SITE_PROFILE` constant and (eventually) exposing it via the `--profile` flag. No service code changes required.
 
 The `--site-repo` CLI flag remains reserved for the on-disk site checkout path; the two concerns (repo location, backend shape) are orthogonal.
@@ -242,6 +251,7 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - This ordering is mandatory: a private project must not fail on "iBOM plugin missing" or "site repo dirty", since it neither invokes iBOM nor writes to the site
 5. Remaining pre-flight (non-private only)
    - ibom_script = common.kicad_install.find_ibom_script()       # ADR 0008; missing → exit 2
+   - kicad_python = common.kicad_install.find_kicad_python()     # ADR 0008 Amendment 1 / kproj#10; KiCad's bundled interpreter (has pcbnew); missing → exit 2
    - If not dry_run: check site_repo cleanliness (git -C <site_repo> status --porcelain); dirty → exit 2
    - Any failure → PublishResult(outcome="failed", exit_code=2). No journal opened.
 6. New-release detection (consults site_repo)
@@ -254,8 +264,8 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - Journal lives across steps 8–10. Any unhandled exception triggers full rollback (ADR 0005).
    - On dry_run, the journal is opened in dry-run mode: registers intent only, never writes.
 8. Generate artifacts (only on outcome=="publish"; skipped on outcome=="refresh"/"noop")
-   - Every artifact-producing service receives the open journal + kicad_cli + (for IbomGenerator) ibom_script.
-   - Each service writes to <site_repo>/versions/<P>/<R>/<file> via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 10.
+   - Every artifact-producing service receives the open journal + kicad_cli + (for IbomGenerator) ibom_script + kicad_python.
+   - Each service writes to <site_repo>/<site_profile.assets_dir>/<P>/<R>/<file> (Hugo: static/versions/...; served at the public /versions/... URL) via journaled tempfile + os.replace, OR writes to a journal-managed staging dir for move-into-place at step 10.
    - PcbExporter.export_render(side=top|bottom)        # see ExportResult below
    - PcbExporter.export_step()
    - SchematicExporter.export_svg(root_only=True)      # see SchematicExporter directory-output mechanics
@@ -263,10 +273,10 @@ If resolution fails (zero or multiple candidates), jBOM raises; kproj catches, f
    - IbomGenerator.generate()                          # ADR 0008: direct script invocation via ibom_script
    - FabPackager.package(resolved.project_dir / "production")
    - SourcePackager.package(resolved.project_dir)      # writes source.zip (project artifacts only)
-   - Thumbnail recipe (Phase 6 deepening)
+   - ThumbnailGenerator.generate(top_png)              # v1: copy of top.png so image_path resolves (scaling is a follow-up)
 9. Build Publication (compose ProjectInfo + AnalysisInfo + asset_refs + body_md)
 10. SitePublisher.publish(publication, journal, site_repo, no_push, dry_run, site_profile)
-    - On outcome ∈ {"publish", "refresh"}: journal-write <site_profile.versions_dir>/<P>/<R>.md + <site_profile.pages_dir>/<P>.md (atomic via tempfile + os.replace)
+    - On outcome ∈ {"publish", "refresh"}: journal-write <site_profile.versions_dir>/<P>/<R>.md + <site_profile.versions_dir>/<P>/_index.md (the project section index; atomic via tempfile + os.replace)
     - If not dry_run: git -C <site_repo> add <touched> ; git commit ; journal.mark_committed() ; (unless no_push) git push ; journal.mark_pushed()
 11. Close ChangeJournal cleanly. Return PublishResult.
 
@@ -274,26 +284,13 @@ ADR 0005 rollback scope covers EVERY file produced under journal scope — artif
 ```
 
 ## New-release detection
-
-No-op vs refresh vs publish is decided by comparing the **full rendered publication** to the on-disk site state, not just the front-matter. The reviewer's Phase 4 finding M4 caught the original front-matter-only comparison as too narrow.
-
-The comparison inputs:
-
-1. **Front-matter** of `<site_repo>/<site_profile.versions_dir>/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
-2. **Body markdown** of the same file vs the body kproj would emit (the audit/DRC/ERC tables).
-3. **Project page body** of `<site_repo>/<site_profile.pages_dir>/<P>.md` vs the project's current `README.md` content (per ADR 0002, the project page body is always rewritten from README.md).
-4. **Asset manifest** for `<site_repo>/versions/<P>/<R>/`:
-   - Every artifact listed in the front-matter `artifacts[]` and `images[]` must exist on disk.
-   - Each artifact's mtime is compared against the corresponding source mtime (e.g. `<P>-<R>.top.png` vs `<pcb>.kicad_pcb`; `<P>-<R>.ibom.html` vs `<pcb>.kicad_pcb`; `<P>-<R>.source.zip` vs the latest mtime in the project's source-include set; `<P>-<R>.fab.zip` vs the latest mtime in `<project_dir>/production/`).
-   - Any asset older than its source is treated as stale and forces `outcome="publish"`.
-
-Outcome decision:
-
-- All four inputs match → `outcome="noop"`. Return early. Exit 0 (or 1 if audit/DRC/ERC findings exist).
-- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite the version markdown + `<pages_dir>/<P>.md`. Skip asset regeneration.
-- The target file is absent, OR any asset is missing, OR any asset is stale → `outcome="publish"`. Run the full artifact pipeline.
-
-The status transition (e.g. `experimental` → `active`) is the canonical metadata-refresh case. README edits that don't touch any artifact's source files are also refresh-only. Anything that touches a `.kicad_pcb`, `.kicad_sch`, or `production/` files forces a publish.
+kproj does not re-derive change detection: it delegates to **git**, combined with **Make-style** artifact regeneration. This replaced an earlier bespoke content comparison (`SitePublisher.detect_outcome`) that computed noop/refresh/publish by comparing the full rendered publication to on-disk state; that machinery was removed during Phase G as premature optimisation (no measured baseline) whose all-or-nothing regen also fought the git no-op.
+How it works now:
+1. **Make-style regeneration** (`_needs_regeneration` in the workflow): the artifact producers re-run only when the version page is absent, an expected asset is missing, or an existing asset is older than its KiCad source (`_assets_are_stale` / `_source_paths_by_tag`: PCB -> renders/STEP/iBOM/thumbnail; root SCH -> sch.svg/pdf; newest project file -> source.zip; newest `production/` file -> fab.zip). Unchanged sources leave the timestamped binaries (STEP/PDF/iBOM headers carry a generation time) byte-identical, so they do not churn.
+2. **Date preservation** (`SitePublisher`): the version page's Hugo-reserved `date` is read back from the on-disk file and re-emitted, so a content-identical re-run produces byte-identical markdown.
+3. **git decides the commit**: `SitePublisher.publish` writes the markdown, stages every journalled path, and runs `git diff --cached`. Empty diff -> nothing changed -> `outcome="noop"`, no commit. Non-empty -> commit (and push unless `--no-push`) with `outcome="published"` (or `"refreshed"` when only markdown changed).
+The commit-prefix verb is derived from the staged path set: `add:` (new project index), `publish:` (new version page), `republish:` (existing version, assets changed), `refresh:` (existing version, markdown-only).
+Known limits (acceptable for the local single-user regime): git does not preserve mtimes across a fresh clone (the classic Make caveat); a project with a perpetually-absent optional asset (e.g. `fab.zip` when `production/` is present but incomplete) regenerates every run rather than settling into a no-op.
 
 ## Release asset set — filenames and subprocess commands
 
@@ -306,10 +303,10 @@ Files emitted into `<site_repo>/versions/<Project>/<board_rev>/`. Filename token
 | `<P>-<R>.step` | `PcbExporter.export_step()` | `kicad-cli pcb export step --output <P>-<R>.step <pcb>` |
 | `<P>-<R>.sch.svg` | `SchematicExporter.export_svg(root_only=True)` | `kicad-cli sch export svg --output <P>-<R>.sch.svg <root.kicad_sch>` |
 | `<P>-<R>.sch.pdf` | `SchematicExporter.export_pdf(all_sheets=True)` | `kicad-cli sch export pdf --output <P>-<R>.sch.pdf <root.kicad_sch>` |
-| `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | direct invocation per ADR 0008: `<python> <ibom_script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>`. `<python>` = `sys.executable`; `<ibom_script>` = `common.kicad_install.find_ibom_script()`. |
+| `<P>-<R>.ibom.html` | `IbomGenerator.generate()` | direct invocation per ADR 0008: `<python> <ibom_script> --no-browser --no-compression --dest-dir <out> --name-format "<P>-<R>.ibom" --extra-data-file <pcb> --dnp-field kicad_dnp --extra-fields MPN,Manufacturer --include-tracks <pcb>`. `<python>` = `common.kicad_install.find_kicad_python()` (KiCad's bundled interpreter — the iBOM script needs `pcbnew`; ADR 0008 Amendment 1 / kproj#10, NOT `sys.executable`); `<ibom_script>` = `common.kicad_install.find_ibom_script()`. |
 | `<P>-<R>.fab.zip` | `FabPackager.package()` | reads jBOM-produced gerber pack from `<project_dir>/production/<title>_<rev>.zip` plus `bom.csv` + `pos.csv` → normalizes filenames inside the zip and assembles via `ZipArchiver` |
 | `<P>-<R>.source.zip` | `SourcePackager.package()` | walks `<project_dir>` per include/exclude rules → assembles via `ZipArchiver` |
-| `<P>-<R>.thumbnail.{png,svg}` | TBD Phase 6 | open: PIL crop of `top.png`, or PCB SVG outline |
+| `<P>-<R>.thumbnail.png` | `ThumbnailGenerator.generate()` | v1 grey-scale recipe: deterministic copy of `<P>-<R>.top.png` (pure-Python; no image lib) so the front-matter `image_path` resolves. Follow-up: real scaled crop via Pillow or `kicad-cli pcb render --width/--height`. |
 
 iBOM script discovery is delegated to `common.kicad_install.find_ibom_script()` (ADR 0009). Pre-flight calls this once and injects the resolved path into `IbomGenerator`. Missing iBOM plugin → exit 2 with message: `kproj: iBOM plugin not installed at <probed-path>. Install via KiCad's Plugin and Content Manager: org_openscopeproject_InteractiveHtmlBom.`
 
@@ -390,7 +387,7 @@ class DesignAnalyzer:
         """kicad_cli is the discovered executable path from common.kicad_install.find_kicad_cli()."""
     def analyze(self, resolved: ResolvedProject) -> AnalysisInfo:
         """Invoke `<kicad_cli> pcb drc` and `<kicad_cli> sch erc`, parse JSON outputs into Findings.
-        Preserves KiCad's exclusion severity via Severity.exclusion."""
+        Violations flagged as excluded/ignored in KiCad are suppressed by default."""
 ```
 
 DRC subprocess: `<kicad_cli> pcb drc --format json --severity-all --output <tempfile> <resolved.pcb_file>`.
@@ -442,13 +439,18 @@ v1 emits only the root sheet as SVG (single file inline on version page) and the
 
 ```python path=null start=null
 class IbomGenerator:
-    def __init__(self, ibom_script: Path) -> None:
+    def __init__(self, ibom_script: Path, python_exe: Path) -> None:
         """ibom_script is the discovered generate_interactive_bom.py path
-        (from common.kicad_install.find_ibom_script(), run once in pre-flight)."""
+        (from common.kicad_install.find_ibom_script(), run once in pre-flight).
+        python_exe is KiCad's bundled Python interpreter
+        (from common.kicad_install.find_kicad_python(); ADR 0008 Amendment 1 /
+        kproj#10). Required, no default: the iBOM script imports pcbnew, which
+        only resolves under KiCad's interpreter - never kproj's venv."""
     def generate(self, pcb_path: Path, output_dir: Path, name_format: str) -> ExportResult:
         """Invoke iBOM directly per ADR 0008:
-          common.subprocess_runner.run([sys.executable, str(self.ibom_script), ...args..., str(pcb_path)])
-        Pre-flight already verified the script exists; this method assumes it does.
+          common.subprocess_runner.run([str(self.python_exe), str(self.ibom_script), ...args..., str(pcb_path)])
+        run with env INTERACTIVE_HTML_BOM_NO_DISPLAY=1 so iBOM runs headless.
+        Pre-flight already verified the script + interpreter exist; this method assumes they do.
         Returns ExportResult with path = produced HTML file."""
 ```
 
@@ -514,6 +516,17 @@ Classification precedence: a `fp-lib-table` / `sym-lib-table` entry wins over a 
 - **Workflow**: `PublishWorkflow.build_publication(resolved, project_info, analysis_info)` calls the utility and threads the result onto the constructed `Publication`. This is DESIGN step 8.
 - **Rendering**: `SitePublisher` consumes `Publication.libraries` when emitting the version-page front-matter / body. Tracked by kproj#4 - not modified in this PR.
 
+### Project-global docs (datasheets + DESCRIPTION)
+
+Alongside the library list, the project-global content model (per the EAGLE reference UX) includes prose docs and reference datasheet PDFs that are constant across board revisions. These render on the project section index (`<versions_dir>/<P>/_index.md`), not the per-version page.
+
+- **Utilities**: `common.project_docs.discover_datasheets(project_dir) -> tuple[str, ...]` and `common.project_docs.read_description(project_dir) -> str`.
+- **Datasheet scan**: recursive walk of `project_dir` for `*.pdf` (case-insensitive on the extension), so datasheets are found wherever the maintainer stores them (project root, `docs/`, `ds-downloads/`, ...). Generated / VCS / backup subtrees are pruned: hidden dirs (`.git`, `.history`), KiCad `*-backups`, and the fab `production/` tree. Returns case-insensitively sorted, de-duplicated basenames (stable for reproducible publishes).
+- **DESCRIPTION**: first of `DESCRIPTION.md` / `DESCRIPTION.txt` / `DESCRIPTION` at the project root wins; empty string when none.
+- **Fields**: `Publication.datasheets: tuple[str, ...]` and `Publication.description: str` (both frozen; default `()` / `""`).
+- **Workflow**: `PublishWorkflow.build_publication` calls both utilities against `resolved.project_dir` and threads the result onto the constructed `Publication` (DESIGN step 9), alongside `libraries`.
+- **Rendering**: `SitePublisher._build_project_index_content` appends the DESCRIPTION prose and a `## Datasheets` markdown bullet list (name-only) after the README body. Copying the PDFs into the site + link/preview UX are deferred follow-ups.
+
 ### `ZipArchiver`
 
 ```python path=null start=null
@@ -541,7 +554,7 @@ class SitePublisher:
     ) -> PublishResult:
         """Compute new-release detection.
         Write <site_profile.versions_dir>/<P>/<R>.md (atomic; default: content/versions/...).
-        Write <site_profile.pages_dir>/<P>.md (atomic; default: content/pages/...; always rewritten from Publication's body_md).
+        Write <site_profile.versions_dir>/<P>/_index.md (the project section index; atomic; one per project, rewritten each publish from the README).
         For new releases: assets are already in place (PcbExporter et al wrote directly).
         git add + git commit + (unless no_push) git push.
         All writes journaled for rollback."""
@@ -549,10 +562,12 @@ class SitePublisher:
 
 Front-matter rendering happens inside `FrontMatterSummaryFormatter` (called from `SitePublisher`).  The formatter takes a `SiteProfile` and emits an explicit `layout:` field only when the profile declares one; under `GENERIC_SITE_PROFILE` (Hugo default) the field is omitted.  Body markdown comes from `Publication.body_md` (already rendered upstream with the audit/DRC tables).
 
-Commit message format:
-- New release: `publish: <Project>-<board_rev>`
-- Metadata refresh: `refresh: <Project>-<board_rev> (<reason>)`
-- First release for a new project: `add: <Project> <board_rev>`
+Commit message format. Four distinct site-publish states, each meaningful in the site repo's publish log. The verb is chosen from file existence (`project_is_new` / `version_is_new`) plus the resolved `outcome` (`publish` = artifacts (re)generated, `refresh` = metadata-only):
+- First-ever publish of a project: `add: <Project> <board_rev>`
+- Brand-new version of an existing project: `publish: <Project>-<board_rev>`
+- Existing version, artifacts regenerated because the SCH/PCB source changed: `republish: <Project>-<board_rev>`
+- Existing version, metadata-only change (no artifact regen): `refresh: <Project>-<board_rev> (metadata updated)`
+Note: this is the *site publish log*, not a source repo, so these verbs are informational/audit-oriented rather than driving semver/changelog automation.
 
 ### `ChangeJournal`
 
@@ -602,7 +617,8 @@ iskicad: true                      # Phase 1 closeout discriminator: true | 'obs
 sidebar: spcoast_sidebar
 project: <project-basename>        # consumed by eagle.html's site.versions | where: "project", page.project
 title: <board_rev>                 # e.g. 1.0B — per-version key; consumed by version tabs
-date: <YYYY.MM>                    # PCB title-block date
+date: <RFC3339>                    # Hugo's reserved publish date = kproj execution time (parseable). VOLATILE: ignored in new-release detection so a plain re-run stays a no-op.
+issue_date: <YYYY.MM>              # PCB title-block date (SPCoast convention). Custom key; Hugo ignores it. (Was `date:` pre-Hugo; renamed because Hugo requires `date` to be a parseable date.)
 design_rev: <sch_rev>              # kproj convention; not consumed by eagle.html
 board_rev: <board_rev>             # same as title; convenience for grep/audit
 designer: <comment1>               # consumed (informational)
@@ -645,7 +661,7 @@ kproj is the driver of the site's evolution from EAGLE-era to KiCad-aware. The s
 
 Body content (below the `---` front-matter terminator): the audit + DRC/ERC findings rendered as two adjacent Markdown tables via `MarkdownTableFormatter`. Optionally followed by README.md content if the user wants verbose project documentation in the version body (Phase 6 decision; for v1, body is just the tables).
 
-`pages/<Project>.md` is similar but covers project-level metadata; body content is the project's README.md content (always rewritten).
+`<versions_dir>/<Project>/_index.md` (the project section index) covers project-level metadata; body content is the project's README.md content (always rewritten). It is a single page per project (a Hugo section index), rewritten on each publish to reflect the most-recent-publish project-global state; kproj no longer writes a separate `pages/<Project>.md`.
 
 ## Site-repo git workflow
 

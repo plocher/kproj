@@ -22,6 +22,7 @@ from kproj.common.kicad_install import (
     KicadNotFoundError,
     find_ibom_script,
     find_kicad_cli,
+    find_kicad_python,
     find_plugins_dir,
     kicad_version,
 )
@@ -203,6 +204,81 @@ def test_find_ibom_script_raises_when_missing(
     monkeypatch.setattr(kicad_install, "find_plugins_dir", lambda: plugins)
     with pytest.raises(KicadNotFoundError, match="org_openscopeproject_InteractiveHtmlBom"):
         find_ibom_script()
+
+
+# ----------------------------------------------------------------------
+# find_kicad_python
+# ----------------------------------------------------------------------
+
+
+def test_find_kicad_python_returns_explicit_env_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``KPROJ_KICAD_PYTHON`` env var wins when the file exists."""
+    explicit = tmp_path / "kicad-python3"
+    explicit.write_text("")
+    monkeypatch.setenv("KPROJ_KICAD_PYTHON", str(explicit))
+    assert find_kicad_python() == explicit
+
+
+def test_find_kicad_python_rejects_explicit_env_path_when_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A set-but-missing override raises rather than falling through."""
+    monkeypatch.setenv("KPROJ_KICAD_PYTHON", str(tmp_path / "no-such-python"))
+    with pytest.raises(KicadNotFoundError, match="KPROJ_KICAD_PYTHON"):
+        find_kicad_python()
+
+
+def test_find_kicad_python_derives_from_macos_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On macOS the interpreter is derived from the KiCad.app bundle anchor.
+
+    ``kicad-cli`` at ``<bundle>/Contents/MacOS/kicad-cli`` implies the
+    interpreter at
+    ``<bundle>/Contents/Frameworks/Python.framework/Versions/Current/bin/python3``.
+    """
+    monkeypatch.delenv("KPROJ_KICAD_PYTHON", raising=False)
+    monkeypatch.setattr(kicad_install.sys, "platform", "darwin")
+    contents = tmp_path / "KiCad.app" / "Contents"
+    cli = contents / "MacOS" / "kicad-cli"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("")
+    python = (
+        contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3"
+    )
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    monkeypatch.setattr(kicad_install, "find_kicad_cli", lambda: cli)
+    assert find_kicad_python() == python
+
+
+def test_find_kicad_python_raises_when_derived_interpreter_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """macOS derivation that points at a non-existent interpreter raises."""
+    monkeypatch.delenv("KPROJ_KICAD_PYTHON", raising=False)
+    monkeypatch.setattr(kicad_install.sys, "platform", "darwin")
+    cli = tmp_path / "KiCad.app" / "Contents" / "MacOS" / "kicad-cli"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("")  # bundle has no Python.framework
+    monkeypatch.setattr(kicad_install, "find_kicad_cli", lambda: cli)
+    with pytest.raises(KicadNotFoundError, match="pcbnew"):
+        find_kicad_python()
+
+
+def test_find_kicad_python_raises_on_unsupported_platform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Linux / Windows have no derivation yet → clear not-found error."""
+    monkeypatch.delenv("KPROJ_KICAD_PYTHON", raising=False)
+    monkeypatch.setattr(kicad_install.sys, "platform", "linux")
+    cli = tmp_path / "kicad-cli"
+    cli.write_text("")
+    monkeypatch.setattr(kicad_install, "find_kicad_cli", lambda: cli)
+    with pytest.raises(KicadNotFoundError, match="pending"):
+        find_kicad_python()
 
 
 # ----------------------------------------------------------------------

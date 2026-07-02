@@ -109,7 +109,7 @@ AND the site repo is committed and pushed
 
 *Note*: `${COMMENT9}` is read from the SCH title-block per the locked per-field metadata precedence (SCH is canonical for `comment2`/`comment3`/`comment9`; PCB title-blocks routinely omit them). See `docs/DESIGN.md` § *Metadata precedence*.
 
-*v1 behavior*: any SCH edit — including a title-block-only edit like `${COMMENT9}` — currently triggers a full publish (all renders + iBOM + fab + source archive regenerated). An earlier draft of this story promised a "cheap refresh" path (metadata-only edits would skip artifact regen); the implementation was designed and reviewed but ripped out post-PR#11 as premature optimization. We have no measured baseline for how expensive a full publish actually is, and no evidence that metadata-only edits are frequent enough to justify the state-persistence machinery required to detect them cleanly (which would also couple kproj's correctness to the site repo's file schema — an ownership-boundary violation). A smart-refresh implementation is deferred pending profile data. See [kproj#17](https://github.com/plocher/kproj/issues/17) (profile hooks — produces the baseline data) and [kproj#18](https://github.com/plocher/kproj/issues/18) (smart refresh — gated on that data).
+*v1 behavior*: kproj regenerates each artifact only when its KiCad source is newer than the on-disk artifact (Make-style mtime staleness), then lets git decide whether anything actually changed. A `${COMMENT9}` status edit touches the SCH, so the SCH-derived artifacts (`sch.svg`/`sch.pdf`) + source archive regenerate and the version markdown's `status` changes; git sees a diff, so kproj stamps a fresh `date:` and commits/pushes. The PCB-derived artifacts (renders, STEP, iBOM) are left untouched because the PCB did not change. This replaces the earlier content-hash "cheap refresh" (designed, reviewed, then ripped out post-PR#11 as premature optimization that persisted state in a repo kproj does not own); mtime staleness needs no persisted state, so it does not reintroduce that boundary violation. See `docs/DESIGN.md` § *New-release detection*. Prior smart-refresh discussion: [kproj#17](https://github.com/plocher/kproj/issues/17), [kproj#18](https://github.com/plocher/kproj/issues/18).
 
 #### Story 7 — Skip a private project
 *As a project author with a project not for public release (cpOD pattern), I want to mark it as `status: private`, so that kproj skips the site-publish step automatically.*
@@ -186,19 +186,16 @@ AND stderr contains the git command lines and their stdout/stderr
 *As a project author, I want kproj to recognize when nothing has changed and do no work, so that re-runs after a successful publish are cheap and silent.*
 
 ```gherkin path=null start=null
-GIVEN a kicad_project already published, where:
-  - the current front-matter kproj would emit matches the on-disk `<versions_dir>/<P>/<R>.md` front-matter (default `content/versions/...` under GENERIC)
-  - the current body kproj would emit matches the on-disk body
-  - the project's README.md content matches the on-disk `<pages_dir>/<P>.md` body (default `content/pages/...`)
-  - every artifact referenced in the front-matter exists on disk and is not older than its source
+GIVEN a kicad_project already published, where the KiCad sources are unchanged since the last publish (no artifact is stale) and the project-global inputs (README, DESCRIPTION, datasheets) are unchanged
 WHEN I run `kproj <path>`
-THEN no files are written
-AND no commit is made
+THEN kproj regenerates nothing (no source is newer than its artifact)
+AND the re-rendered markdown is byte-identical because the volatile dates are preserved when nothing else changed
+AND `git diff --cached` in the site repo is empty, so no commit is made
 AND kproj exits with code 0
 AND stderr is silent at default verbosity
 ```
 
-*Note*: a README edit, a status change, or a stale artifact each force a re-run that is more than a no-op. See `docs/DESIGN.md` § *New-release detection* for the full comparison matrix.
+*Note*: change is detected by git, not by kproj re-deriving it. A README/DESCRIPTION/datasheet edit or a newer SCH/PCB source produces a staged diff, so kproj stamps a fresh publish `date:` (and the project page's `lastmod:` footer) and commits. See `docs/DESIGN.md` § *New-release detection*.
 
 ### Project visitor — secondary actor, browsing the site
 

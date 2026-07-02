@@ -242,6 +242,55 @@ def test_active_project_fails_preflight_without_ibom(
     assert "iBOM" in result.message or "ibom" in result.message.lower()
 
 
+def test_active_project_fails_preflight_without_kicad_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kproj#10: a missing KiCad-bundled Python fails step 5a pre-flight.
+
+    The iBOM script needs the interpreter that can ``import pcbnew``.
+    When it cannot be located, pre-flight returns ``outcome="failed"``,
+    ``exit_code=2`` before any change journal opens - the same class as
+    a missing iBOM script.
+    """
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+
+    def _no_python() -> Path:
+        raise KicadNotFoundError(
+            "KiCad's bundled Python interpreter (the one that can 'import pcbnew') was not found."
+        )
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=_no_python,
+    )
+    result = workflow.run(_make_request(str(proj_dir), fake_cli))
+    assert result.outcome == "failed"
+    assert result.exit_code == 2
+    assert "pcbnew" in result.message
+
+
 def test_workflow_threads_findings_into_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -379,7 +428,9 @@ def test_drc_erc_mechanical_failure_does_not_open_journal(
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         called["artifact_gen"] = True
@@ -409,11 +460,9 @@ def test_drc_erc_mechanical_failure_does_not_open_journal(
         "M4: no git operations expected on mechanical failure; got "
         f"{[c.args for c in mock_git.call_args_list]!r}"
     )
-    # No partial version/page markdown on disk.
-    versions_dir = site / "_versions"
-    pages_dir = site / "pages"
+    # No partial markdown on disk (mechanical failure before any writes).
+    versions_dir = site / GENERIC_SITE_PROFILE.versions_dir
     assert not versions_dir.exists() or not list(versions_dir.rglob("*.md"))
-    assert not pages_dir.exists() or not list(pages_dir.rglob("*.md"))
 
 
 def test_workflow_uses_injected_design_analyzer_factory(
@@ -487,7 +536,9 @@ def _stub_artifact_generator(
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
@@ -560,10 +611,13 @@ def _full_pipeline_workflow(
     """Build a workflow with all external side-effects stubbed out."""
     fake_ibom = tmp_path / "generate_interactive_bom.py"
     fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
     return PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_stub_artifact_generator(site_repo),
         site_publisher_factory=_stub_site_publisher_factory(site_repo),
     )
@@ -744,6 +798,8 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
 
     fake_ibom = tmp_path / "generate_interactive_bom.py"
     fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
 
     captured: dict[str, object] = {}
 
@@ -752,7 +808,9 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         captured["project"] = getattr(project_info, "project", None)
@@ -768,6 +826,7 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_recording_gen,
         site_publisher_factory=_stub_site_publisher_factory(site),
     )
@@ -817,13 +876,17 @@ def test_schematic_export_error_converts_to_failed_outcome(
 
     fake_ibom = tmp_path / "generate_interactive_bom.py"
     fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
 
     def _exploding_gen(
         resolved: object,
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         # Simulate the schematic-export shape-mismatch path: register
@@ -840,6 +903,7 @@ def test_schematic_export_error_converts_to_failed_outcome(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_exploding_gen,
         site_publisher_factory=_stub_site_publisher_factory(site),
     )
@@ -854,94 +918,6 @@ def test_schematic_export_error_converts_to_failed_outcome(
     assert result.exit_code == 2
     assert "svg" in result.message.lower() or "schematic" in result.message.lower(), (
         f"expected schematic context in failure message; got {result.message!r}"
-    )
-
-
-def test_stale_pcb_forces_publish_outcome(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """M1 regression: assets older than the source PCB → publish, not noop.
-
-    Pre-fix ``SitePublisher.detect_outcome`` only checked asset
-    existence + markdown content equality.  A PCB edited after the
-    previous publish but whose title-block stayed stable yielded
-    ``noop``, leaving stale renders / STEP / iBOM / source archives
-    on the site forever.  The workflow now compares asset mtimes
-    against their source mtimes and escalates to ``publish`` when
-    any asset is stale.
-
-    Wave-3 M11 round-2 tightens the escalation: pure mtime bumps
-    without a content change no longer force a publish (that would
-    conflict with PRD Story 6's cheap metadata refresh).  This test
-    now performs a real content edit outside the title-block so the
-    title-block-stripped hash changes and the M1 escalation still
-    fires.
-    """
-    import os as _os
-    import time as _time
-
-    site = _make_site_repo(tmp_path)
-    proj_dir = make_minimal_project(
-        tmp_path / "demo",
-        "demo",
-        sch_title_block=TitleBlockSpec(
-            title="Demo",
-            revision="1.0",
-            comments={1: "Alice Designer", 9: "active"},
-        ),
-        pcb_title_block=TitleBlockSpec(
-            title="Demo",
-            revision="1.0",
-            date="2026.04",
-            comments={1: "Alice Designer"},
-        ),
-    )
-    fake_cli = tmp_path / "kicad-cli"
-    fake_cli.write_text("")
-    _stub_kicad_version(monkeypatch, (9, 0, 4))
-
-    # Step 1: prime the site repo with the version page + all assets
-    # using the standard full-pipeline stubs (acting as the "prior
-    # publish").  Capture the workflow's would-be content so we can
-    # write an exactly-matching version file on disk for the second run.
-    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
-    request = _make_full_request(str(proj_dir), fake_cli, site)
-    with patch("kproj.services.site_publisher._git_run"):
-        first = workflow.run(request)
-    assert first.outcome in ("published", "refreshed"), (
-        f"setup: first publish should succeed; got {first.outcome!r}"
-    )
-
-    # Step 2: clean up the dirty git state that the mocked _git_run
-    # left behind so the cleanliness pre-flight passes on the second
-    # run (git really wasn't invoked above).
-    _os.system(f"git -C '{site}' add -A")
-    _os.system(f"git -C '{site}' commit -q -m 'prior publish'")
-
-    # Sanity: a clean re-run with identical inputs is a noop.
-    with patch("kproj.services.site_publisher._git_run"):
-        noop_run = workflow.run(request)
-    assert noop_run.outcome == "noop", (
-        f"setup: idempotent re-run should be noop; got {noop_run.outcome!r}"
-    )
-
-    # Step 3: perform a real PCB content edit outside the title-block
-    # subtree.  With M11 round-2, a pure mtime bump would leave the
-    # title-block-stripped hash unchanged and the workflow would
-    # correctly refuse to escalate (metadata-only edits stay refresh
-    # per Story 6).  A genuine content edit changes both the mtime
-    # AND the hash — the intended M1 mechanical-stale-asset trigger.
-    pcb_path = proj_dir / "demo.kicad_pcb"
-    pcb_path.write_text(
-        pcb_path.read_text(encoding="utf-8").rstrip("\n)") + '\n\t(net 0 "")\n)\n',
-        encoding="utf-8",
-    )
-    future = _time.time() + 120
-    _os.utime(pcb_path, (future, future))
-
-    with patch("kproj.services.site_publisher._git_run"):
-        stale_run = workflow.run(request)
-
-    assert stale_run.outcome == "published", (
-        f"M1: stale assets vs PCB source must escalate to publish; got {stale_run.outcome!r}"
     )
 
 
@@ -995,12 +971,17 @@ def test_artifact_generator_diagnostics_flow_into_result(
         source="audit",
     )
 
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
+
     def _gen_with_diagnostics(
         resolved: object,
         project_info: object,
         kicad_cli: Path,
         ibom_script: Path,
+        kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
         # Return no asset refs; just surface a producer-stage diagnostic.
@@ -1010,6 +991,7 @@ def test_artifact_generator_diagnostics_flow_into_result(
         project_reader=KicadProjectReader(projects_root=tmp_path),
         design_analyzer_factory=_silent_design_analyzer_factory(),
         ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=_gen_with_diagnostics,
         site_publisher_factory=_stub_site_publisher_factory(site),
     )

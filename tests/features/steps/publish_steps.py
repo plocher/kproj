@@ -37,7 +37,6 @@ from kproj.config import GENERIC_SITE_PROFILE, KprojConfig  # noqa: E402
 # the SiteProfile abstraction ("the version page lands under the
 # configured versions dir") rather than pinning to a specific backend.
 _VDIR = GENERIC_SITE_PROFILE.versions_dir
-_PDIR = GENERIC_SITE_PROFILE.pages_dir
 from kproj.model.analysis_info import AnalysisInfo  # noqa: E402
 from kproj.model.publication import AssetRef  # noqa: E402
 from kproj.model.publish_request import PublishRequest  # noqa: E402
@@ -70,11 +69,12 @@ def _make_site_repo(base_dir: Path) -> Path:
 def _stub_artifact_generator(site_repo: Path) -> Any:
     """Return an artifact generator stub that writes placeholder files.
 
-    Wave-3 fix-ups: honours the new
-    ``(resolved, project_info, kicad_cli, ibom_script, site_repo, journal)``
-    signature and returns the 3-tuple ``(images, artifacts, diagnostics)``.
-    Derives ``basename`` / ``board_rev`` from ``project_info`` so path
-    layout matches BLOCKER 1's canonical shape.
+    Honours the artifact-generator signature
+    ``(resolved, project_info, kicad_cli, ibom_script, kicad_python,
+    site_repo, journal)`` and returns the 3-tuple
+    ``(images, artifacts, diagnostics)``.  Derives ``basename`` /
+    ``board_rev`` from ``project_info`` so path layout matches
+    BLOCKER 1's canonical shape.
     """
 
     def _gen(
@@ -82,7 +82,9 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
         project_info: Any,
         _kicad_cli: Path,
         _ibom_script: Path,
+        _kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
@@ -143,6 +145,9 @@ def _build_workflow(context: Any) -> PublishWorkflow:
     fake_ibom = Path(context.tmpdir) / "generate_interactive_bom.py"
     if not fake_ibom.exists():
         fake_ibom.write_text("")
+    fake_python = Path(context.tmpdir) / "kicad-python3"
+    if not fake_python.exists():
+        fake_python.write_text("")
     site_repo = context.site_repo
     generator = getattr(context, "failing_generator", None) or _stub_artifact_generator(site_repo)
     design_analyzer_factory = (
@@ -152,6 +157,7 @@ def _build_workflow(context: Any) -> PublishWorkflow:
         project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
         design_analyzer_factory=design_analyzer_factory,
         ibom_script_locator=lambda: fake_ibom,
+        kicad_python_locator=lambda: fake_python,
         artifact_generator=generator,
         site_publisher_factory=SitePublisher,
     )
@@ -180,7 +186,17 @@ def _run_workflow(context: Any, *, dry_run: bool = False) -> None:
     """Invoke the stubbed workflow and store result + git calls in context."""
     workflow = _build_workflow(context)
     request = _build_request(context, dry_run=dry_run)
-    with patch("kproj.services.site_publisher._git_run") as mock_git:
+    # Behave mocks git (a documented limitation): the real
+    # ``git diff --cached`` change-detection is validated interactively,
+    # not here.  Stub _git_staged_names non-empty so publish() proceeds to
+    # commit and the pipeline-orchestration assertions stay meaningful.
+    with (
+        patch("kproj.services.site_publisher._git_run") as mock_git,
+        patch(
+            "kproj.services.site_publisher._git_staged_names",
+            return_value=["versions/staged"],
+        ),
+    ):
         context.result = workflow.run(request)
         context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
     context.outcome = context.result.outcome
@@ -301,7 +317,9 @@ def step_given_failing_producer(context: Any) -> None:
         project_info: Any,
         _kicad_cli: Path,
         _ibom_script: Path,
+        _kicad_python: Path,
         _site_repo: Path,
+        _site_profile: object,
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
@@ -348,7 +366,13 @@ def step_when_run_kproj_verbose(context: Any) -> None:
 
     request = _replace(request, verbose_level=1)
     captured_findings: list[Any] = []
-    with patch("kproj.services.site_publisher._git_run") as mock_git:
+    with (
+        patch("kproj.services.site_publisher._git_run") as mock_git,
+        patch(
+            "kproj.services.site_publisher._git_staged_names",
+            return_value=["versions/staged"],
+        ),
+    ):
         context.result = workflow.run(request)
         context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
     context.outcome = context.result.outcome
@@ -374,26 +398,21 @@ def step_then_version_page_exists(context: Any) -> None:
 
 @then("the project page exists in the site repo")
 def step_then_project_page_exists(context: Any) -> None:
-    """Assert the per-project overview page was created under pages_dir."""
+    """Assert the per-project section index was created (versions/<P>/_index.md)."""
     P = getattr(context, "project_name", "MyProject")
-    pages_file = context.site_repo / _PDIR / f"{P}.md"
-    assert pages_file.exists(), f"{_PDIR}/{P}.md not found in {context.site_repo}"
+    index_file = GENERIC_SITE_PROFILE.project_index_path(context.site_repo, P)
+    assert index_file.exists(), f"{index_file} not found in {context.site_repo}"
 
 
 @then("no files are written to the site repo")
 def step_then_no_files_written(context: Any) -> None:
-    """Assert the site repo has no version/pages files (dry-run guard)."""
+    """Assert the site repo has no version/section-index files (dry-run guard)."""
     versions = (
         list((context.site_repo / _VDIR).rglob("*.md"))
         if (context.site_repo / _VDIR).exists()
         else []
     )
-    pages = (
-        list((context.site_repo / _PDIR).rglob("*.md"))
-        if (context.site_repo / _PDIR).exists()
-        else []
-    )
-    assert not versions and not pages, f"dry-run wrote files: versions={versions}, pages={pages}"
+    assert not versions, f"dry-run wrote files: versions={versions}"
 
 
 @then("the version page contains the audit findings table")
@@ -471,14 +490,7 @@ def step_then_no_partial_files(context: Any) -> None:
         if (context.site_repo / _VDIR).exists()
         else []
     )
-    pages_files = (
-        list((context.site_repo / _PDIR).rglob("*.md"))
-        if (context.site_repo / _PDIR).exists()
-        else []
-    )
-    assert not version_files and not pages_files, (
-        f"Partial files remain: {version_files + pages_files}"
-    )
+    assert not version_files, f"Partial files remain: {version_files}"
 
 
 @then("stderr explains the uncommitted state")
