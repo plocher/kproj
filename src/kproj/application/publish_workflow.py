@@ -334,7 +334,7 @@ class PublishWorkflow:
                     findings=analysis.findings,
                 )
 
-        # ── Step 6: New-release detection ──
+        # ── Step 6: assemble render inputs + decide Make-style regeneration ──
         body_md = MarkdownTableFormatter().render(analysis.findings)
         readme_md = _read_readme(resolved.project_dir)
 
@@ -345,59 +345,37 @@ class PublishWorkflow:
         )
 
         # Publish timestamp = kproj execution time, emitted as Hugo's
-        # reserved ``date`` field.  Computed once per run so the version
-        # page + (future) reuse share one value.  It is a *volatile* key
-        # in new-release detection (a plain re-run stays a no-op).
+        # reserved ``date`` field.  SitePublisher preserves the on-disk
+        # value on an unchanged re-run so the markdown stays byte-identical
+        # (git then sees no change); the fresh value lands only when
+        # something else changed.
         published_at = _publish_timestamp()
 
-        preliminary_pub = PublishWorkflow.build_publication(
-            resolved,
-            project_info,
-            analysis,
-            body_md=body_md,
-            readme_md=readme_md,
-            images=images_refs,
-            artifacts=artifact_refs,
-            published_at=published_at,
+        version_file = request.config.site_profile.version_page_path(
+            site_repo, project_info.project, project_info.board_rev
         )
-
-        preliminary_outcome = SitePublisher.detect_outcome(
-            preliminary_pub,
-            site_repo,
-            request.config.site_profile,
-        )
-        # M1 fix-up: docs/DESIGN.md § New-release detection requires
-        # comparing each asset's mtime against its source.  When the
-        # PCB has been edited since the last publish but the title
-        # block is stable, detect_outcome alone returns ``noop`` and
-        # leaves stale renders/STEP/iBOM/source/fab on the site.
-        # Force a full publish when any asset is older than its source.
-        #
-        # v1 note: an earlier "title-block-only" escape hatch (M11 round-2)
-        # persisted content hashes in the site-repo version file so a
-        # subsequent COMMENT9 edit could skip artifact regen.  That state
-        # persistence made the site-repo YAML a public API surface and
-        # was ripped out as premature optimization pending profile data.
-        # See docs/PRD.md § Story 6 v1 note + kproj#17 (profile hooks) +
-        # kproj#18 (smart refresh).  In v1, any SCH/PCB edit — including
-        # a title-block-only edit — triggers a full publish.
-        if preliminary_outcome != "publish" and _assets_are_stale(
+        # Make-style regeneration decision ("ancient makefile" semantics):
+        # (re)run the artifact producers only when a KiCad source is newer
+        # than its on-disk artifact, or an artifact / the version page is
+        # missing.  There is NO kproj-internal content-comparison no-op:
+        # git decides whether the publish commits anything (unchanged
+        # sources -> byte-identical outputs -> empty ``git diff --cached``).
+        needs_regen = _needs_regeneration(
             images=images_refs,
             artifacts=artifact_refs,
             resolved=resolved,
             site_repo=site_repo,
             site_profile=request.config.site_profile,
-        ):
-            preliminary_outcome = "publish"
-        if preliminary_outcome == "noop":
-            return PublishResult.build("noop", findings=analysis.findings)
+            version_file=version_file,
+        )
 
         # ── Steps 7-11: Open journal, generate artifacts, publish ──
         try:
             with ChangeJournal(site_repo, dry_run=request.dry_run) as journal:
-                # Step 8: Generate artifacts (only for "publish"; skip on "refresh")
+                # Step 8: (re)generate artifacts only when Make-style
+                # staleness says so; skip when everything is up to date.
                 producer_diagnostics: tuple[Finding, ...] = ()
-                if preliminary_outcome == "publish" and not request.dry_run:
+                if needs_regen and not request.dry_run:
                     actual_images, actual_artifacts, producer_diagnostics = (
                         self._artifact_generator(
                             resolved,
@@ -442,10 +420,9 @@ class PublishWorkflow:
                     published_at=published_at,
                 )
 
-                # Step 10: SitePublisher.publish.  Pass the workflow's
-                # pre-computed outcome so SitePublisher does not re-
-                # decide against post-generation asset mtimes and
-                # short-circuit an M1-escalated publish back to noop.
+                # Step 10: SitePublisher.publish writes the markdown,
+                # stages the journalled paths, and lets git decide whether
+                # to commit (empty ``git diff --cached`` -> no-op).
                 site_publisher = self._site_publisher_factory(journal)
                 result = site_publisher.publish(
                     final_pub,
@@ -453,7 +430,6 @@ class PublishWorkflow:
                     request.config.no_push,
                     request.dry_run,
                     request.config.site_profile,
-                    force_outcome=preliminary_outcome,
                 )
 
                 # Step 11: ChangeJournal closed via context-manager __exit__
@@ -637,6 +613,37 @@ def _compute_standard_asset_refs(
     )
 
     return images, tuple(artifact_list)
+
+
+def _needs_regeneration(
+    *,
+    images: tuple[AssetRef, ...],
+    artifacts: tuple[AssetRef, ...],
+    resolved: ResolvedProject,
+    site_repo: Path,
+    site_profile: SiteProfile,
+    version_file: Path,
+) -> bool:
+    """Return ``True`` when the artifact producers must (re)run (Make-style).
+
+    Regeneration is needed when the version page is absent, any expected
+    asset is missing, or any existing asset is older than its KiCad
+    source (:func:`_assets_are_stale`).  When nothing is stale the
+    producers are skipped so their timestamped binaries stay
+    byte-identical and the run stays a git no-op.
+    """
+    if not version_file.exists():
+        return True
+    for ref in (*images, *artifacts):
+        if not site_profile.asset_disk_path(site_repo, ref.path).exists():
+            return True
+    return _assets_are_stale(
+        images=images,
+        artifacts=artifacts,
+        resolved=resolved,
+        site_repo=site_repo,
+        site_profile=site_profile,
+    )
 
 
 def _assets_are_stale(

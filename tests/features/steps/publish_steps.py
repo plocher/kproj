@@ -186,7 +186,17 @@ def _run_workflow(context: Any, *, dry_run: bool = False) -> None:
     """Invoke the stubbed workflow and store result + git calls in context."""
     workflow = _build_workflow(context)
     request = _build_request(context, dry_run=dry_run)
-    with patch("kproj.services.site_publisher._git_run") as mock_git:
+    # Behave mocks git (a documented limitation): the real
+    # ``git diff --cached`` change-detection is validated interactively,
+    # not here.  Stub _git_staged_names non-empty so publish() proceeds to
+    # commit and the pipeline-orchestration assertions stay meaningful.
+    with (
+        patch("kproj.services.site_publisher._git_run") as mock_git,
+        patch(
+            "kproj.services.site_publisher._git_staged_names",
+            return_value=["versions/staged"],
+        ),
+    ):
         context.result = workflow.run(request)
         context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
     context.outcome = context.result.outcome
@@ -356,7 +366,13 @@ def step_when_run_kproj_verbose(context: Any) -> None:
 
     request = _replace(request, verbose_level=1)
     captured_findings: list[Any] = []
-    with patch("kproj.services.site_publisher._git_run") as mock_git:
+    with (
+        patch("kproj.services.site_publisher._git_run") as mock_git,
+        patch(
+            "kproj.services.site_publisher._git_staged_names",
+            return_value=["versions/staged"],
+        ),
+    ):
         context.result = workflow.run(request)
         context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
     context.outcome = context.result.outcome

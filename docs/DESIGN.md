@@ -188,14 +188,14 @@ HUGO_SITE_PROFILE = SiteProfile(
 **The profile has no in-code default value.** It is a required parameter on every consumer, and is resolved exactly once — at `load_config` time (v1) or at argparse time (v1.1+ when a `--profile` CLI flag lands) — then passed down through the entire call chain.
 
 * `KprojConfig.site_profile` is a required field (no dataclass default). Callers must always specify it. `load_config` computes it via a new `_resolve_site_profile()` helper that mirrors the existing `_resolve_site_repo` / `_resolve_no_push` / `_resolve_kicad_cli` precedence chain. v1 hard-codes the return value to `HUGO_SITE_PROFILE`; v1.1+ grows the CLI flag + env var + yaml key precedence with argparse-time default = `generic`.
-* `SitePublisher.publish`, `SitePublisher.detect_outcome`, `FrontMatterSummaryFormatter.render`, and `_build_version_content` all require `site_profile` explicitly. **No** `= GENERIC_SITE_PROFILE` fallback defaults anywhere in the service or formatter layer.
+* `SitePublisher.publish`, `FrontMatterSummaryFormatter.render`, and `_build_version_content` all require `site_profile` explicitly. **No** `= GENERIC_SITE_PROFILE` fallback defaults anywhere in the service or formatter layer.
 * Test fixtures that construct :class:`KprojConfig` (or call a service directly) pass `site_profile=GENERIC_SITE_PROFILE` explicitly. This is deliberate: the abstraction is only safe if every caller has to think about the profile.
 
 The motivation: DRY-hardcoded defaults on multiple function signatures create a maintenance hazard — if the "what profile should we use when unspecified?" answer ever changes, every function default has to be updated in lockstep, and a new function author can silently forget the default entirely. jBOM's ADR 0008 avoids this by keeping the argparse layer as the *only* place the default lives; kproj follows the same discipline.
 
 ### Consumer contract
 
-* `SitePublisher.publish` and `.detect_outcome` derive the version-page (`versions_dir/<P>/<R>.md`) and project section-index (`versions_dir/<P>/_index.md`) paths from the (required) caller-supplied profile via `version_page_path()` / `project_index_path()`.
+* `SitePublisher.publish` derives the version-page (`versions_dir/<P>/<R>.md`) and project section-index (`versions_dir/<P>/_index.md`) paths from the (required) caller-supplied profile via `version_page_path()` / `project_index_path()`.
 * `FrontMatterSummaryFormatter.render` emits `layout: <value>` only when `profile.layout_field is not None`.
 * Behave scenarios and unit-test fixtures reference `GENERIC_SITE_PROFILE.versions_dir` / `.project_index_path()` — never literal path strings.
 * Adding a new backend (Jekyll, Astro, custom) means declaring a new `SITE_PROFILE` constant and (eventually) exposing it via the `--profile` flag. No service code changes required.
@@ -284,26 +284,13 @@ ADR 0005 rollback scope covers EVERY file produced under journal scope — artif
 ```
 
 ## New-release detection
-
-No-op vs refresh vs publish is decided by comparing the **full rendered publication** to the on-disk site state, not just the front-matter. The reviewer's Phase 4 finding M4 caught the original front-matter-only comparison as too narrow.
-
-The comparison inputs:
-
-1. **Front-matter** of `<site_repo>/<site_profile.versions_dir>/<P>/<R>.md` vs the front-matter kproj would emit (computed from the current `Publication`). Compared after normalizing whitespace and YAML field order; ignores volatile keys.
-2. **Body markdown** of the same file vs the body kproj would emit (the audit/DRC/ERC tables).
-3. **Project section-index body** of `<site_repo>/<site_profile.versions_dir>/<P>/_index.md` vs the project's current project-global content (per ADR 0002, the section-index body is always rewritten; one index per project). The body stacks `README.md`, then the optional `DESCRIPTION` prose, then a `## Datasheets` name-list of the discovered PDFs (see § Project-global docs). Compared after whitespace normalization, so the pre-datasheet README-only output stays a no-op.
-4. **Asset manifest** for `<site_repo>/versions/<P>/<R>/`:
-   - Every artifact listed in the front-matter `artifacts[]` and `images[]` must exist on disk.
-   - Each artifact's mtime is compared against the corresponding source mtime (e.g. `<P>-<R>.top.png` vs `<pcb>.kicad_pcb`; `<P>-<R>.ibom.html` vs `<pcb>.kicad_pcb`; `<P>-<R>.source.zip` vs the latest mtime in the project's source-include set; `<P>-<R>.fab.zip` vs the latest mtime in `<project_dir>/production/`).
-   - Any asset older than its source is treated as stale and forces `outcome="publish"`.
-
-Outcome decision:
-
-- All four inputs match → `outcome="noop"`. Return early. Exit 0 (or 1 if audit/DRC/ERC findings exist).
-- Front-matter or body differs, ALL assets exist and are fresh → `outcome="refresh"`. Rewrite the version markdown + `<versions_dir>/<P>/_index.md`. Skip asset regeneration.
-- The target file is absent, OR any asset is missing, OR any asset is stale → `outcome="publish"`. Run the full artifact pipeline.
-
-The status transition (e.g. `experimental` → `active`) is the canonical metadata-refresh case. README edits that don't touch any artifact's source files are also refresh-only. Anything that touches a `.kicad_pcb`, `.kicad_sch`, or `production/` files forces a publish.
+kproj does not re-derive change detection: it delegates to **git**, combined with **Make-style** artifact regeneration. This replaced an earlier bespoke content comparison (`SitePublisher.detect_outcome`) that computed noop/refresh/publish by comparing the full rendered publication to on-disk state; that machinery was removed during Phase G as premature optimisation (no measured baseline) whose all-or-nothing regen also fought the git no-op.
+How it works now:
+1. **Make-style regeneration** (`_needs_regeneration` in the workflow): the artifact producers re-run only when the version page is absent, an expected asset is missing, or an existing asset is older than its KiCad source (`_assets_are_stale` / `_source_paths_by_tag`: PCB -> renders/STEP/iBOM/thumbnail; root SCH -> sch.svg/pdf; newest project file -> source.zip; newest `production/` file -> fab.zip). Unchanged sources leave the timestamped binaries (STEP/PDF/iBOM headers carry a generation time) byte-identical, so they do not churn.
+2. **Date preservation** (`SitePublisher`): the version page's Hugo-reserved `date` is read back from the on-disk file and re-emitted, so a content-identical re-run produces byte-identical markdown.
+3. **git decides the commit**: `SitePublisher.publish` writes the markdown, stages every journalled path, and runs `git diff --cached`. Empty diff -> nothing changed -> `outcome="noop"`, no commit. Non-empty -> commit (and push unless `--no-push`) with `outcome="published"` (or `"refreshed"` when only markdown changed).
+The commit-prefix verb is derived from the staged path set: `add:` (new project index), `publish:` (new version page), `republish:` (existing version, assets changed), `refresh:` (existing version, markdown-only).
+Known limits (acceptable for the local single-user regime): git does not preserve mtimes across a fresh clone (the classic Make caveat); a project with a perpetually-absent optional asset (e.g. `fab.zip` when `production/` is present but incomplete) regenerates every run rather than settling into a no-op.
 
 ## Release asset set — filenames and subprocess commands
 

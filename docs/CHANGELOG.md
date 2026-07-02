@@ -6,6 +6,27 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Changed - delegate publish change-detection to git; Make-style artifact regen (Phase G)
+
+kproj no longer re-derives no-op/refresh/publish via a bespoke content
+comparison. `SitePublisher.detect_outcome`, `_strip_volatile`, and the
+`force_outcome` plumbing are removed. New flow: the workflow regenerates
+artifacts only when a KiCad source is newer than its on-disk artifact
+(Make-style mtime staleness via `_needs_regeneration`); the version
+page's Hugo `date` is preserved from disk so an unchanged run is
+byte-identical; and `SitePublisher.publish` stages the journalled paths
+and lets `git diff --cached` decide whether to commit (empty -> no-op).
+Commit-prefix verbs (`add`/`publish`/`republish`/`refresh`) are derived
+from the staged path set. Rationale: the content comparison was premature
+optimisation without a measured baseline and its all-or-nothing regen
+fought the git no-op; mtime staleness persists no state in the site repo
+(unlike the ripped-out M11 content-hash), so it does not reintroduce that
+boundary violation. Git-dependent behaviours are validated interactively
+(the Behave/pytest suites mock git); the obsolete `detect_outcome` /
+outcome-assertion unit tests and the Story 13 no-op Behave scenario were
+removed accordingly. PRD Stories 6 + 13 and DESIGN section New-release
+detection updated to match.
+
 ### Added - project-global datasheet + DESCRIPTION discovery on the section index (Phase G)
 
 The project section index (`content/versions/<P>/_index.md`) now lists the
