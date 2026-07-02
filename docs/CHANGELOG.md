@@ -6,6 +6,16 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - datasheet PDFs copied into the site for linking (Phase G)
+
+`_default_artifact_generator` now copies each discovered datasheet PDF to
+`<site>/<assets_dir>/<P>/datasheets/<name>` (served at
+`/versions/<P>/datasheets/<name>`), Make-style (copied only when missing or
+the source is newer; `shutil.copy2` preserves mtime so an unchanged re-run
+stays a git no-op) and journaled for ADR-0005 rollback. New
+`common.project_docs.discover_datasheet_files` returns the datasheet source
+paths. The Hugo project page links the datasheet names to these copies.
+
 ### Changed - datasheets emitted as _index.md front-matter data (Phase G)
 
 `_build_project_index_content` now emits the discovered datasheet

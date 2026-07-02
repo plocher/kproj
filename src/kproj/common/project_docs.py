@@ -44,8 +44,8 @@ def _is_pruned_dir(name: str) -> bool:
     return name.startswith(".") or name.endswith("-backups") or name in _PRUNED_DIR_NAMES
 
 
-def discover_datasheets(project_dir: Path) -> tuple[str, ...]:
-    """Return the project-global datasheet PDF filenames.
+def discover_datasheet_files(project_dir: Path) -> tuple[Path, ...]:
+    """Return the source paths of the project-global datasheet PDFs.
 
     Recursively scans ``project_dir`` for ``*.pdf`` files so datasheets are
     found wherever the maintainer stores them (project root, ``docs/``,
@@ -54,6 +54,36 @@ def discover_datasheets(project_dir: Path) -> tuple[str, ...]:
     hidden directories such as ``.git`` / ``.history``, KiCad ``*-backups``
     directories, and the fab ``production/`` tree.
 
+    Unlike :func:`discover_datasheets` (which returns just the basenames),
+    this returns the source file paths - one per unique basename, the first
+    encountered in a sorted walk - so callers can copy the PDFs to the site.
+
+    Args:
+        project_dir: The resolved project directory.
+
+    Returns:
+        A tuple of PDF source paths, unique by basename and sorted
+        case-insensitively by basename. Empty when the project has none.
+    """
+    if not project_dir.is_dir():
+        return ()
+    by_name: dict[str, Path] = {}
+    for root, dirs, files in os.walk(project_dir):
+        # Prune excluded subtrees in place so os.walk does not descend them.
+        dirs[:] = [d for d in dirs if not _is_pruned_dir(d)]
+        for fname in sorted(files):
+            if fname.lower().endswith(".pdf") and fname not in by_name:
+                by_name[fname] = Path(root) / fname
+    return tuple(by_name[name] for name in sorted(by_name, key=str.lower))
+
+
+def discover_datasheets(project_dir: Path) -> tuple[str, ...]:
+    """Return the project-global datasheet PDF basenames.
+
+    Thin wrapper over :func:`discover_datasheet_files` returning just the
+    basenames (case-insensitively sorted, unique). See that function for the
+    scan + pruning rules.
+
     Args:
         project_dir: The resolved project directory.
 
@@ -61,16 +91,7 @@ def discover_datasheets(project_dir: Path) -> tuple[str, ...]:
         A case-insensitively sorted tuple of unique PDF basenames (stable
         output for reproducible publishes). Empty when the project has none.
     """
-    if not project_dir.is_dir():
-        return ()
-    names: set[str] = set()
-    for _root, dirs, files in os.walk(project_dir):
-        # Prune excluded subtrees in place so os.walk does not descend them.
-        dirs[:] = [d for d in dirs if not _is_pruned_dir(d)]
-        for fname in files:
-            if fname.lower().endswith(".pdf"):
-                names.add(fname)
-    return tuple(sorted(names, key=str.lower))
+    return tuple(path.name for path in discover_datasheet_files(project_dir))
 
 
 def read_description(project_dir: Path) -> str:

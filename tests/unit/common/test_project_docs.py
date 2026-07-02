@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kproj.common.project_docs import discover_datasheets, read_description
+from kproj.common.project_docs import (
+    discover_datasheet_files,
+    discover_datasheets,
+    read_description,
+)
 
 
 def _touch(path: Path) -> None:
@@ -85,6 +89,30 @@ def test_discover_datasheets_dedupes_by_basename(tmp_path: Path) -> None:
     _touch(tmp_path / "docs" / "Same.pdf")
     _touch(tmp_path / "ds-downloads" / "Same.pdf")
     assert discover_datasheets(tmp_path) == ("Same.pdf",)
+
+
+# ----------------------------------------------------------------------
+# discover_datasheet_files
+# ----------------------------------------------------------------------
+
+
+def test_discover_datasheet_files_returns_source_paths(tmp_path: Path) -> None:
+    """Returns the actual source paths, sorted case-insensitively by basename."""
+    _touch(tmp_path / "beta.pdf")
+    _touch(tmp_path / "docs" / "Alpha.pdf")
+    assert discover_datasheet_files(tmp_path) == (
+        tmp_path / "docs" / "Alpha.pdf",
+        tmp_path / "beta.pdf",
+    )
+
+
+def test_discover_datasheet_files_dedupes_by_basename(tmp_path: Path) -> None:
+    """One source path per unique basename (matches discover_datasheets)."""
+    _touch(tmp_path / "docs" / "Same.pdf")
+    _touch(tmp_path / "ds-downloads" / "Same.pdf")
+    files = discover_datasheet_files(tmp_path)
+    assert len(files) == 1
+    assert tuple(p.name for p in files) == ("Same.pdf",)
 
 
 # ----------------------------------------------------------------------

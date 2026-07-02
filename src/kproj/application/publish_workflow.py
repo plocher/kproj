@@ -28,6 +28,7 @@ tests.
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -42,7 +43,11 @@ from ..common.kicad_install import (
     kicad_version,
 )
 from ..common.kicad_libraries import enumerate_libraries
-from ..common.project_docs import discover_datasheets, read_description
+from ..common.project_docs import (
+    discover_datasheet_files,
+    discover_datasheets,
+    read_description,
+)
 from ..common.subprocess_runner import (
     DEFAULT_GIT_TIMEOUT,
     SubprocessFailedError,
@@ -746,6 +751,33 @@ def _newest_source_file(directory: Path) -> Path | None:
     return newest
 
 
+def _copy_datasheets(
+    project_dir: Path,
+    site_repo: Path,
+    site_profile: SiteProfile,
+    project: str,
+    journal: ChangeJournal,
+) -> None:
+    """Copy project-global datasheet PDFs into the site (Make-style).
+
+    Each discovered PDF is copied to
+    ``<site_repo>/<assets_dir>/<project>/datasheets/<name>`` (served at the
+    public ``/versions/<project>/datasheets/<name>`` URL) so the project page
+    can link it. A file is copied only when the destination is missing or the
+    source is newer (mtime), mirroring the Make-style artifact regeneration;
+    :func:`shutil.copy2` preserves the source mtime so an unchanged re-run is
+    a git no-op. Each write is journaled for ADR-0005 rollback.
+    """
+    dest_dir = site_repo / site_profile.assets_dir / project / "datasheets"
+    for src in discover_datasheet_files(project_dir):
+        dest = dest_dir / src.name
+        if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        journal.register_output(dest)
+        shutil.copy2(src, dest)
+
+
 def _default_artifact_generator(
     resolved: ResolvedProject,
     project_info: ProjectInfo,
@@ -874,6 +906,10 @@ def _default_artifact_generator(
             resolved.project_dir, source_path, title=P, rev=R, journal=journal
         ).diagnostics
     )
+
+    # Project-global datasheets: copy the discovered PDFs into the site so the
+    # project page can link them (served at /versions/<P>/datasheets/<name>).
+    _copy_datasheets(resolved.project_dir, site_repo, site_profile, P, journal)
 
     images: tuple[AssetRef, ...] = (
         AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),
