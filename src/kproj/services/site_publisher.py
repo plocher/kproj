@@ -119,34 +119,30 @@ def _build_project_index_content(publication: Publication) -> str:
 
     One project-global page per project, rewritten each publish to reflect
     the most-recent-publish state. Front-matter carries ``title`` +
-    ``project`` so the project renders as a Hugo section. The body stacks
-    the project-global content model, each part separated by a blank line
-    and omitted when empty:
+    ``project`` (so the project renders as a Hugo section) plus the
+    discovered ``datasheets`` filenames as a YAML list. The datasheets are
+    front-matter *data*, not body prose, so the site layer decides how to
+    present them (e.g. a collapsible list or a download bundle) rather than
+    the presentation being baked into the page.
 
-    1. ``README.md`` (:attr:`Publication.readme_md`).
-    2. ``DESCRIPTION`` prose (:attr:`Publication.description`).
-    3. A ``## Datasheets`` bullet list of discovered PDF filenames
-       (:attr:`Publication.datasheets`).  Name-only for now; linking or
-       copying the PDFs to the site is a deferred follow-up.
-
-    A project with no README, DESCRIPTION, or datasheets yields a bare
-    front-matter page (empty body).
+    The body is the project *description*: ``README.md``
+    (:attr:`Publication.readme_md`) then the optional ``DESCRIPTION`` prose
+    (:attr:`Publication.description`), each separated by a blank line and
+    omitted when empty. A project with no README/DESCRIPTION and no
+    datasheets yields a bare front-matter page (empty body).
     """
     project = publication.project_info.project
+    front_matter: list[str] = [f"title: {project}", f"project: {project}"]
+    if publication.datasheets:
+        front_matter.append("datasheets:")
+        front_matter.extend(f"- {name}" for name in publication.datasheets)
     sections: list[str] = []
     if publication.readme_md.strip():
         sections.append(publication.readme_md.strip("\n"))
     if publication.description.strip():
         sections.append(publication.description.strip("\n"))
-    if publication.datasheets:
-        datasheet_lines = [
-            "## Datasheets",
-            "",
-            *(f"- {name}" for name in publication.datasheets),
-        ]
-        sections.append("\n".join(datasheet_lines))
     body = "\n\n".join(sections)
-    return f"---\ntitle: {project}\nproject: {project}\n---\n{body}\n"
+    return "---\n" + "\n".join(front_matter) + "\n---\n" + body + "\n"
 
 
 # ──────────────────────────── SitePublisher ──────────────────────────────────

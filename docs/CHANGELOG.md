@@ -6,6 +6,15 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Changed - datasheets emitted as _index.md front-matter data (Phase G)
+
+`_build_project_index_content` now emits the discovered datasheet
+filenames as a `datasheets:` YAML list in the project section-index
+front-matter, with a README + DESCRIPTION body (previously a
+`## Datasheets` list baked into the body). The datasheets are data, so
+the Hugo site layer decides presentation (a collapsible list today; a
+download bundle later) instead of the format being fixed in the page.
+
 ### Changed - delegate publish change-detection to git; Make-style artifact regen (Phase G)
 
 kproj no longer re-derives no-op/refresh/publish via a bespoke content

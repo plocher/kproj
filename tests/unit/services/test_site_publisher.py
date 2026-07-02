@@ -331,22 +331,19 @@ class TestBuildProjectIndexContent:
         )
         assert _build_project_index_content(pub) == ("---\ntitle: Demo\nproject: Demo\n---\n\n")
 
-    def test_description_and_datasheets_rendered_in_order(self) -> None:
-        """README, then DESCRIPTION prose, then a ``## Datasheets`` bullet list."""
+    def test_datasheets_in_front_matter_body_is_description(self) -> None:
+        """Datasheets are front-matter data; the body is README + DESCRIPTION."""
         pub = _pub(
             description="Prose about the board.",
             datasheets=("Cap-Foo.pdf", "Regulator-Bar.pdf"),
         )
         content = _build_project_index_content(pub)
+        assert "datasheets:\n- Cap-Foo.pdf\n- Regulator-Bar.pdf\n" in content
         body = content.split("---\n", 2)[2]
-        assert body == (
-            "# Demo\nA demo project.\n\n"
-            "Prose about the board.\n\n"
-            "## Datasheets\n\n- Cap-Foo.pdf\n- Regulator-Bar.pdf\n"
-        )
+        assert body == "# Demo\nA demo project.\n\nProse about the board.\n"
 
-    def test_datasheets_without_readme_or_description(self) -> None:
-        """Datasheets alone render under the heading with no stray blank lead."""
+    def test_datasheets_only_front_matter_empty_body(self) -> None:
+        """Datasheets-only project: names in front-matter, empty body."""
         pub = Publication(
             project_info=_pi(),
             analysis_info=AnalysisInfo(),
@@ -354,5 +351,6 @@ class TestBuildProjectIndexContent:
             readme_md="",
             datasheets=("Only.pdf",),
         )
-        body = _build_project_index_content(pub).split("---\n", 2)[2]
-        assert body == "## Datasheets\n\n- Only.pdf\n"
+        content = _build_project_index_content(pub)
+        assert "datasheets:\n- Only.pdf\n" in content
+        assert content.split("---\n", 2)[2] == "\n"
