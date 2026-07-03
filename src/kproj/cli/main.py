@@ -1,8 +1,9 @@
 """kproj CLI entry point.
 
-Per ``docs/adr/0006-library-shape-boundary-discipline.md``, this is
-the **only** module in kproj that imports ``argparse`` or calls
-``sys.exit``. ``main()`` parses argv, builds a typed
+Per ``docs/adr/0006-library-shape-boundary-discipline.md``, this module
+owns ``argparse`` and delegates the entrypoint to :func:`main` (the
+``python -m kproj`` shim in ``src/kproj/__main__.py`` calls into this
+module). ``main()`` parses argv, builds a typed
 :class:`PublishRequest`, delegates to :class:`PublishWorkflow.run`,
 and maps the returned :class:`PublishResult` to a process exit code
 per ``docs/DESIGN.md`` § *Exit code mapping*.
@@ -21,12 +22,12 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .application.publish_workflow import PublishWorkflow
-from .common.logging_setup import configure as configure_logging
-from .config import ConfigOverrides, load_config
-from .formatters.stderr_formatter import StderrFormatter
-from .model.publish_request import PublishRequest
-from .model.publish_result import PublishResult, compute_exit_code
+from ..application.publish_workflow import PublishWorkflow
+from ..common.logging_setup import configure as configure_logging
+from ..config import ConfigOverrides, load_config
+from ..formatters.stderr_formatter import StderrFormatter
+from ..model.publish_request import PublishRequest
+from ..model.publish_result import PublishResult, compute_exit_code
 
 _DEFAULT_YAML_FILENAME = ".kproj.yaml"
 

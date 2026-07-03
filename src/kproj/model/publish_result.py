@@ -4,7 +4,7 @@ Lives in ``model/`` so both the application workflow (which constructs
 results) and the CLI (which maps them to process exit codes) share a
 single source of truth.  This addresses the wave-1 carry-forward note
 that the ``PublishResult.exit_code`` field was previously dead because
-``cli.py`` re-derived the code from outcome + findings independently.
+``cli/main.py`` re-derived the code from outcome + findings independently.
 
 Going forward the workflow MUST populate ``exit_code`` authoritatively
 via :func:`compute_exit_code` (or its convenience wrapper

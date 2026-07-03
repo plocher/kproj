@@ -1,7 +1,7 @@
 # kproj — Agent Handoff Notes
 Compiled 2026-07-01 after the SiteProfile abstraction PR (#21) merged. Distills the state, locked decisions, and lessons from the Jekyll → Hugo migration + kproj Phase F work so a fresh agent session can pick up Phase G (Phase 7 end-to-end validation) without re-deriving context.
 ## Current state
-- **kproj repo (`plocher/kproj`)**: `main` at the merge of PR #21. Phases 0–6 (foundation → publishing waves) + hygiene PR #19 + SiteProfile abstraction PR #21 all merged. Local test baseline: **365 pytest / 1 skipped (iBOM/pcbnew, kproj#10) / 15 Behave scenarios (87 steps) / ruff + mypy strict clean**. No GitHub CI configured — local tests are the gate.
+- **kproj repo (`plocher/kproj`)**: `main` at the merge of PR #21. Phases 0–6 (foundation → publishing waves) + hygiene PR #19 + SiteProfile abstraction PR #21 all merged. Local test baseline: **365 pytest / 1 skipped (iBOM/pcbnew, kproj#10) / 15 Behave scenarios (87 steps) / ruff + mypy strict clean**. GitHub Actions now runs the test + release workflows; local tests are still the pre-commit gate.
 - **SPCoast site (`SPCoast/SPCoast.github.io`)**: Hugo site live at https://www.spcoast.com, deployed via `.github/workflows/hugo.yml` (native `actions/deploy-pages@v5`, Node 24). MVP content = SPINS PDFs + PCB Notes + placeholder homepage. Custom minimal Hugo layouts (no external theme). Pre-migration Jekyll state preserved at tag `archive/jekyll-final`; deploy source is `main` (not `jekyll4-actions`, which is stale).
 - **Open kproj issues (not blocking Phase G)**:
   - #10 iBOM-Python spike (the one skipped test)
@@ -26,7 +26,7 @@ Compiled 2026-07-01 after the SiteProfile abstraction PR (#21) merged. Distills 
   - ADR 0007 — local CLI v1, CI deferred
   - ADR 0008 — iBOM via direct script invocation (not `kicad-cli jobset run`)
   - ADR 0009 — KicadInstallLocator (`common.kicad_install`)
-- `docs/CHANGELOG.md` — running history per PR.
+- `CHANGELOG.md` — running history per PR.
 - `docs/phase{1,4}-*.md` — historical review artifacts, preserved verbatim.
 ### Cross-repo reference (kproj borrows patterns from jBOM)
 - `/Users/jplocher/Dropbox/KiCad/jBOM/docs/architecture/adr/0008-unified-jbom-config-schema.md` — the GENERIC-vs-named-profile pattern kproj mirrors in `SiteProfile`. Read this if a design question involves profiles, config layering, or CLI flag defaults.
@@ -52,14 +52,14 @@ Compiled 2026-07-01 after the SiteProfile abstraction PR (#21) merged. Distills 
 - **Behave tests live under `tests/features/`**, not `features/`. Invoke as `.venv/bin/python -m behave tests/features --no-color --format progress`.
 - **GitHub token scoping.** The user's PAT can push to `plocher/*` repos and read `SPCoast/*` repos, but **cannot** create PRs on `SPCoast/*` or modify environment branch policies via API (403 Resource not accessible). UI intervention is required for anything on the SPCoast org (deployment branch policies, PR creation). Don't waste cycles retrying the API — surface the UI link.
 - **The SPCoast site does not use PRs.** Push to `main` / `gh-pages` / `jekyll4-actions` directly triggers deploy. `jekyll4-actions` is stale from the Jekyll era; the current deploy source is `main`.
-- **CI on `plocher/kproj`: not configured.** Local test run is the gate. If merged PRs break something, it won't show up until the next local run.
+- **CI on `plocher/kproj`: GitHub Actions now runs tests + release workflows.** Local test run is still the gate before commits. If merged PRs break something, it may surface in CI before the next local run.
 - **Homebrew installs used this cycle**: `hugo` (extended, 0.163.3), `uv`. Both re-installable via `brew install <name>`.
 - **Worktrees clean up manually.** After each wave PR merges, remove the merged branch's worktree (`git worktree remove ../kproj-wt-<name>`) and delete the local branch. Don't leave stale worktrees on disk.
 - **Commit messages: plain ASCII only.** zsh double-quoted strings do NOT expand `\u2014` / `\u2192` / other unicode escapes, so `git commit -m "...\u2014..."` stores the literal 6-character escape in the commit subject. Use ASCII hyphen `-` (not em-dash), `->` (not arrow), and plain punctuation everywhere in commit messages / gh CLI arguments. Reserve Unicode typography for markdown files where it renders correctly.
 ## User working style
 - **TDD.** Red-green-refactor. Behave scenarios for user-facing stories; unit tests for internal abstractions. All tests pass before commit.
 - **Feature branches + PRs.** Never work directly on `main`. Semantic-commit messages. `Closes #N` trailers required in PR descriptions for GitHub to auto-close.
-- **Hygiene.** ruff auto-fix, mypy strict, pre-commit hooks may modify files (re-add after). `docs/CHANGELOG.md` updated per PR.
+- **Hygiene.** ruff auto-fix, mypy strict, pre-commit hooks may modify files (re-add after). `CHANGELOG.md` updated per PR.
 - **Design consultations before code** for non-trivial architectural changes. Propose, get feedback, iterate, then implement. The user critiques both under-explaining (missing rationale) and over-explaining (DRY-duplicated rationale across files).
 - **"Slow down / don't get ahead of me."** Checkpoint often, especially before dispatching workers or making cross-repo changes. Prefer asking a targeted single-select / multi-select question over inferring intent from context. Do not batch multi-step changes without pause.
 - **Direct technical critique preferred over validation.** When the user says "this still feels like X is Y" or "double checking …", the correct response is to actually engage the critique — often it's architecturally correct — not to defend the current state. Twice in this session the user surfaced abstraction leaks (Hugo values in GENERIC; DRY-duplicated docstrings) that resulted in real design improvements.

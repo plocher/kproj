@@ -19,9 +19,11 @@ None of that has to be solved to deliver kproj v1's value. The simpler runtime m
 
 kproj v1 is a **local CLI tool**. Invoked manually by the user against a KiCad project on disk. Writes to a local checkout of the SPCoast site repo (path from `--site-repo` flag, `KPROJ_SITE_REPO` env var, `~/.kproj.yaml`'s `site_repo` key, or the hardcoded fallback in `src/kproj/config.py::DEFAULT_SITE_REPO`). Commits, pushes via the user's locally-configured git credentials.
 
+Packaging/release automation for the **kproj repository itself** (tests, semantic-release, PyPI publish) is allowed and does not change this decision; the deferred scope is specifically about running kproj as a publish pipeline inside project-repo CI.
+
 ### Specifically excluded from v1
 
-- GitHub Actions workflow for kproj.
+- GitHub Actions workflow that runs kproj against project repos as part of the publish pipeline.
 - Cross-repo PAT credential management.
 - Push concurrency handling (kproj v1 assumes only one user runs at a time).
 - Project-repo CI integration (no `.github/workflows/kproj.yml` in project repos).

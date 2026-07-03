@@ -263,7 +263,7 @@ The following are explicitly NOT part of kproj v1. Each is documented in an ADR 
 - **`gh release create` on the project repo.** Same — Makefile composes it externally. (ADR 0002)
 - **`--force` flag.** Nothing blocks in v1; nothing to override. (ADR 0004)
 - **Working-tree-clean preconditions on the project repo.** kproj reads project files from disk regardless of project-repo git state. (ADR 0002)
-- **CI / GitHub Actions integration.** kproj v1 runs locally. The cross-repo push problem is deferred to Phase 6+. (ADR 0007)
+- **CI / GitHub Actions integration for running kproj on project repos.** kproj v1 runs locally; packaging/test automation may exist in the kproj repo, but cross-repo publish CI is deferred to Phase 6+. (ADR 0007)
 - **Running jBOM from inside kproj.** kproj reads `<project_dir>/production/` outputs; the user runs jBOM separately. (ADR 0003)
 - **Multi-variant project disambiguation** (e.g. `Brakeman-BLUE` / `Brakeman-RED` sharing the basename `Brakeman.kicad_pro`). User fixes at source via KiCad project rename; not a kproj feature.
 - **Hierarchical schematic display in v1's layout.** Root sheet renders inline; full multi-sheet PDF is a download. Phase 6+ may add hierarchical UX.
