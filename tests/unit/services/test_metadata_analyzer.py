@@ -372,14 +372,17 @@ def test_production_stale_warning(tmp_path: Path) -> None:
     assert "production_stale" in _fields(result.findings)
 
 
-def test_production_stale_tolerates_jbom_touched_pcb(
+def test_production_stale_tolerates_happy_path_save_timing(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """``jbom fab`` touches the PCB mtime via KiCad's Python API, so the fresh
-    fab zip lands slightly OLDER than the PCB in the same run.  A short mtime
-    tolerance (see ``_PRODUCTION_STALE_TOLERANCE_SECONDS``) prevents that
-    catch-22 from flagging every legitimate jbom output as stale, AND emits
-    an INFO log line so ``-v`` reveals why the finding was suppressed.
+    """Happy-path Save/fab timing must not trigger production_stale.
+
+    The PCB mtime tracks the user's [Save] event (not any jbom activity),
+    so in the happy path (design done -> jbom fab -> Save+close) the PCB
+    can legitimately be a few seconds/minutes newer than the fab zip.
+    Only a delta larger than ``_PRODUCTION_STALE_TOLERANCE_SECONDS``
+    (5 min) should trigger the warning; below that, the suppression is
+    logged at INFO so ``-v`` reveals the timing kproj is trusting.
     """
     import logging as _logging
 
@@ -391,9 +394,9 @@ def test_production_stale_tolerates_jbom_touched_pcb(
     pcb = project_dir / "demo.kicad_pcb"
     import os
 
-    # PCB is 1 second newer than the zip - within tolerance.
+    # PCB is 60s newer than the zip - within 5-minute tolerance.
     os.utime(fresh, (1000, 1000))
-    os.utime(pcb, (1001, 1001))
+    os.utime(pcb, (1060, 1060))
     info = _info()
     with caplog.at_level(_logging.INFO, logger="kproj.services.metadata_analyzer"):
         result = _analyzer(tmp_path).analyze(info, project_dir)
@@ -401,6 +404,47 @@ def test_production_stale_tolerates_jbom_touched_pcb(
     # INFO log surfaces the suppression + delta so -v reveals what happened.
     suppressions = [r for r in caplog.records if "production_stale suppressed" in r.message]
     assert suppressions, f"expected suppression INFO log; got records={caplog.records!r}"
+
+
+def test_production_stale_boundary_just_under_threshold_is_quiet(tmp_path: Path) -> None:
+    """A delta just under 5 minutes must NOT trigger production_stale."""
+    project_dir = _populated_project(tmp_path / "demo")
+    production = project_dir / "production"
+    production.mkdir()
+    zip_path = production / "gerbers.zip"
+    zip_path.write_bytes(b"PK")
+    pcb = project_dir / "demo.kicad_pcb"
+    import os
+
+    # 290s < 300s tolerance - suppressed.
+    os.utime(zip_path, (1000, 1000))
+    os.utime(pcb, (1290, 1290))
+    info = _info()
+    result = _analyzer(tmp_path).analyze(info, project_dir)
+    assert "production_stale" not in _fields(result.findings)
+
+
+def test_production_stale_boundary_just_over_threshold_triggers(tmp_path: Path) -> None:
+    """A delta just over 5 minutes MUST trigger production_stale.
+
+    Catches the antipattern (Save -> jbom fab -> edit again -> Save,
+    forget to re-run jbom fab) while leaving the happy-path Save/fab
+    timing (a few minutes) alone.
+    """
+    project_dir = _populated_project(tmp_path / "demo")
+    production = project_dir / "production"
+    production.mkdir()
+    zip_path = production / "gerbers.zip"
+    zip_path.write_bytes(b"PK")
+    pcb = project_dir / "demo.kicad_pcb"
+    import os
+
+    # 310s > 300s tolerance - triggers.
+    os.utime(zip_path, (1000, 1000))
+    os.utime(pcb, (1310, 1310))
+    info = _info()
+    result = _analyzer(tmp_path).analyze(info, project_dir)
+    assert "production_stale" in _fields(result.findings)
 
 
 def test_production_fresh_no_stale_finding(tmp_path: Path) -> None:

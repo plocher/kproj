@@ -324,14 +324,20 @@ class MetadataAnalyzer:
             return
         pcb_mtime = pcb_path.stat().st_mtime
         for zip_path in sorted(production_dir.glob("*.zip")):
-            # ``jbom fab`` opens the PCB via KiCad's Python API, which touches
-            # the PCB file's mtime as a side-effect.  A strict
-            # ``zip_mtime < pcb_mtime`` check therefore flags every fresh fab
-            # output as "stale" (the API-touched PCB is always newer than the
-            # zip jbom just wrote in the same run).  A small tolerance window
-            # accommodates that catch-22 and the filesystem-mtime jitter
-            # (SMB/Dropbox rounding, HFS+ 1s granularity) that would otherwise
-            # produce the same false positive.
+            # The PCB mtime moves when the user hits [Save] in KiCad; jbom
+            # opening the board via the Python API does NOT touch it (empirical
+            # observation).  So the delta between PCB and fab outputs is
+            # bounded only by "how long between Save and running jbom fab":
+            #   Happy path (done -> jbom fab -> Save+close): the fab outputs
+            #   are AT MOST a few minutes older than the PCB when Save follows
+            #   fab within a normal session.
+            #   Antipattern (Save -> jbom fab -> notice a bug -> edit -> Save,
+            #   forget to re-run jbom fab): the PCB is minutes-to-hours newer
+            #   than the fab outputs.
+            # A 5-minute tolerance catches the antipattern without alarming on
+            # the happy path.  This is a heuristic - kproj cannot confirm the
+            # fab pack is actually current from mtimes alone; the finding is a
+            # warning that delegates the final call to the user.
             delta = pcb_mtime - zip_path.stat().st_mtime
             if delta > _PRODUCTION_STALE_TOLERANCE_SECONDS:
                 yield Finding(
@@ -345,12 +351,14 @@ class MetadataAnalyzer:
                     project=info.project,
                 )
             elif delta > 0:
-                # Would have been stale under the pre-tolerance rule.  INFO-log
-                # the suppression + numeric delta so ``-v`` reveals why the
-                # user did not see a production_stale finding.
+                # Zip is older than the PCB but within the tolerance window
+                # (i.e. the happy-path Save/fab timing).  INFO-log the
+                # suppression + numeric delta so ``-v`` still reveals the
+                # timing kproj is trusting; the user can second-guess if
+                # their workflow does not match the happy-path assumption.
                 _log.info(
-                    "production_stale suppressed: %s is %.3fs older than %s "
-                    "(tolerance %.1fs; jbom PCB-touch)",
+                    "production_stale suppressed: %s is %.1fs older than %s "
+                    "(tolerance %.0fs; happy-path Save/fab timing)",
                     zip_path.name,
                     delta,
                     pcb_path.name,
@@ -358,16 +366,20 @@ class MetadataAnalyzer:
                 )
 
 
-_PRODUCTION_STALE_TOLERANCE_SECONDS: float = 5.0
+_PRODUCTION_STALE_TOLERANCE_SECONDS: float = 5 * 60.0
 """Grace window applied to the ``production_stale`` mtime comparison.
 
-A fab zip is flagged stale only when it is more than this many seconds older
-than the PCB.  ``jbom fab`` inevitably touches the PCB mtime when it opens
-the board via KiCad's Python API, so a strict ``<`` comparison would treat
-every legitimate jbom output as stale; 5 seconds is long enough to cover
-that single-run window (plus filesystem-mtime rounding on SMB / Dropbox /
-HFS+) and short enough that a genuinely stale fab from a prior day still
-triggers the warning.
+A fab zip is flagged stale only when it is more than this many seconds
+older than the PCB.  The PCB mtime tracks the user's [Save] event, not
+any kproj/jbom activity, so the delta between PCB and fab outputs is
+bounded only by "how long between Save and running jbom fab" - which is
+seconds in the happy path (done -> jbom fab -> Save+close) and can be
+minutes-to-hours in the antipattern (Save -> jbom fab -> edit again ->
+Save, forget to re-run jbom fab).
+
+5 minutes catches the antipattern without alarming on the happy path.
+kproj cannot confirm freshness from mtimes alone; the resulting warning
+is a heuristic that delegates the final call to the user.
 """
 
 

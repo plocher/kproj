@@ -43,18 +43,25 @@ under its source basename so consumers can see which toolchain produced the
 batch. The `production_incomplete` diagnostic names both accepted forms when
 nothing satisfies a kind.
 
-### Fixed - production_stale false positive from jbom's PCB mtime touch
+### Fixed - production_stale heuristic loosened to a 5-minute happy-path window
 
-`MetadataAnalyzer._production_rules` compared zip mtime strictly less-than PCB
-mtime, which flagged every legitimate `jbom fab` output as stale: opening the
-PCB via KiCad's Python API touches the PCB file's mtime as a side-effect, so
-the fresh fab zip is guaranteed to land slightly older than the PCB in the
-same run. Added a 5-second mtime tolerance
-(`_PRODUCTION_STALE_TOLERANCE_SECONDS`); a fab zip is now flagged stale only
-when it is more than that many seconds older than the PCB, which also absorbs
-filesystem-mtime rounding on SMB/Dropbox/HFS+. Suppressed cases log at INFO
-under ``-v`` so the user can see the delta and threshold instead of a silent
-no-op.
+`MetadataAnalyzer._production_rules` used a strict ``zip_mtime < pcb_mtime``
+check, which fired on every real project publish. The initial fix (commit
+539ee3e) added a 5-second tolerance under the incorrect premise that
+``jbom fab`` touches the PCB mtime via KiCad's Python API; empirical testing
+showed the PCB mtime tracks the user's [Save] event, not any jbom activity.
+The true delta between PCB and fab outputs is therefore bounded only by "how
+long between Save and running jbom fab" - seconds in the happy path
+(done -> jbom fab -> Save+close) and minutes-to-hours in the antipattern
+(Save -> jbom fab -> edit -> Save, forget to re-run jbom fab).
+
+Tolerance is now 5 minutes (`_PRODUCTION_STALE_TOLERANCE_SECONDS = 5 * 60`) -
+wide enough to cover the happy-path Save/fab timing, tight enough to catch
+the antipattern. Because kproj cannot confirm freshness from mtimes alone,
+the finding is explicitly a warning that delegates the final call to the
+user; the reason string is unchanged. Suppressed cases still log at INFO
+under ``-v`` so the user can see the delta and threshold kproj is
+trusting instead of a silent no-op.
 
 ### Added - datasheet PDFs copied into the site for linking (Phase G)
 
