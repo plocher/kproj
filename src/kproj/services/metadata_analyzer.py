@@ -321,7 +321,15 @@ class MetadataAnalyzer:
             return
         pcb_mtime = pcb_path.stat().st_mtime
         for zip_path in sorted(production_dir.glob("*.zip")):
-            if zip_path.stat().st_mtime < pcb_mtime:
+            # ``jbom fab`` opens the PCB via KiCad's Python API, which touches
+            # the PCB file's mtime as a side-effect.  A strict
+            # ``zip_mtime < pcb_mtime`` check therefore flags every fresh fab
+            # output as "stale" (the API-touched PCB is always newer than the
+            # zip jbom just wrote in the same run).  A small tolerance window
+            # accommodates that catch-22 and the filesystem-mtime jitter
+            # (SMB/Dropbox rounding, HFS+ 1s granularity) that would otherwise
+            # produce the same false positive.
+            if zip_path.stat().st_mtime + _PRODUCTION_STALE_TOLERANCE_SECONDS < pcb_mtime:
                 yield Finding(
                     severity=Severity.WARNING,
                     field="production_stale",
@@ -332,6 +340,19 @@ class MetadataAnalyzer:
                     ),
                     project=info.project,
                 )
+
+
+_PRODUCTION_STALE_TOLERANCE_SECONDS: float = 5.0
+"""Grace window applied to the ``production_stale`` mtime comparison.
+
+A fab zip is flagged stale only when it is more than this many seconds older
+than the PCB.  ``jbom fab`` inevitably touches the PCB mtime when it opens
+the board via KiCad's Python API, so a strict ``<`` comparison would treat
+every legitimate jbom output as stale; 5 seconds is long enough to cover
+that single-run window (plus filesystem-mtime rounding on SMB / Dropbox /
+HFS+) and short enough that a genuinely stale fab from a prior day still
+triggers the warning.
+"""
 
 
 def _is_placeholder(value: str) -> bool:

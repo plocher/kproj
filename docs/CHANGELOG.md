@@ -6,6 +6,17 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed - production_stale false positive from jbom's PCB mtime touch
+
+`MetadataAnalyzer._production_rules` compared zip mtime strictly less-than PCB
+mtime, which flagged every legitimate `jbom fab` output as stale: opening the
+PCB via KiCad's Python API touches the PCB file's mtime as a side-effect, so
+the fresh fab zip is guaranteed to land slightly older than the PCB in the
+same run. Added a 5-second mtime tolerance
+(`_PRODUCTION_STALE_TOLERANCE_SECONDS`); a fab zip is now flagged stale only
+when it is more than that many seconds older than the PCB, which also absorbs
+filesystem-mtime rounding on SMB/Dropbox/HFS+.
+
 ### Added - datasheet PDFs copied into the site for linking (Phase G)
 
 `_default_artifact_generator` now copies each discovered datasheet PDF to

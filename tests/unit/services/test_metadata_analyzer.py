@@ -372,6 +372,28 @@ def test_production_stale_warning(tmp_path: Path) -> None:
     assert "production_stale" in _fields(result.findings)
 
 
+def test_production_stale_tolerates_jbom_touched_pcb(tmp_path: Path) -> None:
+    """``jbom fab`` touches the PCB mtime via KiCad's Python API, so the fresh
+    fab zip lands slightly OLDER than the PCB in the same run.  A short mtime
+    tolerance (see ``_PRODUCTION_STALE_TOLERANCE_SECONDS``) prevents that
+    catch-22 from flagging every legitimate jbom output as stale.
+    """
+    project_dir = _populated_project(tmp_path / "demo")
+    production = project_dir / "production"
+    production.mkdir()
+    fresh = production / "gerbers.zip"
+    fresh.write_bytes(b"PK")
+    pcb = project_dir / "demo.kicad_pcb"
+    import os
+
+    # PCB is 1 second newer than the zip - within tolerance.
+    os.utime(fresh, (1000, 1000))
+    os.utime(pcb, (1001, 1001))
+    info = _info()
+    result = _analyzer(tmp_path).analyze(info, project_dir)
+    assert "production_stale" not in _fields(result.findings)
+
+
 def test_production_fresh_no_stale_finding(tmp_path: Path) -> None:
     project_dir = _populated_project(tmp_path / "demo")
     production = project_dir / "production"
