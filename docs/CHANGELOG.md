@@ -6,6 +6,43 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - `-v` / `-d` now surface real diagnostics via Python logging (closes #16)
+
+`cli.main` now calls `common.logging_setup.configure(...)` before the workflow
+runs, mapping the CLI flags to the ``kproj``-namespaced logger:
+
+- baseline (no flags): WARNING - findings + failures only
+- `-v` / `--verbose`: INFO - kicad-cli / iBOM / git argv (via subprocess
+  runner), per-artifact regeneration decisions, and diagnostic events such as
+  the `production_stale` tolerance suppression (with numeric mtime delta)
+- `-d` / `--debug`: DEBUG - INFO plus subprocess return codes + captured
+  stdout/stderr
+
+Third-party loggers (``jbom``, ``urllib3``, ...) keep their pre-configure
+levels, so a `-d` run does not turn into a firehose from unrelated libraries.
+Handler attachment is idempotent (repeat `configure` calls do not stack
+handlers on the kproj logger). Wiring points: `subprocess_runner._execute`
+(exec argv + rc/stdout/stderr), `metadata_analyzer._production_rules`
+(tolerance suppression), `application.publish_workflow` (regen decision),
+`services.fab_packager` (BOM/POS candidate selection).
+
+### Changed - BOM/POS discovery accepts modern jbom.csv/cpl.csv names
+
+`FabPackager` previously hardcoded ``bom.csv`` + ``pos.csv`` and skipped the
+fab.zip with a `production_incomplete` finding when the maintainer's toolchain
+emitted the modern ``jbom.csv`` + ``cpl.csv`` names. Discovery now accepts
+both naming conventions per file kind:
+
+- BOM: ``jbom.csv`` preferred, ``bom.csv`` fallback
+- POS: ``cpl.csv`` preferred, ``pos.csv`` fallback
+
+When both variants coexist (e.g. a stale older-tool batch alongside a fresh
+`jbom fab` run), the file whose mtime is closest to the gerber zip is chosen -
+the "same-tool batch" tie-break. The chosen file is written into `fab.zip`
+under its source basename so consumers can see which toolchain produced the
+batch. The `production_incomplete` diagnostic names both accepted forms when
+nothing satisfies a kind.
+
 ### Fixed - production_stale false positive from jbom's PCB mtime touch
 
 `MetadataAnalyzer._production_rules` compared zip mtime strictly less-than PCB
@@ -15,7 +52,9 @@ the fresh fab zip is guaranteed to land slightly older than the PCB in the
 same run. Added a 5-second mtime tolerance
 (`_PRODUCTION_STALE_TOLERANCE_SECONDS`); a fab zip is now flagged stale only
 when it is more than that many seconds older than the PCB, which also absorbs
-filesystem-mtime rounding on SMB/Dropbox/HFS+.
+filesystem-mtime rounding on SMB/Dropbox/HFS+. Suppressed cases log at INFO
+under ``-v`` so the user can see the delta and threshold instead of a silent
+no-op.
 
 ### Added - datasheet PDFs copied into the site for linking (Phase G)
 

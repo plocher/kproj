@@ -14,6 +14,7 @@ are consumed by the exit-code mapping in
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -22,6 +23,8 @@ from ..model.analysis_info import AnalysisInfo
 from ..model.finding import Finding
 from ..model.project_info import ProjectInfo, Status
 from ..model.severity import Severity
+
+_log = logging.getLogger(__name__)
 
 _DEFAULT_PROJECTS_ROOT = Path.home() / "Dropbox" / "KiCad" / "projects"
 """SPCoast convention used for ``replaced-by:<X>`` target resolution."""
@@ -329,7 +332,8 @@ class MetadataAnalyzer:
             # accommodates that catch-22 and the filesystem-mtime jitter
             # (SMB/Dropbox rounding, HFS+ 1s granularity) that would otherwise
             # produce the same false positive.
-            if zip_path.stat().st_mtime + _PRODUCTION_STALE_TOLERANCE_SECONDS < pcb_mtime:
+            delta = pcb_mtime - zip_path.stat().st_mtime
+            if delta > _PRODUCTION_STALE_TOLERANCE_SECONDS:
                 yield Finding(
                     severity=Severity.WARNING,
                     field="production_stale",
@@ -339,6 +343,18 @@ class MetadataAnalyzer:
                         "re-run `jbom fab` to regenerate fab artifacts"
                     ),
                     project=info.project,
+                )
+            elif delta > 0:
+                # Would have been stale under the pre-tolerance rule.  INFO-log
+                # the suppression + numeric delta so ``-v`` reveals why the
+                # user did not see a production_stale finding.
+                _log.info(
+                    "production_stale suppressed: %s is %.3fs older than %s "
+                    "(tolerance %.1fs; jbom PCB-touch)",
+                    zip_path.name,
+                    delta,
+                    pcb_path.name,
+                    _PRODUCTION_STALE_TOLERANCE_SECONDS,
                 )
 
 

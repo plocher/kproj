@@ -372,12 +372,17 @@ def test_production_stale_warning(tmp_path: Path) -> None:
     assert "production_stale" in _fields(result.findings)
 
 
-def test_production_stale_tolerates_jbom_touched_pcb(tmp_path: Path) -> None:
+def test_production_stale_tolerates_jbom_touched_pcb(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """``jbom fab`` touches the PCB mtime via KiCad's Python API, so the fresh
     fab zip lands slightly OLDER than the PCB in the same run.  A short mtime
     tolerance (see ``_PRODUCTION_STALE_TOLERANCE_SECONDS``) prevents that
-    catch-22 from flagging every legitimate jbom output as stale.
+    catch-22 from flagging every legitimate jbom output as stale, AND emits
+    an INFO log line so ``-v`` reveals why the finding was suppressed.
     """
+    import logging as _logging
+
     project_dir = _populated_project(tmp_path / "demo")
     production = project_dir / "production"
     production.mkdir()
@@ -390,8 +395,12 @@ def test_production_stale_tolerates_jbom_touched_pcb(tmp_path: Path) -> None:
     os.utime(fresh, (1000, 1000))
     os.utime(pcb, (1001, 1001))
     info = _info()
-    result = _analyzer(tmp_path).analyze(info, project_dir)
+    with caplog.at_level(_logging.INFO, logger="kproj.services.metadata_analyzer"):
+        result = _analyzer(tmp_path).analyze(info, project_dir)
     assert "production_stale" not in _fields(result.findings)
+    # INFO log surfaces the suppression + delta so -v reveals what happened.
+    suppressions = [r for r in caplog.records if "production_stale suppressed" in r.message]
+    assert suppressions, f"expected suppression INFO log; got records={caplog.records!r}"
 
 
 def test_production_fresh_no_stale_finding(tmp_path: Path) -> None:

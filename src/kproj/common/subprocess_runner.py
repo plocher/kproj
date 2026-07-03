@@ -20,12 +20,15 @@ Per the locked DESIGN contract:
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_KICAD_TIMEOUT: float = 120.0
 """Default per-step timeout for kicad-cli + iBOM invocations (seconds)."""
@@ -149,6 +152,9 @@ class _RunOptions:
 
 def _execute(options: _RunOptions) -> SubprocessResult:
     """Run *options.command* under :func:`subprocess.run` with capture."""
+    # INFO: exec argv on invocation so ``-v`` shows every kicad-cli / iBOM /
+    # git call the workflow issues without needing to modify each caller.
+    _log.info("exec: %s", " ".join(options.command))
     started = time.monotonic()
     try:
         completed = subprocess.run(
@@ -163,6 +169,18 @@ def _execute(options: _RunOptions) -> SubprocessResult:
     except subprocess.TimeoutExpired as exc:
         raise SubprocessTimeoutError(options.command, options.timeout) from exc
     elapsed = time.monotonic() - started
+
+    # DEBUG: full return + captured streams so ``-d`` reveals what the
+    # subprocess actually did.  INFO callers already saw the argv above;
+    # DEBUG adds returncode + stdout + stderr on completion.
+    if _log.isEnabledFor(logging.DEBUG):
+        _log.debug(
+            "exec rc=%d elapsed=%.3fs stdout=%r stderr=%r",
+            completed.returncode,
+            elapsed,
+            completed.stdout or "",
+            completed.stderr or "",
+        )
 
     if options.check and completed.returncode != 0:
         raise SubprocessFailedError(

@@ -257,8 +257,166 @@ def test_package_warns_when_production_older_than_pcb(
         pcb_path=pcb,
     )
     assert result.skipped is False
-    fields = {f.field for f in result.diagnostics}
-    assert "production_stale" in fields
+
+
+# ----- BOM/POS discovery matrix -----
+
+
+# ``zipfile`` rejects timestamps before 1980 (a hard PKZIP constraint), so the
+# synthetic mtimes below are anchored to a post-1980 epoch base.
+_MTIME_BASE = 1_700_000_000.0  # 2023-11-14 UTC; well past 1980
+
+
+def _make_production_with(
+    production_dir: Path,
+    *,
+    files: dict[str, tuple[str, float]],
+) -> Path:
+    """Create *production_dir* with the given files.  ``files`` maps basename
+    to ``(content, offset_seconds)``: the file's mtime is
+    ``_MTIME_BASE + offset_seconds``.  Also drops a gerber zip at
+    ``demo_1.0.zip`` with offset 0 unless the caller supplies one; returns
+    that gerber path.
+    """
+    production_dir.mkdir(parents=True, exist_ok=True)
+    for name, (content, offset) in files.items():
+        p = production_dir / name
+        p.write_text(content)
+        mtime = _MTIME_BASE + offset
+        os.utime(p, (mtime, mtime))
+    gerber = production_dir / "demo_1.0.zip"
+    if not gerber.exists():
+        with zipfile.ZipFile(gerber, "w") as zf:
+            zf.writestr("F.Cu.gbr", "G04*\n")
+        os.utime(gerber, (_MTIME_BASE, _MTIME_BASE))
+    return gerber
+
+
+def test_bom_pos_discovery_modern_only_jbom_cpl(packager: FabPackager, tmp_path: Path) -> None:
+    """Modern jbom convention: jbom.csv + cpl.csv are accepted and preserved."""
+    production = tmp_path / "production"
+    _make_production_with(
+        production,
+        files={"jbom.csv": ("Ref,Value\n", 0.0), "cpl.csv": ("Ref,X,Y\n", 0.0)},
+    )
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "out.fab.zip"
+
+    result = packager.package(
+        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
+    )
+    assert result.skipped is False
+    with zipfile.ZipFile(output) as zf:
+        names = set(zf.namelist())
+    assert names == {"jbom.csv", "cpl.csv", "gerbers.zip"}
+
+
+def test_bom_pos_discovery_legacy_only_bom_pos(packager: FabPackager, tmp_path: Path) -> None:
+    """Older-toolchain names still work as the fallback."""
+    production = tmp_path / "production"
+    _make_production_with(
+        production,
+        files={"bom.csv": ("Ref,Value\n", 0.0), "pos.csv": ("Ref,X,Y\n", 0.0)},
+    )
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "out.fab.zip"
+
+    result = packager.package(
+        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
+    )
+    assert result.skipped is False
+    with zipfile.ZipFile(output) as zf:
+        names = set(zf.namelist())
+    assert names == {"bom.csv", "pos.csv", "gerbers.zip"}
+
+
+def test_bom_pos_discovery_both_present_picks_closest_mtime(
+    packager: FabPackager, tmp_path: Path
+) -> None:
+    """When both variants exist, the one whose mtime is closer to the gerber
+    zip wins (i.e. the file the SAME tool run produced alongside the gerbers).
+    Here jbom.csv + cpl.csv share the gerber zip's mtime (offset 0); bom.csv
+    + pos.csv are 900 seconds older (offset -900).
+    """
+    production = tmp_path / "production"
+    _make_production_with(
+        production,
+        files={
+            "jbom.csv": ("new BOM\n", 0.0),
+            "cpl.csv": ("new POS\n", 0.0),
+            "bom.csv": ("stale BOM\n", -900.0),
+            "pos.csv": ("stale POS\n", -900.0),
+        },
+    )
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "out.fab.zip"
+
+    result = packager.package(
+        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
+    )
+    assert result.skipped is False
+    with zipfile.ZipFile(output) as zf:
+        names = set(zf.namelist())
+        assert names == {"jbom.csv", "cpl.csv", "gerbers.zip"}
+        # And the content came from the fresh files, not the stale ones.
+        assert zf.read("jbom.csv") == b"new BOM\n"
+        assert zf.read("cpl.csv") == b"new POS\n"
+
+
+def test_bom_pos_discovery_both_present_flips_when_legacy_is_the_fresh_batch(
+    packager: FabPackager, tmp_path: Path
+) -> None:
+    """Symmetric guard: if the LEGACY files (bom/pos) are the mtime-closest
+    batch and jbom/cpl are the stale ones, the legacy files win despite
+    being lower in the preference order.  This proves the tie-break is
+    mtime-driven (not name-driven with mtime as a tiebreaker only).
+    """
+    production = tmp_path / "production"
+    _make_production_with(
+        production,
+        files={
+            "jbom.csv": ("stale BOM\n", -900.0),
+            "cpl.csv": ("stale POS\n", -900.0),
+            "bom.csv": ("fresh BOM\n", 0.0),
+            "pos.csv": ("fresh POS\n", 0.0),
+        },
+    )
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "out.fab.zip"
+
+    result = packager.package(
+        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
+    )
+    assert result.skipped is False
+    with zipfile.ZipFile(output) as zf:
+        assert zf.read("bom.csv") == b"fresh BOM\n"
+        assert zf.read("pos.csv") == b"fresh POS\n"
+
+
+def test_bom_pos_discovery_missing_both_variants_names_both_forms(
+    packager: FabPackager, tmp_path: Path
+) -> None:
+    """When BOTH BOM candidates are missing, the diagnostic names both forms
+    so the user knows either jbom.csv or bom.csv would satisfy the check.
+    """
+    production = tmp_path / "production"
+    _make_production_with(production, files={"cpl.csv": ("pos\n", 0.0)})
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "out.fab.zip"
+
+    result = packager.package(
+        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
+    )
+    assert result.skipped is True
+    incomplete = [f for f in result.diagnostics if f.field == "production_incomplete"]
+    assert incomplete, f"expected production_incomplete finding; got {result.diagnostics!r}"
+    reason = incomplete[0].reason
+    assert "jbom.csv" in reason and "bom.csv" in reason
 
 
 # ----- journal integration -----

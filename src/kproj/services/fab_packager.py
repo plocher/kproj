@@ -31,6 +31,7 @@ is still assembled — the warning is surfaced for the audit table.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -43,7 +44,19 @@ from ..model.severity import Severity
 from .change_journal import ChangeJournal
 from .zip_archiver import ZipArchiver
 
-_REQUIRED_CSV_NAMES: tuple[str, ...] = ("bom.csv", "pos.csv")
+_log = logging.getLogger(__name__)
+
+_BOM_CANDIDATES: tuple[str, ...] = ("jbom.csv", "bom.csv")
+"""Accepted BOM filenames in preference order.  ``jbom.csv`` is the modern
+jbom convention; ``bom.csv`` is the older-toolchain fallback.  When both
+exist we pick the one whose mtime is closest to the gerber zip (i.e. the
+one jbom's current run produced alongside the gerbers)."""
+
+_POS_CANDIDATES: tuple[str, ...] = ("cpl.csv", "pos.csv")
+"""Accepted position-file names in preference order.  ``cpl.csv`` is the
+modern name; ``pos.csv`` is the older-toolchain fallback.  Closest-mtime
+tie-break as with BOM candidates."""
+
 _GERBER_ENTRY_NAME: str = "gerbers.zip"
 """Normalized entry name for the inner gerber pack inside ``<P>-<R>.fab.zip``."""
 
@@ -126,19 +139,27 @@ class FabPackager:
                 skipped=True,
             )
 
-        # bom.csv + pos.csv are required for the fab.zip's documented contents.
-        missing_csvs = [
-            name for name in _REQUIRED_CSV_NAMES if not (production_dir / name).is_file()
-        ]
-        if missing_csvs:
+        # BOM + POS files are required for the fab.zip's documented contents.
+        # Modern jbom writes jbom.csv + cpl.csv; older toolchains write
+        # bom.csv + pos.csv.  When both variants coexist, prefer the one
+        # whose mtime is closest to the gerber zip's mtime (same-tool batch).
+        bom_path = _pick_by_mtime(production_dir, _BOM_CANDIDATES, gerber)
+        pos_path = _pick_by_mtime(production_dir, _POS_CANDIDATES, gerber)
+        missing_labels: list[str] = []
+        if bom_path is None:
+            missing_labels.append(_or_form(_BOM_CANDIDATES))
+        if pos_path is None:
+            missing_labels.append(_or_form(_POS_CANDIDATES))
+        if missing_labels:
             diagnostics.append(
                 Finding(
                     severity=Severity.WARNING,
                     field="production_incomplete",
-                    value=", ".join(missing_csvs),
+                    value=", ".join(missing_labels),
                     reason=(
-                        f"production/ missing {', '.join(missing_csvs)}; cannot assemble "
-                        f"fab.zip. Re-run `jbom fab` to regenerate the BOM/POS outputs."
+                        f"production/ missing {', '.join(missing_labels)}; cannot "
+                        f"assemble fab.zip. Re-run `jbom fab` to regenerate the "
+                        f"BOM/POS outputs."
                     ),
                 )
             )
@@ -148,6 +169,13 @@ class FabPackager:
                 command=None,
                 skipped=True,
             )
+        assert bom_path is not None and pos_path is not None  # for type checker
+        _log.info(
+            "fab.zip inputs: gerbers=%s bom=%s pos=%s",
+            gerber.name,
+            bom_path.name,
+            pos_path.name,
+        )
 
         # Staleness check — youngest file in production_dir vs pcb mtime.
         if pcb_path.is_file():
@@ -178,8 +206,11 @@ class FabPackager:
         started = time.monotonic()
         try:
             with zipfile.ZipFile(tempfile_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                zf.write(production_dir / "bom.csv", arcname="bom.csv")
-                zf.write(production_dir / "pos.csv", arcname="pos.csv")
+                # Preserve the source basenames (jbom.csv vs bom.csv, cpl.csv
+                # vs pos.csv) so consumers see which toolchain produced the
+                # batch.  The gerber pack keeps the normalized entry name.
+                zf.write(bom_path, arcname=bom_path.name)
+                zf.write(pos_path, arcname=pos_path.name)
                 zf.write(gerber, arcname=_GERBER_ENTRY_NAME)
         except BaseException:
             tempfile_path.unlink(missing_ok=True)
@@ -199,6 +230,46 @@ class FabPackager:
 def _is_empty(directory: Path) -> bool:
     """Return ``True`` when *directory* has no entries at all."""
     return not any(directory.iterdir())
+
+
+def _pick_by_mtime(
+    production_dir: Path,
+    candidates: tuple[str, ...],
+    reference: Path,
+) -> Path | None:
+    """Return the candidate in *production_dir* closest in mtime to *reference*.
+
+    Multiple candidates (jbom.csv + bom.csv; cpl.csv + pos.csv) can coexist
+    when a maintainer has kept older-toolchain outputs alongside a fresh
+    ``jbom fab`` batch.  Picking the file whose mtime is closest to the
+    gerber zip's mtime selects the file jbom (or the older tool) produced
+    in the SAME run as the gerbers - which is what fab.zip should ship.
+
+    Args:
+        production_dir: The project's ``production/`` directory.
+        candidates: Accepted basenames in preference order.  When exactly
+            one exists it is picked without consulting the mtime.
+        reference: The gerber zip (or any anchor file) whose mtime the
+            candidates are compared against.
+
+    Returns:
+        The chosen candidate path, or ``None`` when none exist.
+    """
+    present = [production_dir / name for name in candidates if (production_dir / name).is_file()]
+    if not present:
+        return None
+    if len(present) == 1:
+        return present[0]
+    ref_mtime = reference.stat().st_mtime
+    return min(present, key=lambda p: abs(p.stat().st_mtime - ref_mtime))
+
+
+def _or_form(candidates: tuple[str, ...]) -> str:
+    """Render *candidates* as ``a (or b, or c)`` for a diagnostic value."""
+    if len(candidates) == 1:
+        return candidates[0]
+    head, *rest = candidates
+    return f"{head} (or {', or '.join(rest)})"
 
 
 def _discover_gerber_zip(
