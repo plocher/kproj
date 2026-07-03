@@ -373,6 +373,12 @@ class PublishWorkflow:
             site_profile=request.config.site_profile,
             version_file=version_file,
         )
+        _log.info(
+            "artifact regeneration decision for %s-%s: %s",
+            project_info.project,
+            project_info.board_rev,
+            "regenerate" if needs_regen else "skip (sources unchanged)",
+        )
 
         # ── Steps 7-11: Open journal, generate artifacts, publish ──
         try:
@@ -894,7 +900,6 @@ def _default_artifact_generator(
         asset_dir / f"{PR}.fab.zip",
         title=P,
         rev=R,
-        pcb_path=resolved.pcb_file,
         journal=journal,
     )
     diagnostics.extend(fab_result.diagnostics)

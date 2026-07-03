@@ -6,6 +6,72 @@ versioning per [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added - `-v` / `-d` now surface real diagnostics via Python logging (closes #16)
+
+`cli.main` now calls `common.logging_setup.configure(...)` before the workflow
+runs, mapping the CLI flags to the ``kproj``-namespaced logger:
+
+- baseline (no flags): WARNING - findings + failures only
+- `-v` / `--verbose`: INFO - kicad-cli / iBOM / git argv (via subprocess
+  runner), per-artifact regeneration decisions, and diagnostic events such as
+  the `production_stale` tolerance suppression (with numeric mtime delta)
+- `-d` / `--debug`: DEBUG - INFO plus subprocess return codes + captured
+  stdout/stderr
+
+Third-party loggers (``jbom``, ``urllib3``, ...) keep their pre-configure
+levels, so a `-d` run does not turn into a firehose from unrelated libraries.
+Handler attachment is idempotent (repeat `configure` calls do not stack
+handlers on the kproj logger). Wiring points: `subprocess_runner._execute`
+(exec argv + rc/stdout/stderr), `metadata_analyzer._production_rules`
+(tolerance suppression), `application.publish_workflow` (regen decision),
+`services.fab_packager` (BOM/POS candidate selection).
+
+### Changed - BOM/POS discovery accepts modern jbom.csv/cpl.csv names
+
+`FabPackager` previously hardcoded ``bom.csv`` + ``pos.csv`` and skipped the
+fab.zip with a `production_incomplete` finding when the maintainer's toolchain
+emitted the modern ``jbom.csv`` + ``cpl.csv`` names. Discovery now accepts
+both naming conventions per file kind:
+
+- BOM: ``jbom.csv`` preferred, ``bom.csv`` fallback
+- POS: ``cpl.csv`` preferred, ``pos.csv`` fallback
+
+When both variants coexist (e.g. a stale older-tool batch alongside a fresh
+`jbom fab` run), the file whose mtime is closest to the gerber zip is chosen -
+the "same-tool batch" tie-break. The chosen file is written into `fab.zip`
+under its source basename so consumers can see which toolchain produced the
+batch. The `production_incomplete` diagnostic names both accepted forms when
+nothing satisfies a kind.
+
+### Fixed - production_stale heuristic loosened to a 5-minute happy-path window
+
+`MetadataAnalyzer._production_rules` used a strict ``zip_mtime < pcb_mtime``
+check, which fired on every real project publish. The initial fix (commit
+539ee3e) added a 5-second tolerance under the incorrect premise that
+``jbom fab`` touches the PCB mtime via KiCad's Python API; empirical testing
+showed the PCB mtime tracks the user's [Save] event, not any jbom activity.
+The true delta between PCB and fab outputs is therefore bounded only by "how
+long between Save and running jbom fab" - seconds in the happy path
+(done -> jbom fab -> Save+close) and minutes-to-hours in the antipattern
+(Save -> jbom fab -> edit -> Save, forget to re-run jbom fab).
+
+Tolerance is now 5 minutes (`_PRODUCTION_STALE_TOLERANCE_SECONDS = 5 * 60`) -
+wide enough to cover the happy-path Save/fab timing, tight enough to catch
+the antipattern. Because kproj cannot confirm freshness from mtimes alone,
+the finding is explicitly a warning that delegates the final call to the
+user; the reason string is unchanged. Suppressed cases still log at INFO
+under ``-v`` so the user can see the delta and threshold kproj is
+trusting instead of a silent no-op.
+
+`FabPackager` carried a second, independent ``production_stale`` check
+(youngest `production/` file vs PCB mtime, strict comparison, no
+tolerance), so real publishes still warned even after the analyzer
+tolerance landed - the happy-path Save/fab delta (seconds) tripped the
+strict duplicate. The duplicate is removed: the analyzer rule is the
+single policy implementation, and `FabPackager.package()` no longer
+takes a ``pcb_path`` argument. A regression test pins the packager to
+emitting no ``production_stale`` finding.
+
 ### Added - datasheet PDFs copied into the site for linking (Phase G)
 
 `_default_artifact_generator` now copies each discovered datasheet PDF to

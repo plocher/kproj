@@ -603,7 +603,7 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | warning | `rev_relation` | `pcb_rev` does not match `^<escaped sch_rev>[A-Z]+$` (board_rev must be design_rev + one or more uppercase-letter suffix). E.g. SCH `3.0` / PCB `3.0B` is OK; SCH `3.0` / PCB `3.0.1` or `3.0-beta` or `3.1` is a finding. |
 | warning | `replaced_by_target_missing` | `replaced-by:<X>` references nonexistent project under `~/Dropbox/KiCad/projects/` |
 | warning | `production_missing` | `<project_dir>/production/` missing or empty when fab artifacts expected |
-| warning | `production_stale` | `production/<gerber>.zip` mtime older than `<pcb>.kicad_pcb` mtime |
+| warning | `production_stale` | `production/<gerber>.zip` mtime more than 5 minutes older than `<pcb>.kicad_pcb` mtime. Single policy home: `MetadataAnalyzer._production_rules` (`FabPackager` emits no duplicate). |
 
 ## Front-matter shape
 
@@ -703,14 +703,14 @@ Commit messages per pattern in *Per-service contracts › SitePublisher*. Push t
 `--dry-run` is read-only and idempotent. Wall-clock time is dominated by the DRC/ERC subprocess invocations (typically seconds per project, longer for boards with many violations).
 
 ## Verbosity
-
-`cli.py` configures Python `logging`:
-
-- Default — only findings (audit + DRC/ERC + mechanical errors) to stderr.
-- `-v` / `--verbose` — adds subprocess command lines + their stderr/stdout + git command lines.
-- `-d` / `--debug` — implementation-private diagnostics (dataclass state transitions, finding-rule evaluation traces, ChangeJournal state). **Not a committed interface**; output content changes freely per developer needs.
-
-Combined `-v -d` is permitted; gives both.
+`cli.main` calls `common.logging_setup.configure(verbose_level, debug)` after `parse_args` and before `workflow.run`, mapping the CLI flags onto the `kproj`-namespaced logger:
+| Flags | kproj logger level | Emits |
+|---|---|---|
+| (none) | WARNING | Findings + mechanical failures only. |
+| `-v` / `--verbose` | INFO | Subprocess (kicad-cli / iBOM / git) argv on every invocation; per-artifact Make-style regen decisions; `production_stale` tolerance suppression (with mtime delta); BOM/POS candidate selection. |
+| `-d` / `--debug` | DEBUG | Everything at INFO plus subprocess return codes and captured stdout/stderr on completion. |
+`-d` wins when both flags are present. The stderr handler is attached only to the `kproj` root logger with `propagate=False`, and handler attachment is idempotent (repeat `configure` calls do not stack handlers). Third-party loggers (`jbom`, `urllib3`, ...) keep their pre-configure levels, so a `-d` run does not turn into a firehose from unrelated libraries.
+Audit / DRC / ERC findings still surface via `StderrFormatter` regardless of level (ADR 0004 “show what is provided”) - logging is additive to the finding stream, not a substitute for it.
 
 ## Testing strategy
 

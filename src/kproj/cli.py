@@ -22,6 +22,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from .application.publish_workflow import PublishWorkflow
+from .common.logging_setup import configure as configure_logging
 from .config import ConfigOverrides, load_config
 from .formatters.stderr_formatter import StderrFormatter
 from .model.publish_request import PublishRequest
@@ -194,6 +195,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         env=os.environ,
         yaml_path=_default_yaml_path(),
     )
+    # Wire -v / -d to the kproj-namespaced logger BEFORE the workflow runs
+    # so subprocess argv, git invocations, and regen decisions are visible.
+    configure_logging(verbose_level=request.verbose_level, debug=request.debug)
     workflow = PublishWorkflow()
     result = workflow.run(request)
     _render_result_to_stderr(result, verbose_level=request.verbose_level)
