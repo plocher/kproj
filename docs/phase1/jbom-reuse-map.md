@@ -2,6 +2,8 @@
 
 Source surveyed: `/Users/jplocher/Dropbox/KiCad/jBOM` @ commit on disk 2026‑05‑29, `version = "7.2.0"`, AGPL‑3.0‑only, Python ≥3.10, ~24.2k LoC under `src/jbom/`.
 
+> **Erratum (2026‑07‑02):** This report recorded jBOM's license as AGPL‑3.0‑only based on the `pyproject.toml`/README metadata current at survey time. That metadata was wrong — jBOM's `LICENSE` file is and was **MIT**; the stale AGPL declarations were corrected in [plocher/jBOM#335](https://github.com/plocher/jBOM/pull/335) (issue jBOM#334). Consequently the AGPL vendoring cautions in the executive summary, §1, §2.19, and §6, and open question #1 in §7, are **moot**: jBOM is MIT-licensed and imports/vendoring require no copyleft analysis.
+
 ## Executive summary
 
 - jBOM is a **library‑quality, adapter‑neutral** Python package on PyPI (`pip install jbom`). The `application/` and `services/` layers are clean to import; only `cli/` and `plugin/` are adapter‑coupled. Default recommendation for kproj: **import‑as‑library**.
