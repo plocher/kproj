@@ -34,11 +34,3 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           semantic-release version
-      - name: Publish to PyPI
-        if: ${{ hashFiles('dist/*') != '' }}
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          pip install twine
-          twine upload dist/*
