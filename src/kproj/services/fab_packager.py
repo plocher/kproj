@@ -23,10 +23,11 @@ is missing or empty (or when required pieces are missing such that
 no valid fab.zip can be assembled). The publish continues without
 this artifact per Story 1's note + ADR 0003.
 
-Staleness warning: when the *youngest* file in ``production_dir`` is
-older than ``pcb_path``'s mtime, the production outputs are flagged
-as stale (user probably forgot to re-run ``jbom fab``). The fab.zip
-is still assembled — the warning is surfaced for the audit table.
+Staleness: the ``production_stale`` heuristic (are the production/
+outputs older than the PCB?) is owned by
+``MetadataAnalyzer._production_rules`` — the single policy
+implementation, including its happy-path mtime tolerance. FabPackager
+deliberately emits no duplicate.
 """
 
 from __future__ import annotations
@@ -83,7 +84,6 @@ class FabPackager:
         *,
         title: str,
         rev: str,
-        pcb_path: Path,
         journal: ChangeJournal | None = None,
     ) -> ExportResult:
         """Assemble the fab.zip from *production_dir*.
@@ -96,8 +96,6 @@ class FabPackager:
                 ``<title>_<rev>.zip``).
             rev: Board revision (used to locate
                 ``<title>_<rev>.zip``).
-            pcb_path: Path to ``<pcb>.kicad_pcb``. Used to compare
-                mtimes for the staleness warning.
             journal: Optional open :class:`ChangeJournal`.
 
         Returns:
@@ -176,24 +174,6 @@ class FabPackager:
             bom_path.name,
             pos_path.name,
         )
-
-        # Staleness check — youngest file in production_dir vs pcb mtime.
-        if pcb_path.is_file():
-            production_mtime = max(
-                p.stat().st_mtime for p in production_dir.iterdir() if p.is_file()
-            )
-            if production_mtime < pcb_path.stat().st_mtime:
-                diagnostics.append(
-                    Finding(
-                        severity=Severity.WARNING,
-                        field="production_stale",
-                        value=str(production_dir),
-                        reason=(
-                            "production/ outputs are older than the PCB; "
-                            "re-run `jbom fab` to refresh."
-                        ),
-                    )
-                )
 
         # Assemble the fab.zip atomically via a sibling tempfile.
         output.parent.mkdir(parents=True, exist_ok=True)

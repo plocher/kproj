@@ -11,7 +11,9 @@ Validates the contract per ``docs/DESIGN.md`` § *FabPackager* + ADR 0003
   the produced ``<P>-<R>.fab.zip``.
 - ``ExportResult.skipped=True`` when ``production_dir`` is missing or
   empty.
-- Warn when production outputs are older than the source PCB's mtime.
+- Staleness (``production_stale``) is analyzer-owned policy
+  (``MetadataAnalyzer._production_rules``); the packager emits no
+  duplicate.
 """
 
 from __future__ import annotations
@@ -67,15 +69,11 @@ def test_package_assembles_fab_zip_with_three_entries(
     _write_production(production)
     output = tmp_path / "demo-1.0.fab.zip"
 
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
-
     result = packager.package(
         production_dir=production,
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
 
     assert isinstance(result, ExportResult)
@@ -101,15 +99,12 @@ def test_package_normalizes_gerber_zip_entry_name_regardless_of_source_filename(
     production = tmp_path / "production"
     _write_production(production, gerber_name="demo_1.0.zip")
     output = tmp_path / "out.fab.zip"
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
 
     packager.package(
         production_dir=production,
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     with zipfile.ZipFile(output) as zf:
         assert "gerbers.zip" in zf.namelist()
@@ -125,15 +120,12 @@ def test_package_falls_back_to_single_zip_when_titled_not_present(
     production = tmp_path / "production"
     _write_production(production, gerber_name="something_else.zip")
     output = tmp_path / "out.fab.zip"
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
 
     result = packager.package(
         production_dir=production,
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     assert result.skipped is False
     with zipfile.ZipFile(output) as zf:
@@ -148,15 +140,12 @@ def test_package_warns_on_ambiguous_multiple_zips(packager: FabPackager, tmp_pat
     with zipfile.ZipFile(production / "beta.zip", "w") as zf:
         zf.writestr("F.Cu.gbr", "extra*\n")
     output = tmp_path / "out.fab.zip"
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
 
     result = packager.package(
         production_dir=production,
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     fields = {f.field for f in result.diagnostics}
     assert "fab_gerber_ambiguous" in fields
@@ -170,15 +159,12 @@ def test_package_warns_on_ambiguous_multiple_zips(packager: FabPackager, tmp_pat
 def test_package_skipped_when_production_missing(packager: FabPackager, tmp_path: Path) -> None:
     """A missing ``production_dir`` produces ``skipped=True`` + warning."""
     output = tmp_path / "out.fab.zip"
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
 
     result = packager.package(
         production_dir=tmp_path / "no-such",
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     assert result.skipped is True
     assert result.path is None
@@ -194,15 +180,12 @@ def test_package_skipped_when_production_empty(packager: FabPackager, tmp_path: 
     production = tmp_path / "production"
     production.mkdir()
     output = tmp_path / "out.fab.zip"
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
 
     result = packager.package(
         production_dir=production,
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     assert result.skipped is True
     assert "production_missing" in {f.field for f in result.diagnostics}
@@ -216,15 +199,12 @@ def test_package_skipped_when_bom_or_pos_missing(packager: FabPackager, tmp_path
     with zipfile.ZipFile(production / "demo_1.0.zip", "w") as zf:
         zf.writestr("F.Cu.gbr", "*\n")
     output = tmp_path / "out.fab.zip"
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
 
     result = packager.package(
         production_dir=production,
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     assert result.skipped is True
     fields = {f.field for f in result.diagnostics}
@@ -232,21 +212,21 @@ def test_package_skipped_when_bom_or_pos_missing(packager: FabPackager, tmp_path
     assert {"production_missing"} & fields or {"production_incomplete"} & fields
 
 
-# ----- staleness warning -----
+# ----- staleness policy ownership -----
 
 
-def test_package_warns_when_production_older_than_pcb(
-    packager: FabPackager, tmp_path: Path
-) -> None:
-    """A production whose youngest file is older than the PCB emits a staleness warning."""
+def test_package_emits_no_staleness_finding(packager: FabPackager, tmp_path: Path) -> None:
+    """``production_stale`` policy is owned by ``MetadataAnalyzer._production_rules``
+    (the single implementation, with its happy-path mtime tolerance); the
+    packager must not duplicate it.  Even a day-stale production/ packages
+    cleanly with no ``production_stale`` diagnostic.
+    """
     production = tmp_path / "production"
     _write_production(production)
-    # Backdate every file in production.
+    # Backdate every file in production a full day.
     old = time.time() - 60 * 60 * 24
     for p in production.iterdir():
         os.utime(p, (old, old))
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")  # fresh now
 
     output = tmp_path / "out.fab.zip"
     result = packager.package(
@@ -254,9 +234,9 @@ def test_package_warns_when_production_older_than_pcb(
         output=output,
         title="demo",
         rev="1.0",
-        pcb_path=pcb,
     )
     assert result.skipped is False
+    assert "production_stale" not in {f.field for f in result.diagnostics}
 
 
 # ----- BOM/POS discovery matrix -----
@@ -299,13 +279,9 @@ def test_bom_pos_discovery_modern_only_jbom_cpl(packager: FabPackager, tmp_path:
         production,
         files={"jbom.csv": ("Ref,Value\n", 0.0), "cpl.csv": ("Ref,X,Y\n", 0.0)},
     )
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
     output = tmp_path / "out.fab.zip"
 
-    result = packager.package(
-        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
-    )
+    result = packager.package(production_dir=production, output=output, title="demo", rev="1.0")
     assert result.skipped is False
     with zipfile.ZipFile(output) as zf:
         names = set(zf.namelist())
@@ -319,13 +295,9 @@ def test_bom_pos_discovery_legacy_only_bom_pos(packager: FabPackager, tmp_path: 
         production,
         files={"bom.csv": ("Ref,Value\n", 0.0), "pos.csv": ("Ref,X,Y\n", 0.0)},
     )
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
     output = tmp_path / "out.fab.zip"
 
-    result = packager.package(
-        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
-    )
+    result = packager.package(production_dir=production, output=output, title="demo", rev="1.0")
     assert result.skipped is False
     with zipfile.ZipFile(output) as zf:
         names = set(zf.namelist())
@@ -350,13 +322,9 @@ def test_bom_pos_discovery_both_present_picks_closest_mtime(
             "pos.csv": ("stale POS\n", -900.0),
         },
     )
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
     output = tmp_path / "out.fab.zip"
 
-    result = packager.package(
-        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
-    )
+    result = packager.package(production_dir=production, output=output, title="demo", rev="1.0")
     assert result.skipped is False
     with zipfile.ZipFile(output) as zf:
         names = set(zf.namelist())
@@ -384,13 +352,9 @@ def test_bom_pos_discovery_both_present_flips_when_legacy_is_the_fresh_batch(
             "pos.csv": ("fresh POS\n", 0.0),
         },
     )
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
     output = tmp_path / "out.fab.zip"
 
-    result = packager.package(
-        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
-    )
+    result = packager.package(production_dir=production, output=output, title="demo", rev="1.0")
     assert result.skipped is False
     with zipfile.ZipFile(output) as zf:
         assert zf.read("bom.csv") == b"fresh BOM\n"
@@ -405,13 +369,9 @@ def test_bom_pos_discovery_missing_both_variants_names_both_forms(
     """
     production = tmp_path / "production"
     _make_production_with(production, files={"cpl.csv": ("pos\n", 0.0)})
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
     output = tmp_path / "out.fab.zip"
 
-    result = packager.package(
-        production_dir=production, output=output, title="demo", rev="1.0", pcb_path=pcb
-    )
+    result = packager.package(production_dir=production, output=output, title="demo", rev="1.0")
     assert result.skipped is True
     incomplete = [f for f in result.diagnostics if f.field == "production_incomplete"]
     assert incomplete, f"expected production_incomplete finding; got {result.diagnostics!r}"
@@ -430,8 +390,6 @@ def test_package_registers_output_with_change_journal(
     site_repo.mkdir()
     production = site_repo / "production"
     _write_production(production)
-    pcb = site_repo / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
     output = site_repo / "demo-1.0.fab.zip"
 
     with ChangeJournal(site_repo) as journal:
@@ -440,7 +398,6 @@ def test_package_registers_output_with_change_journal(
             output=output,
             title="demo",
             rev="1.0",
-            pcb_path=pcb,
             journal=journal,
         )
         assert output in set(journal.all_paths())

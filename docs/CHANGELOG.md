@@ -63,6 +63,15 @@ user; the reason string is unchanged. Suppressed cases still log at INFO
 under ``-v`` so the user can see the delta and threshold kproj is
 trusting instead of a silent no-op.
 
+`FabPackager` carried a second, independent ``production_stale`` check
+(youngest `production/` file vs PCB mtime, strict comparison, no
+tolerance), so real publishes still warned even after the analyzer
+tolerance landed - the happy-path Save/fab delta (seconds) tripped the
+strict duplicate. The duplicate is removed: the analyzer rule is the
+single policy implementation, and `FabPackager.package()` no longer
+takes a ``pcb_path`` argument. A regression test pins the packager to
+emitting no ``production_stale`` finding.
+
 ### Added - datasheet PDFs copied into the site for linking (Phase G)
 
 `_default_artifact_generator` now copies each discovered datasheet PDF to

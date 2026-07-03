@@ -603,7 +603,7 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | warning | `rev_relation` | `pcb_rev` does not match `^<escaped sch_rev>[A-Z]+$` (board_rev must be design_rev + one or more uppercase-letter suffix). E.g. SCH `3.0` / PCB `3.0B` is OK; SCH `3.0` / PCB `3.0.1` or `3.0-beta` or `3.1` is a finding. |
 | warning | `replaced_by_target_missing` | `replaced-by:<X>` references nonexistent project under `~/Dropbox/KiCad/projects/` |
 | warning | `production_missing` | `<project_dir>/production/` missing or empty when fab artifacts expected |
-| warning | `production_stale` | `production/<gerber>.zip` mtime older than `<pcb>.kicad_pcb` mtime |
+| warning | `production_stale` | `production/<gerber>.zip` mtime more than 5 minutes older than `<pcb>.kicad_pcb` mtime. Single policy home: `MetadataAnalyzer._production_rules` (`FabPackager` emits no duplicate). |
 
 ## Front-matter shape
 

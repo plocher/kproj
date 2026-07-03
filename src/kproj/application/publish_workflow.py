@@ -900,7 +900,6 @@ def _default_artifact_generator(
         asset_dir / f"{PR}.fab.zip",
         title=P,
         rev=R,
-        pcb_path=resolved.pcb_file,
         journal=journal,
     )
     diagnostics.extend(fab_result.diagnostics)
