@@ -31,7 +31,7 @@ import logging
 import shutil
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
 from ..common.kicad_install import (
@@ -557,7 +557,7 @@ def _publish_timestamp() -> str:
     publish timestamp.  Seconds precision (microseconds dropped) keeps
     the value tidy.
     """
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _compute_standard_asset_refs(

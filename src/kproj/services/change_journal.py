@@ -22,7 +22,8 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+
+from typing_extensions import Self  # 3.10-compat; py3.11+ can use `typing.Self` directly
 
 from ..common.subprocess_runner import (
     DEFAULT_GIT_TIMEOUT,
