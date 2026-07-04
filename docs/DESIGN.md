@@ -14,7 +14,7 @@ kproj follows the layered architecture inherited from jBOM ADR 0013 (referenced 
 
 ```text path=null start=null
 ┌────────────────────────────────────────────────────┐
-│ Interface (src/kproj/cli.py)                       │
+│ Interface (src/kproj/cli/main.py)                  │
 │   argparse · sys.argv · sys.exit · stderr writes   │
 ├────────────────────────────────────────────────────┤
 │ Application (src/kproj/application/)               │
@@ -38,7 +38,10 @@ Cross-cutting utilities live in `src/kproj/common/` (currently `kicad_install` p
 ```text path=null start=null
 src/kproj/
 ├── __init__.py              # __version__ = "0.1.0"
-├── cli.py                   # argparse + main() + exit-code mapping
+├── __main__.py              # python -m kproj shim
+├── cli/
+│   ├── __init__.py          # re-exports CLI helpers
+│   └── main.py              # argparse + main() + exit-code mapping
 ├── config.py                # ~/.kproj.yaml + env vars + CLI precedence
 ├── model/
 │   ├── __init__.py
@@ -84,7 +87,7 @@ tests/
 
 ## CLI surface mechanics
 
-Argparse setup in `src/kproj/cli.py`. Parses argv → builds `PublishRequest` → calls `PublishWorkflow().run(request)` → maps `PublishResult` to exit code.
+Argparse setup in `src/kproj/cli/main.py`. Parses argv → builds `PublishRequest` → calls `PublishWorkflow().run(request)` → maps `PublishResult` to exit code.
 
 ```text path=null start=null
 kproj [<project-or-dir-or-file>] [--site-repo PATH] [--dry-run] [--no-push] [-v|--verbose] [-d|--debug]
@@ -97,16 +100,16 @@ kproj [<project-or-dir-or-file>] [--site-repo PATH] [--dry-run] [--no-push] [-v|
 - **`-v` / `--verbose`** — count flag (`action="count"`). Sets `PublishRequest.verbose_level = 1` when `-v`, 2 when `-v -d` (combined).
 - **`-d` / `--debug`** — boolean flag. Implementation-private dev output; not a stable interface.
 
-`cli.py` is the only module that imports `argparse` or calls `sys.exit` (ADR 0006).
+`cli/main.py` is the only module that imports `argparse`; `cli/main.py` and the thin `__main__.py` shim are the only modules that call `sys.exit` (ADR 0006).
 
 ## Configuration layer
 
-`src/kproj/config.py`: `KprojConfig` dataclass + `ConfigOverrides` dataclass + `load_config()` function. Per ADR 0006, `argparse` lives only inside `cli.py`; `cli.py` translates `argparse.Namespace` into a kproj-owned `ConfigOverrides` shape before calling `load_config()`. The config layer never imports `argparse`.
+`src/kproj/config.py`: `KprojConfig` dataclass + `ConfigOverrides` dataclass + `load_config()` function. Per ADR 0006, `argparse` lives only inside `cli/main.py`; `cli/main.py` translates `argparse.Namespace` into a kproj-owned `ConfigOverrides` shape before calling `load_config()`. The config layer never imports `argparse`.
 
 ```python path=null start=null
 @dataclass(frozen=True)
 class ConfigOverrides:
-    """CLI-derived overrides constructed in cli.py.
+    """CLI-derived overrides constructed in cli/main.py.
     None = field not provided by CLI; precedence falls through to env / yaml / default."""
     site_repo: Path | None = None
     no_push: bool | None = None
@@ -679,7 +682,7 @@ Commit messages per pattern in *Per-service contracts › SitePublisher*. Push t
 
 ## Exit code mapping
 
-`cli.py` maps `PublishResult` to process exit codes:
+`cli/main.py` maps `PublishResult` to process exit codes:
 
 | Code | When |
 |---|---|
@@ -800,7 +803,7 @@ Per the hygiene rule, all unit + functional tests pass before any commit. Covera
 
 ### Logging
 
-`logging.getLogger("kproj")` root. Handlers configured in `cli.py` based on verbose/debug flags. Format: `<level> [<step>] <message>` (no timestamp — CI logs add their own).
+`logging.getLogger("kproj")` root. Handlers configured in `cli/main.py` based on verbose/debug flags. Format: `<level> [<step>] <message>` (no timestamp — CI logs add their own).
 
 ### Secrets
 
@@ -815,7 +818,7 @@ None. kproj v1 does not call the GitHub API. The site-repo `git push` uses the u
 - Subprocess timeout (`subprocess.TimeoutExpired`) → captured by the shared subprocess runner (see Subprocess runner section below), surfaced on stderr, rollback, exit 2.
 - Signal interruption (`KeyboardInterrupt`, `SIGTERM` handler) → the open ChangeJournal's `__exit__` catches the `BaseException`, performs rollback, re-raises so the process exits with the standard signal-handling exit code.
 
-All exceptions bubble up to `cli.py`'s top-level handler, which formats and exits.
+All exceptions bubble up to `cli/main.py`'s top-level handler, which formats and exits.
 
 ### Subprocess runner
 
@@ -845,7 +848,7 @@ kproj does NOT import:
 
 ### Python packaging
 
-`pyproject.toml` (already in the repo): Python ≥3.11, MIT, hatchling build, `kproj = "kproj.cli:main"` console-script entry point. `uv sync` for dev environment; `uv sync --frozen` in CI (when Phase 6+ CI lands).
+`pyproject.toml` (already in the repo): Python ≥3.11, MIT, hatchling build, `kproj = "kproj.cli.main:main"` console-script entry point. `uv sync` for dev environment; CI installs via `pip install -e .[dev]` to avoid the local `tool.uv.sources` override.
 
 ### Performance assumption
 

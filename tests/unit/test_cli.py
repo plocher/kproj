@@ -3,12 +3,13 @@
 Validates the user-facing surface (positional + flags) per
 ``docs/DESIGN.md`` § *CLI surface mechanics* and the exit-code mapping
 per § *Exit code mapping*. Per ADR 0006, ``argparse`` lives only inside
-``cli.py`` - these tests poke at the public ``main()`` and ``build_request``
-helpers.
+``src/kproj/cli/main.py`` - these tests poke at the public ``main()``
+and ``build_request`` helpers.
 """
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ from kproj import cli
 from kproj.application.publish_workflow import PublishRequest, PublishResult
 from kproj.model.finding import Finding
 from kproj.model.severity import Severity
+
+cli_main = importlib.import_module("kproj.cli.main")
 
 # ----------------------------------------------------------------------
 # Argparse surface
@@ -169,7 +172,7 @@ def test_main_delegates_to_publish_workflow(
                 message="kproj: stub workflow",
             )
 
-    monkeypatch.setattr(cli, "PublishWorkflow", _StubWorkflow)
+    monkeypatch.setattr(cli_main, "PublishWorkflow", _StubWorkflow)
     monkeypatch.setenv("HOME", str(tmp_path))  # isolate ~/.kproj.yaml
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
@@ -190,7 +193,7 @@ def test_main_exit_code_zero_on_clean_run(monkeypatch: pytest.MonkeyPatch, tmp_p
         def run(self, request: PublishRequest) -> PublishResult:
             return PublishResult(outcome="published", exit_code=0)
 
-    monkeypatch.setattr(cli, "PublishWorkflow", _CleanWorkflow)
+    monkeypatch.setattr(cli_main, "PublishWorkflow", _CleanWorkflow)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
@@ -247,7 +250,7 @@ def test_main_prints_findings_to_stderr(
         message="kproj: published Demo-1.0B.",
         findings=findings,
     )
-    monkeypatch.setattr(cli, "PublishWorkflow", _stub_workflow_returning(result))
+    monkeypatch.setattr(cli_main, "PublishWorkflow", _stub_workflow_returning(result))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
@@ -276,7 +279,7 @@ def test_main_emits_nothing_extra_when_findings_empty(
         message="kproj: published Demo-1.0B.",
         findings=(),
     )
-    monkeypatch.setattr(cli, "PublishWorkflow", _stub_workflow_returning(result))
+    monkeypatch.setattr(cli_main, "PublishWorkflow", _stub_workflow_returning(result))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)

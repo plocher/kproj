@@ -45,7 +45,7 @@ dev = [
 ]
 
 [project.scripts]
-kproj = "kproj.cli:main"
+kproj = "kproj.cli.main:main"
 
 [project.urls]
 Homepage = "https://github.com/plocher/kproj"
@@ -111,3 +111,30 @@ ignore_errors = true
 # jBOM ships type stubs.
 module = "jbom.*"
 ignore_missing_imports = true
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["src/kproj/__init__.py:__version__"]
+build_command = "pip install build && python -m build"
+dist_glob_patterns = ["dist/*"]
+branch = "main"
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = [
+    "^chore(?:\\(.+\\))?: .*",
+    "^ci(?:\\(.+\\))?: .*",
+    "^docs(?:\\(.+\\))?: .*",
+    "^style(?:\\(.+\\))?: .*",
+    "^test(?:\\(.+\\))?: .*",
+]
+
+[tool.semantic_release.commit_parser_options]
+major_tags = ["breaking"]
+minor_tags = ["feat", "feature"]
+patch_tags = ["fix", "perf", "refactor"]
+
+[tool.semantic_release.publish]
+dist_glob_patterns = ["dist/*"]
+upload_to_vcs_release = true
+upload_to_pypi = true
+upload_to_repository = true

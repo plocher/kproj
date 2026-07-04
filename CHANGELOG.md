@@ -522,7 +522,7 @@ entry above.
   `application/publish_workflow.py` to the model layer.  Added the
   authoritative `compute_exit_code(outcome, findings)` helper +
   `PublishResult.build(...)` factory so the workflow populates
-  `PublishResult.exit_code` instead of `cli.py` re-deriving it.
+  `PublishResult.exit_code` instead of `cli/main.py` re-deriving it.
   `services/site_publisher.py` drops its `TYPE_CHECKING` import in
   favour of a direct model-layer import.  Wave-1 carry-forward
   decisions both resolved.
@@ -709,7 +709,7 @@ entry above.
   `load_config()` with precedence CLI flag > env > `~/.kproj.yaml` >
   default per `docs/DESIGN.md` section Configuration layer.
 - CLI surface: `kproj [<project-or-dir-or-file>] [--site-repo PATH] [--dry-run] [--no-push] [-v] [-d]`
-  with argparse confined to `cli.py` (ADR 0006) and exit-code mapping
+  with argparse confined to `cli/main.py` (ADR 0006) and exit-code mapping
   0 / 1 / 2 per section Exit code mapping.
 - `common/kicad_install.py` per ADR 0009: `find_kicad_cli`,
   `find_plugins_dir`, `find_ibom_script`, `kicad_version` with

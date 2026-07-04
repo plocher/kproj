@@ -24,8 +24,8 @@ kproj v1 adopts **library-shape boundary discipline** as a codebase-wide mindset
 
 ### Concrete rules
 
-- **`argparse` is confined to `src/kproj/cli.py`.** No step module, no audit module, no Workflow class imports argparse or references `sys.argv`. CLI parsing translates argv → typed Request dataclass; everything downstream operates on dataclasses.
-- **`sys.exit` is confined to `cli.py`.** Step modules return result objects (with exit-code hints in the result); `cli.py` maps results → process exit codes.
+- **`argparse` is confined to `src/kproj/cli/main.py`.** No step module, no audit module, no Workflow class imports argparse or references `sys.argv`. CLI parsing translates argv → typed Request dataclass; everything downstream operates on dataclasses.
+- **`sys.exit` is confined to `cli/main.py` (and the thin `src/kproj/__main__.py` shim).** Step modules return result objects (with exit-code hints in the result); the CLI layer maps results → process exit codes.
 - **No global state.** No module-level mutable variables. No "current project" globals. Each Workflow takes a Request, returns a Result, no implicit context.
 - **Dataclasses over magic dicts.** All Request/Result/intermediate-data shapes are frozen dataclasses with explicit types. Per jBOM ADR 0013's Value Object pattern.
 - **Pure functions where possible.** Pure parsing, pure transformation, pure formatter functions. Side effects (file writes, subprocess invocations) are isolated and explicit.
@@ -59,7 +59,7 @@ The discipline matches jBOM's evolution: jBOM's internals are library-quality no
 ### Tradeoffs
 
 - Upfront cost: every step module needs a Request dataclass, every result needs a Result dataclass. Slightly more code than the "just take CLI args and write files" style.
-- Discipline overhead during PR review — reviewers need to enforce no-argparse-outside-cli.py, no-globals, etc.
+- Discipline overhead during PR review — reviewers need to enforce no-argparse-outside-cli/main.py, no-globals, etc.
 - May feel over-engineered for kproj's small v1 surface. Mitigation: jBOM ADR 0013's patterns are well-documented; the upfront cost is bounded.
 
 ### Reversibility

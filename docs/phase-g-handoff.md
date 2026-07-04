@@ -1,16 +1,16 @@
 # kproj Phase G — session checkpoint / handoff (2026-07-02)
 Records what changed this session and what's next. Read `docs/AGENT-HANDOFF.md`
 first for locked architectural decisions (Jekyll->Hugo migration, SiteProfile,
-boundaries); this doc does not repeat them. Detail lives in `docs/CHANGELOG.md`
-and git history — referenced here, not duplicated.
+boundaries); this doc does not repeat them. Detail lives in `CHANGELOG.md` and
+git history — referenced here, not duplicated.
 ## Status: Phase G effectively complete for `cpNode-Xiao-68x90`
 - Real project published end-to-end; the Hugo site is live at
   https://www.spcoast.com (KiCad Projects -> `/versions/`).
-- kproj gate (local; **no CI configured on `plocher/kproj`** — local run is the
-  gate): 393 pytest, 14 Behave scenarios, ruff + mypy strict clean. Commands:
+- kproj gate (local + GitHub Actions; local run remains the pre-commit gate):
+  393 pytest, 14 Behave scenarios, ruff + mypy strict clean. Commands:
   `.venv/bin/python -m pytest -q`, `.venv/bin/python -m behave tests/features`,
   `.venv/bin/ruff check src tests`, `.venv/bin/mypy src`.
-## kproj — branch `fix/phase-g-validation` (see `docs/CHANGELOG.md` + git log)
+## kproj — branch `fix/phase-g-validation` (see `CHANGELOG.md` + git log)
 - Change detection delegated to **git**; the bespoke `SitePublisher.detect_outcome`,
   `_strip_volatile`, and `force_outcome` were removed. Artifacts regenerate
   **Make-style** (source newer than the on-disk artifact, `_needs_regeneration`);
