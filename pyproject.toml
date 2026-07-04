@@ -28,13 +28,6 @@ dependencies = [
     #   "Pillow" (for thumbnail crop, if PNG-render approach wins over SVG-outline)
 ]
 
-[tool.uv.sources]
-# Local editable path during development — jBOM is the sibling repo on the
-# user's machine.  Released kproj wheels will resolve ``jbom`` from PyPI once
-# both projects publish there; until then the path source pins us to the
-# checked-out tree.
-jbom = { path = "../jBOM", editable = true }
-
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -52,12 +45,18 @@ Homepage = "https://github.com/plocher/kproj"
 Repository = "https://github.com/plocher/kproj.git"
 Issues = "https://github.com/plocher/kproj/issues"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+
+[tool.uv.sources]
+# Local editable path during development — jBOM is the sibling repo on the
+# user's machine.  Released kproj wheels will resolve ``jbom`` from PyPI once
+# both projects publish there; until then the path source pins us to the
+# checked-out tree.
+jbom = { path = "../jBOM", editable = true }
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kproj"]
+
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -66,6 +65,7 @@ addopts = ["-ra", "--strict-markers"]
 markers = [
     "contract: external-tool contract tests (kicad-cli / iBOM), skipped when tools missing",
 ]
+
 
 [tool.ruff]
 line-length = 100
@@ -91,6 +91,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
 
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -111,6 +112,7 @@ ignore_errors = true
 # jBOM ships type stubs.
 module = "jbom.*"
 ignore_missing_imports = true
+
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
@@ -138,3 +140,8 @@ dist_glob_patterns = ["dist/*"]
 upload_to_vcs_release = true
 upload_to_pypi = true
 upload_to_repository = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
