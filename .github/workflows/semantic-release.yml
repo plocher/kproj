@@ -22,7 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
       - name: Install python-semantic-release
         run: |
           python -m pip install --upgrade pip
@@ -34,11 +34,51 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           semantic-release version
+
+      # Release-detected gate: semantic-release version may no-op when no
+      # relevant commits landed on this push. Presence of dist/ artifacts is
+      # the reliable signal that a new version was tagged and built; every
+      # release-only step below is gated on the released output so no-op
+      # pushes exit cleanly. Also exports version/tag for reuse in the
+      # asset-attach step. Matches the jBOM reference workflow's shape.
+      - name: Detect whether a release was cut
+        id: release
+        run: |
+          if [ -n "$(ls -A dist 2>/dev/null || true)" ]; then
+            version=$(python -c "import re,sys; m=re.search(r'^version *= *\"([^\"]+)\"', open('pyproject.toml').read(), re.MULTILINE); sys.stdout.write(m.group(1))")
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+            echo "Detected new release v${version}"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "No new release; skipping publish and asset attach steps."
+          fi
+
       - name: Publish to PyPI
-        if: ${{ hashFiles('dist/*') != '' }}
+        if: steps.release.outputs.released == 'true'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           pip install twine
+          # Bare dist/* is safe for kproj: only wheel + sdist ever land in
+          # dist/ here (no PCM archive or other non-PyPI artifacts, unlike
+          # jBOM). See release-process notes in kproj#27.
           twine upload dist/*
+
+      # VCS release audit trail: mirror the wheel + sdist that shipped to
+      # PyPI onto the vX.Y.Z GitHub Release so the Release page is a
+      # complete record of what was published. --clobber makes the step
+      # idempotent for workflow re-runs against the same tag.
+      - name: Attach release assets
+        if: steps.release.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.release.outputs.tag }}"
+          shopt -s nullglob
+          artifacts=(dist/*.whl dist/*.tar.gz)
+          if [ ${#artifacts[@]} -gt 0 ]; then
+            gh release upload "${tag}" "${artifacts[@]}" --clobber
+          fi
