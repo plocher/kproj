@@ -17,8 +17,13 @@ from pathlib import Path
 import pytest
 
 from kproj.common import github_link as github_link_module
-from kproj.common.github_link import derive_github_link, parse_github_remote_url
+from kproj.common.github_link import (
+    derive_github_link,
+    derive_github_link_finding,
+    parse_github_remote_url,
+)
 from kproj.common.subprocess_runner import SubprocessTimeoutError
+from kproj.model.severity import Severity
 
 # ----------------------------------------------------------------------
 # parse_github_remote_url
@@ -206,3 +211,103 @@ def test_derive_github_link_timeout_only_affects_head_pushed_check(
 
     monkeypatch.setattr(github_link_module, "subprocess_run", _flaky_run)
     assert derive_github_link(project_dir) is None
+
+
+# ----------------------------------------------------------------------
+# derive_github_link_finding - absence-highlighting (kproj#30 clarified)
+# ----------------------------------------------------------------------
+
+
+def test_derive_github_link_finding_none_when_pushed(tmp_path: Path) -> None:
+    """A pushed GitHub remote yields no advisory finding - nothing to advise."""
+    project_dir = tmp_path / "repo-pushed"
+    _init_repo(project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/kproj.git", cwd=project_dir)
+    _seed_pushed_upstream(project_dir)
+    assert derive_github_link_finding(project_dir) is None
+
+
+def test_derive_github_link_finding_missing_for_non_repo(tmp_path: Path) -> None:
+    """A plain (non-git) directory gets the 'no repo backing at all' finding."""
+    project_dir = tmp_path / "not-a-repo"
+    project_dir.mkdir()
+    finding = derive_github_link_finding(project_dir, project="Demo")
+    assert finding is not None
+    assert finding.field == "github_link_missing"
+    assert finding.severity is Severity.WARNING
+    assert finding.project == "Demo"
+    assert finding.source == "audit"
+
+
+def test_derive_github_link_finding_missing_for_no_origin_remote(tmp_path: Path) -> None:
+    """A git repo with no ``origin`` remote gets the 'no repo backing at all' finding."""
+    project_dir = tmp_path / "repo-no-remote"
+    _init_repo(project_dir)
+    finding = derive_github_link_finding(project_dir)
+    assert finding is not None
+    assert finding.field == "github_link_missing"
+
+
+def test_derive_github_link_finding_missing_for_non_github_remote(tmp_path: Path) -> None:
+    """A pushed non-GitHub remote (e.g. GitLab) gets the 'no repo backing at all' finding."""
+    project_dir = tmp_path / "repo-gitlab"
+    _init_repo(project_dir)
+    _git("remote", "add", "origin", "git@gitlab.com:plocher/kproj.git", cwd=project_dir)
+    _seed_pushed_upstream(project_dir)
+    finding = derive_github_link_finding(project_dir)
+    assert finding is not None
+    assert finding.field == "github_link_missing"
+
+
+def test_derive_github_link_finding_unpushed_for_no_upstream(tmp_path: Path) -> None:
+    """A GitHub remote with no upstream tracking gets the 'not pushed' finding."""
+    project_dir = tmp_path / "repo-unpushed"
+    _init_repo(project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/kproj.git", cwd=project_dir)
+    finding = derive_github_link_finding(project_dir)
+    assert finding is not None
+    assert finding.field == "github_link_unpushed"
+    assert finding.severity is Severity.WARNING
+    assert finding.source == "audit"
+
+
+def test_derive_github_link_finding_unpushed_for_ahead_head(tmp_path: Path) -> None:
+    """HEAD ahead of the last-known pushed upstream ref gets the 'not pushed' finding."""
+    project_dir = tmp_path / "repo-ahead"
+    _init_repo(project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/kproj.git", cwd=project_dir)
+    _seed_pushed_upstream(project_dir)
+    (project_dir / "more.txt").write_text("more\n", encoding="utf-8")
+    _git("add", "-A", cwd=project_dir)
+    _git("commit", "-q", "-m", "more work", cwd=project_dir)
+    finding = derive_github_link_finding(project_dir)
+    assert finding is not None
+    assert finding.field == "github_link_unpushed"
+
+
+def test_derive_github_link_finding_distinguishes_missing_from_unpushed(tmp_path: Path) -> None:
+    """The two advisory reasons use distinct field names and wording."""
+    no_repo = derive_github_link_finding(tmp_path / "no-such-dir")
+    unpushed_dir = tmp_path / "repo-unpushed-2"
+    _init_repo(unpushed_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/kproj.git", cwd=unpushed_dir)
+    unpushed = derive_github_link_finding(unpushed_dir)
+    assert no_repo is not None and unpushed is not None
+    assert no_repo.field != unpushed.field
+    assert no_repo.reason != unpushed.reason
+
+
+def test_derive_github_link_finding_never_raises_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A git subprocess timeout still yields a (missing-backing) finding, not a raise."""
+    project_dir = tmp_path / "repo-slow-git"
+    _init_repo(project_dir)
+
+    def _raise_timeout(*args: object, **kwargs: object) -> None:
+        raise SubprocessTimeoutError(["git", "rev-parse", "--is-inside-work-tree"], 30.0)
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _raise_timeout)
+    finding = derive_github_link_finding(project_dir)
+    assert finding is not None
+    assert finding.field == "github_link_missing"

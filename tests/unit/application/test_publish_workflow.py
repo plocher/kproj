@@ -197,6 +197,48 @@ def test_private_project_short_circuits_with_private_skip(
     assert "kicad-cli 9.0.4" in err
 
 
+def test_run_surfaces_github_link_missing_finding_for_non_repo_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project directory with no git repo backing gets a github_link_missing finding.
+
+    Absence-highlighting (kproj#30 clarified requirement): kproj must
+    actively surface the missing GitHub-repo backing rather than
+    silently omitting the link. Uses the private-skip fixture/path
+    (no site repo or artifact pipeline needed) purely as a convenient
+    terminal point that still returns the merged findings.
+    """
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "private"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+    workflow = _workflow(tmp_path)
+    result = workflow.run(_make_request(str(proj_dir), fake_cli))
+    github_findings = [f for f in result.findings if f.field == "github_link_missing"]
+    assert len(github_findings) == 1, (
+        f"expected exactly one github_link_missing finding; got fields="
+        f"{[f.field for f in result.findings]}"
+    )
+    assert github_findings[0].project == "demo"
+
+
 def test_active_project_fails_preflight_without_ibom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

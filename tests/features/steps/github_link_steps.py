@@ -134,3 +134,27 @@ def step_then_github_link_present(context: Any) -> None:
 def step_then_no_github_link(context: Any) -> None:
     content = _version_file_content(context)
     assert "github_url" not in content, f"unexpected github_url in front-matter:\n{content[:800]}"
+
+
+@then("the version page body has no github-link advisory finding")
+def step_then_no_github_link_finding(context: Any) -> None:
+    content = _version_file_content(context)
+    assert "github_link_missing" not in content and "github_link_unpushed" not in content, (
+        f"unexpected github-link advisory finding in body:\n{content[:1200]}"
+    )
+
+
+@then("the version page body has a github_link_missing advisory finding")
+def step_then_github_link_missing_finding(context: Any) -> None:
+    content = _version_file_content(context)
+    assert "github_link_missing" in content, (
+        f"expected a github_link_missing finding in body:\n{content[:1200]}"
+    )
+
+
+@then("the version page body has a github_link_unpushed advisory finding")
+def step_then_github_link_unpushed_finding(context: Any) -> None:
+    content = _version_file_content(context)
+    assert "github_link_unpushed" in content, (
+        f"expected a github_link_unpushed finding in body:\n{content[:1200]}"
+    )
