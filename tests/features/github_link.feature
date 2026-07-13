@@ -46,3 +46,11 @@ Feature: kproj publishes a "see/fork on GitHub" link (kproj#30)
     When I run kproj
     Then kproj reports outcome "published"
     And the version page front-matter has no GitHub link
+
+  Scenario: a project whose history has diverged from the pushed upstream gets no GitHub link
+    Given a populated KiCad project with status active
+    And the project directory is a git repo whose history has diverged from the pushed upstream
+    And a clean site repo
+    When I run kproj
+    Then kproj reports outcome "published"
+    And the version page front-matter has no GitHub link

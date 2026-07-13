@@ -90,6 +90,31 @@ def step_given_detached_head(context: Any) -> None:
     _git("checkout", "-q", head, cwd=project_dir)
 
 
+@given("the project directory is a git repo whose history has diverged from the pushed upstream")
+def step_given_diverged_from_upstream(context: Any) -> None:
+    """Local HEAD is rewritten (amended) after the upstream ref was seeded.
+
+    Unlike the "ahead" case (a fast-forward, HEAD's ancestor chain still
+    includes the upstream commit), an amend replaces HEAD with a
+    different commit that shares the same parent as the seeded upstream
+    ref - neither is an ancestor of the other. Detection only compares
+    exact commit equality, so this exercises a distinct history shape
+    while asserting the same conservative outcome.
+    """
+    project_dir = context.proj_dir
+    _init_repo(project_dir)
+    _git("branch", "-M", "main", cwd=project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/MyProject.git", cwd=project_dir)
+    head = _git_output("rev-parse", "HEAD", cwd=project_dir)
+    _git("update-ref", "refs/remotes/origin/main", head, cwd=project_dir)
+    _git("config", "branch.main.remote", "origin", cwd=project_dir)
+    _git("config", "branch.main.merge", "refs/heads/main", cwd=project_dir)
+    # Rewrite HEAD's commit message (amend) so the local commit sha no
+    # longer matches the seeded upstream ref, with no ancestor relation
+    # in either direction - a genuine divergence, not a fast-forward.
+    _git("commit", "--amend", "-q", "-m", "rewritten history", cwd=project_dir)
+
+
 def _version_file_content(context: Any) -> str:
     project_name = getattr(context, "project_name", "MyProject")
     version_file = context.site_repo / _VDIR / project_name / "1.0.md"
