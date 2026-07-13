@@ -49,12 +49,45 @@ def step_given_pushed_github_remote(context: Any) -> None:
     _git("config", "branch.main.merge", "refs/heads/main", cwd=project_dir)
 
 
-@given("the project directory is a git repo with an unpushed GitHub remote")
-def step_given_unpushed_github_remote(context: Any) -> None:
+@given("the project directory is a git repo with a GitHub remote but no upstream tracking")
+def step_given_no_upstream_tracking(context: Any) -> None:
     """A GitHub origin is configured, but no upstream tracking is set (never pushed)."""
     project_dir = context.proj_dir
     _init_repo(project_dir)
     _git("remote", "add", "origin", "git@github.com:plocher/MyProject.git", cwd=project_dir)
+
+
+@given(
+    "the project directory is a git repo with a GitHub remote but local commits ahead of upstream"
+)
+def step_given_ahead_of_upstream(context: Any) -> None:
+    """Upstream tracking is configured, but HEAD has diverged (local commits not pushed)."""
+    project_dir = context.proj_dir
+    _init_repo(project_dir)
+    _git("branch", "-M", "main", cwd=project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/MyProject.git", cwd=project_dir)
+    head = _git_output("rev-parse", "HEAD", cwd=project_dir)
+    _git("update-ref", "refs/remotes/origin/main", head, cwd=project_dir)
+    _git("config", "branch.main.remote", "origin", cwd=project_dir)
+    _git("config", "branch.main.merge", "refs/heads/main", cwd=project_dir)
+    # Add a local-only commit so HEAD is ahead of the last-known upstream ref.
+    (project_dir / "WIP.txt").write_text("work in progress\n", encoding="utf-8")
+    _git("add", "-A", cwd=project_dir)
+    _git("commit", "-q", "-m", "unpushed work", cwd=project_dir)
+
+
+@given("the project directory is a git repo with a pushed GitHub remote but checked out detached")
+def step_given_detached_head(context: Any) -> None:
+    """HEAD is detached (not on any branch), so there is no ``@{u}`` to resolve at all."""
+    project_dir = context.proj_dir
+    _init_repo(project_dir)
+    _git("branch", "-M", "main", cwd=project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/MyProject.git", cwd=project_dir)
+    head = _git_output("rev-parse", "HEAD", cwd=project_dir)
+    _git("update-ref", "refs/remotes/origin/main", head, cwd=project_dir)
+    _git("config", "branch.main.remote", "origin", cwd=project_dir)
+    _git("config", "branch.main.merge", "refs/heads/main", cwd=project_dir)
+    _git("checkout", "-q", head, cwd=project_dir)
 
 
 def _version_file_content(context: Any) -> str:
