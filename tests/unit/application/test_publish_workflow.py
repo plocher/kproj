@@ -15,6 +15,7 @@ import pytest
 
 from kproj.application import publish_workflow as workflow_module
 from kproj.application.publish_workflow import PublishWorkflow
+from kproj.common import github_link as github_link_module
 from kproj.common.kicad_install import KicadNotFoundError
 from kproj.config import GENERIC_SITE_PROFILE, KprojConfig
 from kproj.model.analysis_info import AnalysisInfo
@@ -237,6 +238,63 @@ def test_run_surfaces_github_link_missing_finding_for_non_repo_project(
         f"{[f.field for f in result.findings]}"
     )
     assert github_findings[0].project == "demo"
+
+
+def test_run_detects_github_link_exactly_once_per_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``detect_github_link`` (the only git-touching call) runs exactly once per publish.
+
+    Human ruling on kproj#30: the front-matter ``github_url`` and the
+    absence-highlighting audit finding must be derived from the same
+    detection pass, not two independent ones. Wraps
+    ``github_link.subprocess_run`` to count invocations while still
+    delegating to the real implementation, then asserts the initial
+    ``rev-parse --is-inside-work-tree`` probe - the entry point of
+    every :func:`~kproj.common.github_link.detect_github_link` call -
+    fires exactly once for the whole publish.
+    """
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "private"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    real_subprocess_run = github_link_module.subprocess_run
+    work_tree_probe_calls: list[tuple[str, ...]] = []
+
+    def _counting_subprocess_run(command: list[str], **kwargs: object) -> object:
+        if "--is-inside-work-tree" in command:
+            work_tree_probe_calls.append(tuple(command))
+        return real_subprocess_run(command, **kwargs)
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _counting_subprocess_run)
+
+    workflow = _workflow(tmp_path)
+    result = workflow.run(_make_request(str(proj_dir), fake_cli))
+
+    assert result.outcome == "private-skip"
+    assert len(work_tree_probe_calls) == 1, (
+        f"expected exactly one detect_github_link pass (one "
+        f"--is-inside-work-tree probe) per publish; got "
+        f"{len(work_tree_probe_calls)}: {work_tree_probe_calls}"
+    )
 
 
 def test_active_project_fails_preflight_without_ibom(
@@ -735,6 +793,98 @@ def test_active_project_publishes_successfully(
 
     assert result.outcome in ("published", "refreshed", "noop")
     assert result.exit_code in (0, 1)  # may have warnings
+
+
+def test_full_publish_detects_github_link_once_and_shares_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full publish calls ``detect_github_link`` exactly once end-to-end.
+
+    Human ruling on kproj#30: covers the seam the private-skip-only test
+    (``test_run_detects_github_link_exactly_once_per_publish``) can't -
+    that a *full* publish (which also calls ``build_publication`` at
+    step 9) doesn't perform a second, independent detection pass there.
+    Also asserts the front-matter ``github_url`` and the absence of a
+    ``github_link_*`` advisory finding agree (both derived from the one
+    detection) for a pushed-GitHub-repo project.
+    """
+    import subprocess
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            company="MRCS",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+
+    # Turn the project directory into a pushed GitHub repo (local-only
+    # metadata; see tests/unit/common/test_github_link.py for the
+    # seeding technique).
+    def _git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=proj_dir, check=True, capture_output=True, text=True)
+
+    _git("init", "-q")
+    _git("config", "user.email", "test@test.com")
+    _git("config", "user.name", "Test")
+    _git("add", "-A")
+    _git("commit", "-q", "-m", "initial")
+    _git("branch", "-M", "main")
+    _git("remote", "add", "origin", "git@github.com:plocher/demo.git")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=proj_dir, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    _git("update-ref", "refs/remotes/origin/main", head)
+    _git("config", "branch.main.remote", "origin")
+    _git("config", "branch.main.merge", "refs/heads/main")
+
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    real_subprocess_run = github_link_module.subprocess_run
+    work_tree_probe_calls: list[tuple[str, ...]] = []
+
+    def _counting_subprocess_run(command: list[str], **kwargs: object) -> object:
+        if "--is-inside-work-tree" in command:
+            work_tree_probe_calls.append(tuple(command))
+        return real_subprocess_run(command, **kwargs)
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _counting_subprocess_run)
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site)
+
+    with patch("kproj.services.site_publisher._git_run"):
+        result = workflow.run(request)
+
+    assert result.outcome in ("published", "refreshed", "noop")
+    assert len(work_tree_probe_calls) == 1, (
+        f"expected exactly one detect_github_link pass across the whole "
+        f"publish (read+analyze AND build_publication); got "
+        f"{len(work_tree_probe_calls)}: {work_tree_probe_calls}"
+    )
+    assert not any(f.field.startswith("github_link_") for f in result.findings), (
+        "a pushed GitHub repo must not get a github_link_missing/unpushed advisory"
+    )
+
+    version_file = site / GENERIC_SITE_PROFILE.versions_dir / "demo" / "1.0.md"
+    assert version_file.exists(), f"{version_file} not found"
+    content = version_file.read_text(encoding="utf-8")
+    assert "github_url: https://github.com/plocher/demo" in content, (
+        f"expected github_url in front-matter:\n{content[:800]}"
+    )
 
 
 def test_dry_run_does_not_write_site_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
