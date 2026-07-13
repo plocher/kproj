@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import yaml
 
+from kproj.common.datasheet_library import build_datasheet_link
 from kproj.config import GENERIC_SITE_PROFILE
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.finding import Finding
@@ -332,25 +333,35 @@ class TestBuildProjectIndexContent:
         assert _build_project_index_content(pub) == ("---\ntitle: Demo\nproject: Demo\n---\n\n")
 
     def test_datasheets_in_front_matter_body_is_description(self) -> None:
-        """Datasheets are front-matter data; the body is README + DESCRIPTION."""
+        """Datasheets are front-matter deep-links; the body is README + DESCRIPTION."""
+        cap = build_datasheet_link("Cap-Foo")
+        reg = build_datasheet_link("Regulator-Bar")
         pub = _pub(
             description="Prose about the board.",
-            datasheets=("Cap-Foo.pdf", "Regulator-Bar.pdf"),
+            datasheets=(cap, reg),
         )
         content = _build_project_index_content(pub)
-        assert "datasheets:\n- Cap-Foo.pdf\n- Regulator-Bar.pdf\n" in content
+        assert (
+            "datasheets:\n"
+            f"- name: {cap.name}\n  view: {cap.view_url}\n  download: {cap.download_url}\n"
+            f"- name: {reg.name}\n  view: {reg.view_url}\n  download: {reg.download_url}\n"
+        ) in content
         body = content.split("---\n", 2)[2]
         assert body == "# Demo\nA demo project.\n\nProse about the board.\n"
 
     def test_datasheets_only_front_matter_empty_body(self) -> None:
-        """Datasheets-only project: names in front-matter, empty body."""
+        """Datasheets-only project: link data in front-matter, empty body."""
+        only = build_datasheet_link("Only")
         pub = Publication(
             project_info=_pi(),
             analysis_info=AnalysisInfo(),
             body_md="",
             readme_md="",
-            datasheets=("Only.pdf",),
+            datasheets=(only,),
         )
         content = _build_project_index_content(pub)
-        assert "datasheets:\n- Only.pdf\n" in content
+        assert (
+            f"datasheets:\n- name: {only.name}\n  view: {only.view_url}\n"
+            f"  download: {only.download_url}\n"
+        ) in content
         assert content.split("---\n", 2)[2] == "\n"

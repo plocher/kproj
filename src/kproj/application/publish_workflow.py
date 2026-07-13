@@ -28,12 +28,17 @@ tests.
 from __future__ import annotations
 
 import logging
-import shutil
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
+from ..common.datasheet_library import (
+    DEFAULT_LIBRARY_REPO,
+    build_datasheet_link,
+    check_datasheet_links,
+    read_datasheet_names,
+)
 from ..common.github_link import derive_github_link, detect_github_link, finding_for_detection
 from ..common.kicad_install import (
     SUPPORTED_KICAD_MAJORS,
@@ -44,11 +49,7 @@ from ..common.kicad_install import (
     kicad_version,
 )
 from ..common.kicad_libraries import enumerate_libraries
-from ..common.project_docs import (
-    discover_datasheet_files,
-    discover_datasheets,
-    read_description,
-)
+from ..common.project_docs import read_description
 from ..common.subprocess_runner import (
     DEFAULT_GIT_TIMEOUT,
     SubprocessFailedError,
@@ -58,6 +59,7 @@ from ..common.subprocess_runner import run as subprocess_run
 from ..config import KprojConfig, SiteProfile
 from ..formatters.markdown_table_formatter import MarkdownTableFormatter
 from ..model.analysis_info import AnalysisInfo
+from ..model.datasheet_link import DatasheetLink
 from ..model.finding import Finding
 from ..model.project_info import ProjectInfo, Status
 from ..model.publication import AssetRef, Publication
@@ -164,6 +166,19 @@ canonical asset refs without invoking any subprocesses.
 SitePublisherFactory = Callable[["ChangeJournal"], SitePublisher]
 """Callable that constructs a :class:`SitePublisher` given an open journal."""
 
+DatasheetNameLookup = Callable[
+    [Path, "Path | None"],
+    tuple[tuple[str, ...], tuple[Finding, ...]],
+]
+"""Callable that looks up distinct curated ``Datasheet Name`` values for a
+project (kproj#29).
+
+Signature: ``(project_dir, inventory) -> (names, diagnostics)``. Defaults
+to :func:`kproj.common.datasheet_library.read_datasheet_names`, which
+invokes ``jbom bom`` live at publish time (ADR 0010). Tests inject a
+fake returning canned names/findings so no real jBOM subprocess runs.
+"""
+
 __all__ = [
     "ArtifactGeneratorCallable",
     "DesignAnalyzerFactory",
@@ -196,6 +211,8 @@ class PublishWorkflow:
         kicad_python_locator: KicadPythonLocator | None = None,
         artifact_generator: ArtifactGeneratorCallable | None = None,
         site_publisher_factory: SitePublisherFactory | None = None,
+        datasheet_name_lookup: DatasheetNameLookup | None = None,
+        library_repo: Path | None = None,
     ) -> None:
         """Construct a workflow with optional injectable service factories.
 
@@ -215,6 +232,14 @@ class PublishWorkflow:
             site_publisher_factory: Callable constructing a :class:`SitePublisher`
                 from an open :class:`ChangeJournal`.  Defaults to
                 :class:`SitePublisher`.
+            datasheet_name_lookup: Optional :data:`DatasheetNameLookup`
+                (kproj#29).  Defaults to
+                :func:`~kproj.common.datasheet_library.read_datasheet_names`
+                (live ``jbom bom`` invocation).  Tests inject a fake to
+                avoid a real jBOM subprocess.
+            library_repo: Optional local ``SPCoast-inventory`` clone path
+                for the advisory publish guard (kproj#29).  Defaults to
+                :data:`~kproj.common.datasheet_library.DEFAULT_LIBRARY_REPO`.
         """
         self._project_reader = project_reader or KicadProjectReader()
         self._metadata_analyzer = metadata_analyzer or MetadataAnalyzer()
@@ -225,6 +250,10 @@ class PublishWorkflow:
             artifact_generator or _default_artifact_generator
         )
         self._site_publisher_factory: SitePublisherFactory = site_publisher_factory or SitePublisher
+        self._datasheet_name_lookup: DatasheetNameLookup = (
+            datasheet_name_lookup or read_datasheet_names
+        )
+        self._library_repo: Path = library_repo or DEFAULT_LIBRARY_REPO
 
     def run(self, request: PublishRequest) -> PublishResult:
         """Run the full 11-step publish pipeline against *request*.
@@ -307,6 +336,28 @@ class PublishWorkflow:
         )
         if github_link_finding is not None:
             analysis = AnalysisInfo(findings=(*analysis.findings, github_link_finding))
+
+        # Datasheet-name lookup (kproj#29): a live `jbom bom` query (ADR
+        # 0010), not the stale `production/jbom.csv` fab snapshot. Evaluated
+        # once per publish and threaded to both the front-matter deep-links
+        # (via `datasheet_links` -> `build_publication`) and the advisory
+        # findings merged into `analysis` here - mirroring the GitHub-link
+        # single-evaluation pattern above - so it shows up in the Metadata
+        # Audit table/stderr for every outcome, private-skip included.
+        # Never raises; every failure mode (jbom missing/old/crashed) comes
+        # back as an advisory Finding from the lookup callable itself.
+        datasheet_names, datasheet_lookup_findings = self._datasheet_name_lookup(
+            resolved.project_dir, request.config.inventory
+        )
+        datasheet_links: tuple[DatasheetLink, ...] = tuple(
+            build_datasheet_link(name) for name in datasheet_names
+        )
+        datasheet_guard_findings = check_datasheet_links(
+            datasheet_names, self._library_repo, project=project_info.project
+        )
+        datasheet_findings = (*datasheet_lookup_findings, *datasheet_guard_findings)
+        if datasheet_findings:
+            analysis = AnalysisInfo(findings=(*analysis.findings, *datasheet_findings))
 
         # ── Step 4: Status detection (private-skip) ──
         if project_info.status is Status.PRIVATE:
@@ -449,6 +500,7 @@ class PublishWorkflow:
                     artifacts=actual_artifacts,
                     published_at=published_at,
                     github_url=github_link_detection.url or "",
+                    datasheets=datasheet_links,
                 )
 
                 # Step 10: SitePublisher.publish writes the markdown,
@@ -518,6 +570,7 @@ class PublishWorkflow:
         artifacts: tuple[AssetRef, ...] = (),
         published_at: str = "",
         github_url: str | None = None,
+        datasheets: tuple[DatasheetLink, ...] = (),
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
@@ -525,10 +578,8 @@ class PublishWorkflow:
         ``resolved.project_dir`` for the project-global content model:
         :func:`kproj.common.kicad_libraries.enumerate_libraries` for
         library refs, and
-        :func:`kproj.common.project_docs.discover_datasheets` /
         :func:`kproj.common.project_docs.read_description` for the
-        datasheet name-list + DESCRIPTION prose rendered on the project
-        section index.
+        DESCRIPTION prose rendered on the project section index.
 
         Args:
             resolved: The resolved project (provides ``project_dir``).
@@ -553,6 +604,13 @@ class PublishWorkflow:
                 tests) that don't have a precomputed detection; in that
                 case this method runs its own one-off detection via
                 :func:`kproj.common.github_link.derive_github_link`.
+            datasheets: Curated datasheet deep-links (kproj#29), already
+                computed once by ``PublishWorkflow.run`` via
+                :func:`kproj.common.datasheet_library.read_datasheet_names`
+                + :func:`kproj.common.datasheet_library.build_datasheet_link`
+                - mirrors the ``github_url`` single-evaluation pattern.
+                ``()`` (the default) is for direct callers (e.g. unit
+                tests) that don't have a precomputed lookup.
 
         Returns:
             A populated :class:`Publication`.
@@ -568,7 +626,7 @@ class PublishWorkflow:
             body_md=body_md,
             readme_md=readme_md,
             published_at=published_at,
-            datasheets=discover_datasheets(resolved.project_dir),
+            datasheets=datasheets,
             description=read_description(resolved.project_dir),
             images=images,
             artifacts=artifacts,
@@ -796,33 +854,6 @@ def _newest_source_file(directory: Path) -> Path | None:
     return newest
 
 
-def _copy_datasheets(
-    project_dir: Path,
-    site_repo: Path,
-    site_profile: SiteProfile,
-    project: str,
-    journal: ChangeJournal,
-) -> None:
-    """Copy project-global datasheet PDFs into the site (Make-style).
-
-    Each discovered PDF is copied to
-    ``<site_repo>/<assets_dir>/<project>/datasheets/<name>`` (served at the
-    public ``/versions/<project>/datasheets/<name>`` URL) so the project page
-    can link it. A file is copied only when the destination is missing or the
-    source is newer (mtime), mirroring the Make-style artifact regeneration;
-    :func:`shutil.copy2` preserves the source mtime so an unchanged re-run is
-    a git no-op. Each write is journaled for ADR-0005 rollback.
-    """
-    dest_dir = site_repo / site_profile.assets_dir / project / "datasheets"
-    for src in discover_datasheet_files(project_dir):
-        dest = dest_dir / src.name
-        if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
-            continue
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        journal.register_output(dest)
-        shutil.copy2(src, dest)
-
-
 def _default_artifact_generator(
     resolved: ResolvedProject,
     project_info: ProjectInfo,
@@ -951,9 +982,10 @@ def _default_artifact_generator(
         ).diagnostics
     )
 
-    # Project-global datasheets: copy the discovered PDFs into the site so the
-    # project page can link them (served at /versions/<P>/datasheets/<name>).
-    _copy_datasheets(resolved.project_dir, site_repo, site_profile, P, journal)
+    # kproj#29: datasheets are no longer copied into the site - the
+    # project-index Documentation list deep-links the public
+    # SPCoast-inventory library repo instead (see PublishWorkflow.run's
+    # datasheet-name lookup + PublishWorkflow.build_publication).
 
     images: tuple[AssetRef, ...] = (
         AssetRef(path=f"{base_site}/{PR}.top.png", tag="render-top", title="Top"),

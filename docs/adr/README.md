@@ -15,6 +15,7 @@ kproj's architectural decisions, recorded as ADRs (Architecture Decision Records
 | [0007](0007-local-cli-v1-ci-deferred.md) | Local-CLI v1, CI Integration Deferred | Accepted |
 | [0008](0008-ibom-direct-script-invocation.md) | iBOM via Direct Script Invocation | Accepted |
 | [0009](0009-kicad-install-locator.md) | KicadInstallLocator Utility | Accepted |
+| [0010](0010-live-jbom-bom-invocation-for-datasheet-names.md) | Live `jbom bom` Invocation for Datasheet-Name Lookup | Accepted |
 
 ## Inherited from jBOM (cited, not duplicated)
 

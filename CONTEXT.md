@@ -51,4 +51,4 @@ Owned by [SPCoast-inventory's glossary](https://github.com/plocher/SPCoast-inven
 **Library**, **Document**, **Datasheet Name**, **Never-Rename**.
 
 Owned by [jBOM's glossary](https://github.com/plocher/jBOM/blob/main/CONTEXT.md):
-**Item**, **Datasheet Name column** (the BOM column kproj reads from `production/jbom.csv`).
+**Item**, **Datasheet Name column** (the BOM column kproj reads live, via `jbom bom -f "Datasheet Name"` at publish time — not from `production/jbom.csv`, which is a stale fab-time snapshot; see ADR 0010).

@@ -133,6 +133,24 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
     return _gen
 
 
+def _default_fake_datasheet_lookup(context: Any) -> Any:
+    """Return a hermetic stand-in for ``read_datasheet_names`` (kproj#29).
+
+    Behave scenarios never exec a real ``jbom`` subprocess: this fake
+    returns whatever ``context.datasheet_names`` /
+    ``context.datasheet_lookup_findings`` a Given-step has pre-loaded
+    (empty by default), regardless of the ``(project_dir, inventory)``
+    arguments it's called with.
+    """
+
+    def _lookup(_project_dir: Path, _inventory: Path | None) -> Any:
+        names = tuple(getattr(context, "datasheet_names", ()))
+        findings = tuple(getattr(context, "datasheet_lookup_findings", ()))
+        return names, findings
+
+    return _lookup
+
+
 def _build_workflow(context: Any) -> PublishWorkflow:
     """Build a PublishWorkflow with all external services stubbed.
 
@@ -140,7 +158,9 @@ def _build_workflow(context: Any) -> PublishWorkflow:
     happy-path stub (drives the Story 9 mid-pipeline rollback scenario).
     When ``context.crashing_design_analyzer`` is set, use it instead
     of the silent DesignAnalyzer (drives the M4 mechanical-failure
-    scenarios).
+    scenarios). ``context.datasheet_name_lookup`` overrides the default
+    hermetic fake datasheet-name lookup (kproj#29) when a scenario needs
+    to drive a specific names/findings combination.
     """
     fake_ibom = Path(context.tmpdir) / "generate_interactive_bom.py"
     if not fake_ibom.exists():
@@ -153,6 +173,9 @@ def _build_workflow(context: Any) -> PublishWorkflow:
     design_analyzer_factory = (
         getattr(context, "crashing_design_analyzer", None) or _SilentDesignAnalyzer
     )
+    datasheet_name_lookup = getattr(context, "datasheet_name_lookup", None) or (
+        _default_fake_datasheet_lookup(context)
+    )
     return PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
         design_analyzer_factory=design_analyzer_factory,
@@ -160,6 +183,8 @@ def _build_workflow(context: Any) -> PublishWorkflow:
         kicad_python_locator=lambda: fake_python,
         artifact_generator=generator,
         site_publisher_factory=SitePublisher,
+        datasheet_name_lookup=datasheet_name_lookup,
+        library_repo=Path(context.tmpdir) / "no-such-library-clone",
     )
 
 

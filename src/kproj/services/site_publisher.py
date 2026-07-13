@@ -120,14 +120,17 @@ def _build_project_index_content(publication: Publication) -> str:
     One project-global page per project, rewritten each publish to reflect
     the most-recent-publish state. Front-matter carries ``title`` +
     ``project`` (so the project renders as a Hugo section) plus the
-    discovered ``datasheets`` filenames as a YAML list. The datasheets are
-    front-matter *data*, not body prose, so the site layer decides how to
-    present them (e.g. a collapsible list or a download bundle) rather than
-    the presentation being baked into the page.
+    curated ``datasheets`` deep-links (kproj#29: distinct ``Datasheet
+    Name`` values from the BOM, each with a ``view`` + ``download`` URL
+    into the public SPCoast-inventory library repo) as a YAML list. The
+    datasheets are front-matter *data*, not body prose, so the site
+    layer decides how to present them (e.g. a Documentation list or a
+    download bundle) rather than the presentation being baked into the
+    page.
 
     The body is the project *description*: ``README.md``
-    (:attr:`Publication.readme_md`) then the optional ``DESCRIPTION`` prose
-    (:attr:`Publication.description`), each separated by a blank line and
+    (:attr:`Publication.readme_md`) then the optional ``DESCRIPTION``
+    prose (:attr:`Publication.description`), each separated by a blank line and
     omitted when empty. A project with no README/DESCRIPTION and no
     datasheets yields a bare front-matter page (empty body).
     """
@@ -135,7 +138,10 @@ def _build_project_index_content(publication: Publication) -> str:
     front_matter: list[str] = [f"title: {project}", f"project: {project}"]
     if publication.datasheets:
         front_matter.append("datasheets:")
-        front_matter.extend(f"- {name}" for name in publication.datasheets)
+        for link in publication.datasheets:
+            front_matter.append(f"- name: {link.name}")
+            front_matter.append(f"  view: {link.view_url}")
+            front_matter.append(f"  download: {link.download_url}")
     sections: list[str] = []
     if publication.readme_md.strip():
         sections.append(publication.readme_md.strip("\n"))
