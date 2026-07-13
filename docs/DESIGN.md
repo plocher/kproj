@@ -731,11 +731,40 @@ artifacts:
   - {path: /versions/<P>/<R>/<P>-<R>.step,       tag: step-model,      type: download, post: 3D STEP model}
   - {path: /versions/<P>/<R>/<P>-<R>.fab.zip,    tag: fab-pack,        type: download, post: Fab-house bundle (BOM + POS + gerbers)}
   - {path: /versions/<P>/<R>/<P>-<R>.source.zip, tag: source-archive,  type: download, post: KiCad source archive}
+github_url: https://github.com/<owner>/<repo>   # OPTIONAL (kproj#30); omitted (key absent) unless the
+                                                 # project directory is a git repo with a pushed GitHub
+                                                 # `origin` remote (see § GitHub project link below)
 # kproj-emitted, not yet consumed by eagle.html (reserved for site-setup-PR layout enhancement):
 audit: {errors: N, warnings: M}
 drc:   {errors: N, warnings: M, exclusions: K}
 erc:   {errors: N, warnings: M, exclusions: K}
 ```
+
+### GitHub project link
+
+kproj#30: when the KiCad **project directory itself** is a git repository
+(independent of the SPCoast site repo), kproj optionally surfaces a
+"see/fork on GitHub" link on the version page. Detection
+(`common.github_link` — see below) uses **local git metadata
+only**; it never runs `git fetch` and never makes a network call, so a
+stale local view of the remote can only make the feature conservative
+(omit the link), never wrong.
+
+Locked decisions for the ticket's open design points:
+
+- Only the `origin` remote is considered when several exist.
+- The link targets the repo root (`https://github.com/<owner>/<repo>`),
+  not a tree/branch-specific URL, so it stays valid across board
+  revisions.
+- "Unpushed" (no upstream tracking configured, or local `HEAD` ahead of
+  / diverged from the last-known upstream ref) omits the link entirely
+  rather than downgrading to a repo-root link.
+
+`kproj.common.github_link.derive_github_link(project_dir) -> str | None`
+is a pure, local-only function: `PublishWorkflow.build_publication`
+calls it and threads the result onto `Publication.github_url` (empty
+string when not detected). `FrontMatterSummaryFormatter` emits the
+`github_url:` key only when non-empty.
 
 For `status == "private"`: no file is written (private-skip outcome). For `status ∈ {"retired", "replaced-by:<X>"}`: `iskicad: 'obsolete'` instead of `true`.
 

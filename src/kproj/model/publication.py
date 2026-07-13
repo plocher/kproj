@@ -85,6 +85,13 @@ class Publication:
             The site-emission layer renders these on the version page;
             see ``docs/DESIGN.md`` § *Library enumeration*. Rendering
             itself is tracked by kproj#4.
+        github_url: The project's "see/fork on GitHub" link, sourced
+            from :func:`kproj.common.github_link.derive_github_link`.
+            Empty string when the project directory isn't a git repo,
+            has no GitHub ``origin`` remote, or the current commit
+            isn't (locally) confirmed pushed (kproj#30). Emitted as the
+            front-matter ``github_url`` field alongside the artifact
+            downloads when non-empty.
     """
 
     project_info: ProjectInfo
@@ -97,3 +104,4 @@ class Publication:
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
     libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)
+    github_url: str = ""
