@@ -24,7 +24,17 @@ Locked decisions for the open design points in kproj#30 (see
 
 This module never raises for a non-repo / non-GitHub / unpushed project
 directory - every failure mode returns ``None`` so a publish never fails
-because of this optional, best-effort enrichment.
+because of this optional, best-effort enrichment. This includes
+mechanical git failures (a subprocess timeout, or ``git`` being
+missing/unusable): those are indistinguishable, from this module's
+perspective, from "git said no" - both collapse to "omit the link".
+
+Relatedly, :func:`_head_is_pushed` deliberately collapses two distinct
+situations - "inconclusive" (no upstream configured, detached HEAD, or
+a mechanical git failure) and "confirmed unpushed" (HEAD diverged from
+a known upstream) - into the same ``False`` result. Both cases point to
+the same conservative action (omit the link), so kproj does not need to
+tell them apart.
 """
 
 from __future__ import annotations
@@ -32,8 +42,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .subprocess_runner import DEFAULT_GIT_TIMEOUT
+from .subprocess_runner import DEFAULT_GIT_TIMEOUT, SubprocessTimeoutError
 from .subprocess_runner import run as subprocess_run
+
+# subprocess_run(..., check=False) only suppresses non-zero exits - a
+# timeout still raises SubprocessTimeoutError, and a missing/unusable
+# ``git`` binary raises OSError (e.g. FileNotFoundError). Every git
+# invocation in this module is wrapped to catch both, so a slow or
+# broken git can only make link detection conservative (no link),
+# never abort a publish.
+_GIT_INVOCATION_ERRORS: tuple[type[Exception], ...] = (SubprocessTimeoutError, OSError)
 
 # Matches (with an optional ``.git`` suffix and optional trailing slash):
 #   git@github.com:owner/repo(.git)?
@@ -114,11 +132,14 @@ def derive_github_link(project_dir: Path) -> str | None:
 
 def _is_git_work_tree(project_dir: Path) -> bool:
     """Return whether *project_dir* is inside a git work tree."""
-    result = subprocess_run(
-        ["git", "-C", str(project_dir), "rev-parse", "--is-inside-work-tree"],
-        timeout=DEFAULT_GIT_TIMEOUT,
-        check=False,
-    )
+    try:
+        result = subprocess_run(
+            ["git", "-C", str(project_dir), "rev-parse", "--is-inside-work-tree"],
+            timeout=DEFAULT_GIT_TIMEOUT,
+            check=False,
+        )
+    except _GIT_INVOCATION_ERRORS:
+        return False
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
@@ -139,12 +160,22 @@ def _head_is_pushed(project_dir: Path) -> bool:
 
 
 def _git_output(project_dir: Path, args: list[str]) -> str | None:
-    """Run a git sub-command and return its trimmed stdout, or ``None`` on failure."""
-    result = subprocess_run(
-        ["git", "-C", str(project_dir), *args],
-        timeout=DEFAULT_GIT_TIMEOUT,
-        check=False,
-    )
+    """Run a git sub-command and return its trimmed stdout, or ``None`` on failure.
+
+    ``None`` covers every failure mode uniformly - a non-zero exit, a
+    subprocess timeout, or an unusable ``git`` binary (:data:`_GIT_INVOCATION_ERRORS`) -
+    so callers can't distinguish "git said no" from "git couldn't even
+    run"; both are equally reasons to omit the (best-effort) link
+    rather than raise.
+    """
+    try:
+        result = subprocess_run(
+            ["git", "-C", str(project_dir), *args],
+            timeout=DEFAULT_GIT_TIMEOUT,
+            check=False,
+        )
+    except _GIT_INVOCATION_ERRORS:
+        return None
     if result.returncode != 0:
         return None
     return result.stdout.strip()
