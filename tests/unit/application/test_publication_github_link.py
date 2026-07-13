@@ -14,7 +14,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from kproj.application.publish_workflow import PublishWorkflow
+from kproj.common import github_link as github_link_module
+from kproj.common.subprocess_runner import SubprocessTimeoutError
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.project_info import ProjectInfo, Status
 from kproj.model.resolved_project import ResolvedProject
@@ -104,6 +108,32 @@ def test_build_publication_github_url_empty_when_unpushed(tmp_path: Path) -> Non
     _git("add", "-A", cwd=project)
     _git("commit", "-q", "-m", "initial", cwd=project)
     _git("remote", "add", "origin", "git@github.com:plocher/demo.git", cwd=project)
+    publication = PublishWorkflow.build_publication(
+        _resolved(project),
+        _project_info(),
+        AnalysisInfo(findings=()),
+    )
+    assert publication.github_url == ""
+
+
+def test_build_publication_survives_github_detection_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``git`` timeout during GitHub-link detection must not fail the publish.
+
+    Regression test: ``derive_github_link`` must catch
+    :exc:`SubprocessTimeoutError` internally rather than letting it
+    propagate through ``build_publication`` - a slow/hung ``git`` must
+    only omit the (best-effort) link, never abort the publish.
+    """
+    project = make_minimal_project(tmp_path / "demo", "demo")
+    _make_pushed_github_repo(project)
+
+    def _raise_timeout(*args: object, **kwargs: object) -> None:
+        raise SubprocessTimeoutError(["git", "rev-parse", "--is-inside-work-tree"], 30.0)
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _raise_timeout)
+
     publication = PublishWorkflow.build_publication(
         _resolved(project),
         _project_info(),

@@ -16,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
+from kproj.common import github_link as github_link_module
 from kproj.common.github_link import derive_github_link, parse_github_remote_url
+from kproj.common.subprocess_runner import SubprocessTimeoutError
 
 # ----------------------------------------------------------------------
 # parse_github_remote_url
@@ -145,3 +147,62 @@ def test_derive_github_link_returns_url_when_pushed_github_remote(tmp_path: Path
 def test_derive_github_link_returns_none_for_missing_directory(tmp_path: Path) -> None:
     """A nonexistent directory yields ``None`` rather than raising."""
     assert derive_github_link(tmp_path / "no-such-dir") is None
+
+
+# ----------------------------------------------------------------------
+# derive_github_link - never raises on mechanical git failures
+# ----------------------------------------------------------------------
+
+
+def test_derive_github_link_returns_none_on_subprocess_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``git`` invocation that times out yields ``None`` rather than raising.
+
+    ``subprocess_runner.run(..., check=False)`` only suppresses non-zero
+    exits - a timeout still raises :exc:`SubprocessTimeoutError` - so
+    every git call in this module must catch it explicitly to honour the
+    "publish never fails because of this enrichment" contract.
+    """
+    project_dir = tmp_path / "repo-slow-git"
+    _init_repo(project_dir)
+
+    def _raise_timeout(*args: object, **kwargs: object) -> None:
+        raise SubprocessTimeoutError(["git", "rev-parse", "--is-inside-work-tree"], 30.0)
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _raise_timeout)
+    assert derive_github_link(project_dir) is None
+
+
+def test_derive_github_link_returns_none_when_git_binary_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing/unusable ``git`` binary (``OSError``) yields ``None`` rather than raising."""
+    project_dir = tmp_path / "repo-no-git-binary"
+    _init_repo(project_dir)
+
+    def _raise_oserror(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("git: command not found")
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _raise_oserror)
+    assert derive_github_link(project_dir) is None
+
+
+def test_derive_github_link_timeout_only_affects_head_pushed_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A timeout specifically during the pushed-check still yields ``None``, not a raise."""
+    project_dir = tmp_path / "repo-timeout-on-pushed-check"
+    _init_repo(project_dir)
+    _git("remote", "add", "origin", "git@github.com:plocher/kproj.git", cwd=project_dir)
+    _seed_pushed_upstream(project_dir)
+
+    real_run = github_link_module.subprocess_run
+
+    def _flaky_run(command: list[str], **kwargs: object) -> object:
+        if "@{u}" in command:
+            raise SubprocessTimeoutError(command, 30.0)
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(github_link_module, "subprocess_run", _flaky_run)
+    assert derive_github_link(project_dir) is None
