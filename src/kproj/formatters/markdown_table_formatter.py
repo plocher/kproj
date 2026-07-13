@@ -39,6 +39,9 @@ AUDIT_FIELDS: frozenset[str] = frozenset(
         "production_stale",
         "production_incomplete",
         "fab_gerber_ambiguous",
+        # GitHub project-link absence-highlighting (kproj#30)
+        "github_link_missing",
+        "github_link_unpushed",
     }
 )
 """Closed set of audit-heuristic field names from

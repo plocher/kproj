@@ -41,7 +41,7 @@ tell them apart.
 Absence-highlighting (kproj#30 clarified requirement): the old
 EAGLE-era site linked every project to its GitHub repo, so a KiCad
 project silently missing that backing is a regression the maintainer
-should see. :func:`derive_github_link_finding` surfaces this as a
+should see. :func:`finding_for_detection` surfaces this as a
 non-fatal ``warning``-severity :class:`~kproj.model.finding.Finding`
 (never raises, never blocks publish) whenever the link is absent,
 with wording that distinguishes two situations:
@@ -53,6 +53,21 @@ with wording that distinguishes two situations:
   diverged/ahead ``HEAD``, and detached ``HEAD`` alike.
 
 No finding is emitted when the link is present (status ``"pushed"``).
+
+Single-evaluation guarantee: :func:`detect_github_link` is the only
+function in this module that touches the filesystem/subprocess for a
+given call. Both the front-matter ``github_url`` and the audit finding
+MUST be derived from the *same* :class:`GithubLinkDetection` value by
+construction - callers with access to the resolved project directory
+(currently only :meth:`PublishWorkflow.run`) call
+:func:`detect_github_link` exactly once per publish and thread the
+result to both :attr:`GithubLinkDetection.url` (front-matter) and
+:func:`finding_for_detection` (audit finding, a pure function with no
+I/O of its own). :func:`derive_github_link` /
+:func:`derive_github_link_finding` remain as convenience wrappers for
+standalone callers (tests, one-off scripts) that don't need both
+facets from a single evaluation; kproj's own publish pipeline does not
+use them, to avoid two independent detection passes ever disagreeing.
 """
 
 from __future__ import annotations
@@ -70,16 +85,22 @@ from .subprocess_runner import run as subprocess_run
 GithubLinkStatus = Literal[
     "pushed", "not_a_repo", "no_origin_remote", "non_github_remote", "not_pushed"
 ]
-"""Closed taxonomy of :func:`_detect`'s outcome.
+"""Closed taxonomy of :func:`detect_github_link`'s outcome.
 
 Only ``"pushed"`` yields a link; every other status is a reason to
-omit it (and, via :func:`derive_github_link_finding`, to advise why).
+omit it (and, via :func:`finding_for_detection`, to advise why).
 """
 
 
 @dataclass(frozen=True)
-class _Detection:
-    """Internal result of a single detection pass over *project_dir*."""
+class GithubLinkDetection:
+    """Result of a single local-git-metadata detection pass over a project directory.
+
+    Threading one :class:`GithubLinkDetection` value to every consumer
+    (front-matter URL + audit finding) is what guarantees they can
+    never disagree - there is exactly one detection per publish, not
+    one per consumer.
+    """
 
     status: GithubLinkStatus
     url: str | None = None
@@ -126,49 +147,74 @@ def parse_github_remote_url(remote_url: str) -> str | None:
     return f"https://github.com/{owner}/{repo}"
 
 
-def derive_github_link(project_dir: Path) -> str | None:
-    """Return the "see/fork on GitHub" link for *project_dir*, or ``None``.
+def detect_github_link(project_dir: Path) -> GithubLinkDetection:
+    """Run the full local-git-metadata detection pass over *project_dir*.
 
-    Detection (local git metadata only; no network call) - see
-    :func:`_detect` for the full status taxonomy. Every failure mode -
-    not a repo, no ``origin``, non-GitHub remote, unpushed ``HEAD`` -
-    returns ``None`` rather than raising, so publish never fails
-    because of this optional enrichment.
+    This is the **only** function in this module that touches the
+    filesystem or spawns a subprocess. Callers that need both the URL
+    and the advisory-finding facets (i.e. :meth:`PublishWorkflow.run`)
+    must call this exactly once per publish and thread the returned
+    :class:`GithubLinkDetection` to both :attr:`GithubLinkDetection.url`
+    and :func:`finding_for_detection` - see the module docstring's
+    *Single-evaluation guarantee*. Every failure mode - not a repo, no
+    ``origin``, non-GitHub remote, unpushed ``HEAD``, or a mechanical
+    git failure (subprocess timeout / missing binary) - resolves to a
+    non-``"pushed"`` status rather than raising.
 
     Args:
         project_dir: The resolved KiCad project directory.
 
     Returns:
-        The canonical ``https://github.com/<owner>/<repo>`` URL, or
-        ``None`` when the project isn't a pushed GitHub repo.
+        A :class:`GithubLinkDetection` whose ``status`` is one of
+        :data:`GithubLinkStatus`; ``url`` is set only when
+        ``status == "pushed"``.
     """
-    return _detect(project_dir).url
+    if not project_dir.is_dir():
+        return GithubLinkDetection(status="not_a_repo")
+
+    if not _is_git_work_tree(project_dir):
+        return GithubLinkDetection(status="not_a_repo")
+
+    remote_url = _git_output(project_dir, ["remote", "get-url", "origin"])
+    if remote_url is None:
+        return GithubLinkDetection(status="no_origin_remote")
+
+    github_url = parse_github_remote_url(remote_url)
+    if github_url is None:
+        return GithubLinkDetection(status="non_github_remote")
+
+    if not _head_is_pushed(project_dir):
+        return GithubLinkDetection(status="not_pushed")
+
+    return GithubLinkDetection(status="pushed", url=github_url)
 
 
-def derive_github_link_finding(project_dir: Path, *, project: str = "") -> Finding | None:
-    """Return an advisory :class:`Finding` when the GitHub link is absent, or ``None``.
+def finding_for_detection(
+    detection: GithubLinkDetection, *, project_dir: Path | str = "", project: str = ""
+) -> Finding | None:
+    """Return an advisory :class:`Finding` for an already-computed *detection*, or ``None``.
 
-    Absence-highlighting (kproj#30 clarified requirement): the old
-    EAGLE-era site linked every project to its GitHub repo; kproj
-    surfaces the gap as a non-fatal ``warning`` finding (``source``
-    ``"audit"``, so it renders in the existing Metadata Audit table and
-    counts without any new rendering work) rather than silently
-    omitting the link. Never raises, and never returned when the link
-    is present - a project can only be advised about a genuine gap.
+    Pure function - no filesystem or subprocess access - so it can be
+    called as many times as convenient from a single
+    :func:`detect_github_link` result without ever re-touching git.
+    See :func:`derive_github_link_finding` for a detect-and-advise
+    convenience wrapper when the caller doesn't already have a
+    :class:`GithubLinkDetection` in hand.
 
     Args:
-        project_dir: The resolved KiCad project directory.
+        detection: The result of a prior :func:`detect_github_link` call.
+        project_dir: Optional path echoed into :attr:`Finding.value`
+            for diagnostic context (empty string when not supplied).
         project: Project basename, threaded onto :attr:`Finding.project`
             when known (empty string otherwise).
 
     Returns:
-        ``None`` when *project_dir* is a pushed GitHub repo (the link
-        is present, nothing to advise). Otherwise a ``warning``
+        ``None`` when ``detection.status == "pushed"`` (the link is
+        present, nothing to advise). Otherwise a ``warning``
         :class:`Finding` whose ``field`` is ``"github_link_missing"``
         (no GitHub repo backing at all) or ``"github_link_unpushed"``
         (backing exists, but isn't confirmed pushed).
     """
-    detection = _detect(project_dir)
     if detection.status == "pushed":
         return None
     if detection.status == "not_pushed":
@@ -199,37 +245,44 @@ def derive_github_link_finding(project_dir: Path, *, project: str = "") -> Findi
     )
 
 
-def _detect(project_dir: Path) -> _Detection:
-    """Run the full local-git-metadata detection pass over *project_dir*.
+def derive_github_link(project_dir: Path) -> str | None:
+    """Detect-and-return the "see/fork on GitHub" link for *project_dir*, or ``None``.
 
-    Shared by :func:`derive_github_link` (wants just the URL) and
-    :func:`derive_github_link_finding` (wants the reason it's absent).
-    Running this only once per call keeps the two consumers' local git
-    reads consistent with each other within a single publish.
+    Convenience wrapper around :func:`detect_github_link` for standalone
+    callers that only need the URL. kproj's own publish pipeline does
+    NOT use this - it calls :func:`detect_github_link` once and reads
+    :attr:`GithubLinkDetection.url` directly, so the URL and the
+    advisory finding are always derived from the same detection pass.
+
+    Args:
+        project_dir: The resolved KiCad project directory.
 
     Returns:
-        A :class:`_Detection` whose ``status`` is one of
-        :data:`GithubLinkStatus`; ``url`` is set only when
-        ``status == "pushed"``.
+        The canonical ``https://github.com/<owner>/<repo>`` URL, or
+        ``None`` when the project isn't a pushed GitHub repo.
     """
-    if not project_dir.is_dir():
-        return _Detection(status="not_a_repo")
+    return detect_github_link(project_dir).url
 
-    if not _is_git_work_tree(project_dir):
-        return _Detection(status="not_a_repo")
 
-    remote_url = _git_output(project_dir, ["remote", "get-url", "origin"])
-    if remote_url is None:
-        return _Detection(status="no_origin_remote")
+def derive_github_link_finding(project_dir: Path, *, project: str = "") -> Finding | None:
+    """Detect-and-advise in one call: see :func:`finding_for_detection`.
 
-    github_url = parse_github_remote_url(remote_url)
-    if github_url is None:
-        return _Detection(status="non_github_remote")
+    Convenience wrapper around :func:`detect_github_link` +
+    :func:`finding_for_detection` for standalone callers that only need
+    the finding. kproj's own publish pipeline does NOT use this - see
+    :func:`derive_github_link`'s docstring for why.
 
-    if not _head_is_pushed(project_dir):
-        return _Detection(status="not_pushed")
+    Args:
+        project_dir: The resolved KiCad project directory.
+        project: Project basename, threaded onto :attr:`Finding.project`
+            when known (empty string otherwise).
 
-    return _Detection(status="pushed", url=github_url)
+    Returns:
+        See :func:`finding_for_detection`.
+    """
+    return finding_for_detection(
+        detect_github_link(project_dir), project_dir=project_dir, project=project
+    )
 
 
 def _is_git_work_tree(project_dir: Path) -> bool:

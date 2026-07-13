@@ -34,7 +34,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
-from ..common.github_link import derive_github_link, derive_github_link_finding
+from ..common.github_link import derive_github_link, detect_github_link, finding_for_detection
 from ..common.kicad_install import (
     SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
@@ -290,15 +290,20 @@ class PublishWorkflow:
             findings=tuple(read_findings) + metadata_analysis.findings + design_analysis.findings
         )
 
-        # Absence-highlighting (kproj#30 clarified requirement): advise
-        # when the project directory has no (confirmed-pushed) GitHub
-        # repo backing, distinguishing "no repo at all" from "repo
-        # exists but not pushed". Never raises; merged into `analysis`
-        # here (rather than only at Publication-build time) so it shows
-        # up in the Metadata Audit table/stderr for every outcome,
-        # private-skip included.
-        github_link_finding = derive_github_link_finding(
-            resolved.project_dir, project=project_info.project
+        # GitHub-repo-link detection (kproj#30): evaluated exactly ONCE
+        # per publish via detect_github_link (the only function in
+        # common.github_link that touches git). The single resulting
+        # `github_link_detection` is threaded to both consumers so they
+        # can never disagree: `finding_for_detection` (pure, no I/O)
+        # below drives the absence-highlighting audit finding, and
+        # `github_link_detection.url` is passed to build_publication
+        # for the front-matter `github_url` field. Never raises; the
+        # finding is merged into `analysis` here (rather than only at
+        # Publication-build time) so it shows up in the Metadata Audit
+        # table/stderr for every outcome, private-skip included.
+        github_link_detection = detect_github_link(resolved.project_dir)
+        github_link_finding = finding_for_detection(
+            github_link_detection, project_dir=resolved.project_dir, project=project_info.project
         )
         if github_link_finding is not None:
             analysis = AnalysisInfo(findings=(*analysis.findings, github_link_finding))
@@ -443,6 +448,7 @@ class PublishWorkflow:
                     images=actual_images,
                     artifacts=actual_artifacts,
                     published_at=published_at,
+                    github_url=github_link_detection.url or "",
                 )
 
                 # Step 10: SitePublisher.publish writes the markdown,
@@ -511,19 +517,18 @@ class PublishWorkflow:
         images: tuple[AssetRef, ...] = (),
         artifacts: tuple[AssetRef, ...] = (),
         published_at: str = "",
+        github_url: str | None = None,
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
         This is DESIGN step 9 (build Publication).  It scans
         ``resolved.project_dir`` for the project-global content model:
         :func:`kproj.common.kicad_libraries.enumerate_libraries` for
-        library refs,
+        library refs, and
         :func:`kproj.common.project_docs.discover_datasheets` /
         :func:`kproj.common.project_docs.read_description` for the
         datasheet name-list + DESCRIPTION prose rendered on the project
-        section index, and
-        :func:`kproj.common.github_link.derive_github_link` for the
-        optional "see/fork on GitHub" link (kproj#30).
+        section index.
 
         Args:
             resolved: The resolved project (provides ``project_dir``).
@@ -536,10 +541,27 @@ class PublishWorkflow:
             artifacts: Artifact asset refs.
             published_at: Publish timestamp for Hugo's ``date`` field
                 (empty string omits it).
+            github_url: The "see/fork on GitHub" link (kproj#30), or
+                ``""`` when none was detected.  ``PublishWorkflow.run``
+                always passes this explicitly - computed exactly once
+                via :func:`kproj.common.github_link.detect_github_link`
+                and shared with the absence-highlighting audit finding
+                (see the *Single-evaluation guarantee* in
+                ``common/github_link.py``'s module docstring) - so the
+                front-matter URL and the finding can never disagree.
+                ``None`` (the default) is for direct callers (e.g. unit
+                tests) that don't have a precomputed detection; in that
+                case this method runs its own one-off detection via
+                :func:`kproj.common.github_link.derive_github_link`.
 
         Returns:
             A populated :class:`Publication`.
         """
+        resolved_github_url = (
+            github_url
+            if github_url is not None
+            else (derive_github_link(resolved.project_dir) or "")
+        )
         return Publication(
             project_info=project_info,
             analysis_info=analysis_info,
@@ -551,7 +573,7 @@ class PublishWorkflow:
             images=images,
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
-            github_url=derive_github_link(resolved.project_dir) or "",
+            github_url=resolved_github_url,
         )
 
 

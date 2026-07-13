@@ -694,7 +694,7 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | warning | `replaced_by_target_missing` | `replaced-by:<X>` references nonexistent project under `~/Dropbox/KiCad/projects/` |
 | warning | `production_missing` | `<project_dir>/production/` missing or empty when fab artifacts expected |
 | warning | `production_stale` | `production/<gerber>.zip` mtime more than 5 minutes older than `<pcb>.kicad_pcb` mtime. Single policy home: `MetadataAnalyzer._production_rules` (`FabPackager` emits no duplicate). |
-| warning | `github_link_missing` | project directory is not (or not confirmed to be) a git repo with a GitHub `origin` remote - no repo backing at all (kproj#30 absence-highlighting; see § *GitHub project link*). Emitted by `common.github_link.derive_github_link_finding`, not `MetadataAnalyzer` (stamped `source="audit"` directly so it renders in the same Metadata Audit table). |
+| warning | `github_link_missing` | project directory is not (or not confirmed to be) a git repo with a GitHub `origin` remote - no repo backing at all (kproj#30 absence-highlighting; see § *GitHub project link*). Emitted by `common.github_link.finding_for_detection`, not `MetadataAnalyzer` (stamped `source="audit"` directly so it renders in the same Metadata Audit table). |
 | warning | `github_link_unpushed` | project directory has a GitHub `origin` remote configured, but the current commit isn't confirmed pushed there (no upstream tracking, a diverged/ahead `HEAD`, or a detached `HEAD`) - repo backing exists but isn't pushed. Same emitter as `github_link_missing`. |
 
 ## Front-matter shape
@@ -762,24 +762,35 @@ Locked decisions for the ticket's open design points:
   / diverged from the last-known upstream ref) omits the link entirely
   rather than downgrading to a repo-root link.
 
-`kproj.common.github_link.derive_github_link(project_dir) -> str | None`
-is a pure, local-only function: `PublishWorkflow.build_publication`
-calls it and threads the result onto `Publication.github_url` (empty
-string when not detected). `FrontMatterSummaryFormatter` emits the
-`github_url:` key only when non-empty. Front-matter-only emission is
-intentional for this PR (matches the `audit`/`drc`/`erc` precedent
-above: kproj emits the data, visible rendering is a Site-setup PR
-concern - see that list's new item below).
+**Single-evaluation guarantee.** `kproj.common.github_link.detect_github_link(project_dir)
+-> GithubLinkDetection` is the *only* function in that module that
+touches git; `PublishWorkflow.run` calls it exactly once per publish
+(right after DESIGN steps 2-3, read + analyze) and threads the one
+resulting `GithubLinkDetection` to both consumers: `detection.url` is
+passed as `PublishWorkflow.build_publication`'s `github_url` parameter
+(front-matter), and the pure `finding_for_detection(detection, ...)`
+(no I/O) derives the audit finding below. The front-matter `github_url`
+and the advisory finding can therefore never disagree - there is one
+detection per publish, not one per consumer. `derive_github_link` /
+`derive_github_link_finding` remain as detect-and-return convenience
+wrappers around `detect_github_link` for standalone callers (tests,
+one-off scripts); kproj's own pipeline does not call either, precisely
+to avoid two independent detection passes.
+
+`FrontMatterSummaryFormatter` emits the `github_url:` key only when
+non-empty. Front-matter-only emission is intentional for this PR
+(matches the `audit`/`drc`/`erc` precedent above: kproj emits the data,
+visible rendering is a Site-setup PR concern - see that list's new item
+below).
 
 **Absence-highlighting** (kproj#30 clarified requirement): the old
 EAGLE-era site linked every project to its GitHub repo; a KiCad project
 silently missing that backing would be a regression from that baseline
 that the maintainer should actively see, not a state kproj quietly
-tolerates. `kproj.common.github_link.derive_github_link_finding(project_dir, *, project="")
--> Finding | None` runs the same local-only detection and returns a
-non-fatal `warning` `Finding` (never raises, never blocks publish;
-`source="audit"` so it renders in the existing Metadata Audit table -
-see the `github_link_missing` / `github_link_unpushed` rows in § *Audit
+tolerates. `finding_for_detection` surfaces this as a non-fatal
+`warning` `Finding` (never raises, never blocks publish; `source="audit"`
+so it renders in the existing Metadata Audit table - see the
+`github_link_missing` / `github_link_unpushed` rows in § *Audit
 heuristic list*) whenever the link is absent. `PublishWorkflow.run`
 merges this finding into the analysis right after DESIGN steps 2-3
 (read + analyze), so it surfaces on every outcome including
