@@ -1,6 +1,109 @@
 # CHANGELOG
 
 
+## v0.2.0 (2026-07-13)
+
+### Bug Fixes
+
+* fix(publish): single-evaluate GitHub-link detection; complete AUDIT_FIELDS
+
+Both adversarial-review advisories, upgraded to required fixes by
+the human:
+
+1. Single-source detection result. common.github_link.detect_github_link
+   (renamed from the private _detect) is now the ONLY function that
+   touches git for this feature; PublishWorkflow.run calls it exactly
+   once per publish and threads the single GithubLinkDetection to both
+   consumers - finding_for_detection (pure, no I/O) for the audit
+   finding, and detection.url passed explicitly as
+   build_publication's new github_url parameter for the front-matter
+   field. The front-matter URL and the advisory finding can no longer
+   be computed from two independent (and potentially disagreeing)
+   detection passes. derive_github_link / derive_github_link_finding
+   remain as detect-and-return convenience wrappers for standalone
+   callers only; the pipeline itself never calls them.
+
+2. markdown_table_formatter.AUDIT_FIELDS now includes
+   github_link_missing / github_link_unpushed, matching its own doc
+   comment and docs/DESIGN.md's Audit heuristic table (source="audit"
+   routing remains the primary mechanism; this makes the documented
+   fallback truthful).
+
+Added regression tests pinning the single-evaluation guarantee: one
+asserting exactly one git rev-parse --is-inside-work-tree probe fires
+across a private-skip run, and a full-pipeline test asserting the
+same for a complete publish (through build_publication) while also
+confirming the front-matter github_url and the absence of a
+github_link_* finding agree for a pushed-GitHub-repo project.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`aba3349`](https://github.com/plocher/kproj/commit/aba334937015d01d81fa8af8744e404638f2cbb0))
+
+* fix(publish): never raise from derive_github_link on subprocess timeout/OSError
+
+subprocess_runner.run(..., check=False) only suppresses non-zero
+exits; a git subprocess timeout still raised SubprocessTimeoutError
+(and a missing/unusable git binary could raise OSError) straight
+through PublishWorkflow.build_publication, violating the 'publish
+never fails because of this optional enrichment' contract.
+
+Every git invocation in github_link.py now catches
+(SubprocessTimeoutError, OSError) and treats it the same as a
+mechanical git failure - the link is omitted, publish proceeds.
+Adds regression tests covering timeout and missing-binary cases at
+both the derive_github_link and build_publication seams.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`2497610`](https://github.com/plocher/kproj/commit/2497610a8ffe65a9570e06e14aee25f42e361c52))
+
+### Features
+
+* feat(publish): highlight missing/unpushed GitHub repo backing as a finding
+
+Per the human's clarified requirement on kproj#30: the old EAGLE-era
+site linked every project to its GitHub repo, so kproj should
+actively surface a KiCad project's missing GitHub-repo backing
+rather than silently omitting the see/fork link. New KiCad projects
+don't yet consistently have git repo backing.
+
+- github_link.py: extract shared _detect(project_dir) -> _Detection
+  status taxonomy (pushed / not_a_repo / no_origin_remote /
+  non_github_remote / not_pushed), reused by derive_github_link (URL)
+  and the new derive_github_link_finding (advisory Finding | None).
+- The advisory finding is non-fatal (severity=warning, source="audit"
+  so it renders in the existing Metadata Audit table with no new
+  rendering work), and distinguishes wording for 'no GitHub repo
+  backing at all' (github_link_missing) vs 'backing exists but not
+  confirmed pushed' (github_link_unpushed, covering no-upstream,
+  ahead/diverged, and detached HEAD alike).
+- PublishWorkflow.run merges the finding into the analysis right
+  after read+analyze, so it surfaces on every outcome including
+  private-skip.
+- docs/DESIGN.md: document the two new audit rules, the
+  absence-highlighting rationale, and add 'render github_url as a
+  visible see/fork-on-GitHub link' to the Site-setup PR scope list
+  (human ruling: front-matter-only emission accepted for this PR,
+  matching the audit/drc/erc precedent; visible rendering deferred).
+- BDD: every github_link.feature scenario now also asserts the
+  correct advisory finding is present/absent and publish still
+  succeeds.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`083592a`](https://github.com/plocher/kproj/commit/083592ac8c183b157ccbdf546e2fc704225fa351))
+
+* feat(publish): surface a see/fork-on-GitHub link when the project repo is pushed
+
+Detects, using local git metadata only (no network calls), whether a
+KiCad project directory is itself a git repo with a pushed GitHub
+origin remote, and threads the derived repo-root URL onto
+Publication.github_url. FrontMatterSummaryFormatter emits an optional
+github_url: field alongside the existing artifact downloads when
+present; non-repo / non-GitHub / unpushed projects are unaffected
+(publish behavior is unchanged and never fails because of this
+best-effort enrichment).
+
+Closes #30
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`830154a`](https://github.com/plocher/kproj/commit/830154a6e999ccb122dce5dcf5f3d27cd68fb3c2))
+
+
 ## v0.1.1 (2026-07-04)
 
 ### Bug Fixes
