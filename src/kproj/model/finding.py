@@ -1,8 +1,7 @@
 """The :class:`Finding` value object.
 
-A single quality-lint finding (audit, DRC, or ERC). Frozen dataclass per
-``docs/GLOSSARY.md`` § *Finding* and jBOM's Diagnostic Collection
-Principle (ADR 0001).
+A single quality-lint finding (audit, DRC, or ERC). Frozen dataclass
+per jBOM's Diagnostic Collection Principle (ADR 0001).
 """
 
 from __future__ import annotations

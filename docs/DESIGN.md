@@ -2,7 +2,7 @@
 Phase 3 deliverable. Specifies **how** kproj v1 is built: module structure, inter-module contracts, sequencing, file/path conventions, subprocess invocations, and the testing strategy.
 
 This document is **implementation specs**. It does not redefine vocabulary or restate decisions:
-- Vocabulary → `docs/GLOSSARY.md`
+- Vocabulary → `CONTEXT.md` (repo root)
 - Architecture decisions → `docs/adr/`
 - User-facing requirements → `docs/PRD.md`
 
@@ -315,9 +315,96 @@ iBOM script discovery is delegated to `common.kicad_install.find_ibom_script()` 
 
 Why direct invocation rather than `kicad-cli jobset run`: see ADR 0008. The plan's Phase 1 closeout was based on the assumption that `kicad-cli jobset run` could run headless; in practice it requires a live KiCad instance, which contradicts ADR 0007's locked non-interactive Makefile/CI use case.
 
+## Domain model types
+
+### ProjectInfo
+The dataclass holding what we know about a project at a point in time: name, design_rev, board_rev, designer, tagline, dates, company, tags, status. Pure facts. No I/O. No Jekyll knowledge. Produced by `KicadProjectReader`.
+
+### AnalysisInfo
+The dataclass holding findings from analyzing a project: a list of `Finding`s plus counts per severity. Pure data. Produced by `MetadataAnalyzer` and `DesignAnalyzer`; may be merged into a single `AnalysisInfo` by the consuming Workflow.
+
+### Publication
+The bundle ready for site emission: a `ProjectInfo`, an `AnalysisInfo`, asset references (paths + metadata for the `images[]` and `artifacts[]` front-matter fields), and the body markdown. Pure data — no I/O, no Jekyll-specific YAML rendering (that happens in `SitePublisher`). When Phase 6+ adds a two-phase architecture (extract → render), `Publication` is the JSON-serializable intermediate that flows between phases.
+
+### Finding
+A single quality-lint finding. Frozen dataclass with: `severity`, `project`, `field`, `value`, `reason`, `location_hint`. Carries enough info for stderr / Markdown table / front-matter / JSON formatters to render appropriately. Per jBOM ADR 0006's Diagnostic Collection Principle.
+
+### Severity
+Enum with values `error` and `warning`. DRC/ERC findings additionally use `exclusion` to preserve KiCad's GUI-marked exclusions; the metadata audit itself uses only `error` and `warning`.
+
+## Domain services
+
+The eleven services that compose kproj v1's domain layer. Each is a noun naming a *kind of thing*, not a verb naming an action. See *Naming conventions* and *Producer Pattern* below for the shared shape.
+
+### KicadProjectReader
+Reads project files on disk → `ProjectInfo`. Wraps jBOM's parsing library (`pcb_reader`, `schematic_reader`, `sexp_parser`); houses the interim `(comment N "...")` walker until jBOM's upstream PR adding COMMENT/text_variables parsing lands.
+
+### MetadataAnalyzer
+Analyzes a `ProjectInfo` (and adjacent project files) for metadata-quality findings. In-process heuristics: placeholder values, missing `${COMMENT9}`, SCH/PCB title-block disagreements, date-format violations, designer-format violations, etc. Produces metadata `Finding`s.
+
+### DesignAnalyzer
+Analyzes a KiCad project for design-quality findings. Delegates to `kicad-cli pcb drc` and `kicad-cli sch erc`; parses JSON output into `Finding`s. KiCad's GUI-marked exclusions are preserved via `Severity.exclusion`.
+
+### PcbExporter
+Exports PCB content to target file formats. v1 targets: PNG (via 3D render, top + bottom sides) and STEP. Future targets (SVG, GLB, etc.) extend per-method without changing the service.
+
+### SchematicExporter
+Exports schematic content to target file formats. v1 targets: SVG (root sheet only) and PDF (all sheets, multi-page).
+
+### IbomGenerator
+Generates the interactive HTML BOM artifact. The output adds presentation structure (interactivity, embedded JavaScript) beyond pure format conversion — hence `Generator` rather than `Exporter`. Includes a pre-flight check that the iBOM plugin script is installed at the expected KiCad PCM path.
+
+### FabPackager
+Packages an existing `<project_dir>/production/` directory's contents (jBOM's outputs) into `<P>-<R>.fab.zip`. Uses `ZipArchiver`.
+
+### SourcePackager
+Packages non-derived KiCad files from the project tree into `<P>-<R>.source.zip`. Uses `ZipArchiver`.
+
+### ZipArchiver
+Low-level zip primitive. Takes source paths + output path; produces a zip. Domain-agnostic. Used by both `FabPackager` and `SourcePackager`. Matches jBOM ADR 0006's `ZipArchiver`.
+
+### SitePublisher
+Writes a `Publication` into the local SPCoast Jekyll site repo: per-version markdown, per-version assets, per-project aggregator. Houses the Jekyll-specific YAML rendering. Coordinates with `ChangeJournal` for transactional writes; commits + pushes the site repo at end.
+
+### ChangeJournal
+Transactional write log. Context manager that records every file kproj creates or modifies in the site repo; rollback restores the pre-run state on exception (ADR 0005). Domain-agnostic (any tool writing to a git repo could use it) — candidate for future extraction per ADR 0006.
+
+## Naming conventions
+
+Service classes are named by a `-Suffix` that encodes the *functional concept*, not the implementation. Subprocess-vs-in-process, ray-trace-vs-SVG, etc. do not change the suffix.
+
+| Suffix | Functional meaning |
+|---|---|
+| `-Reader` | reads existing artifact → domain dataclasses (internalization) |
+| `-Analyzer` | inspects existing content → `Finding`s (regardless of in-process heuristics vs delegation to external tools) |
+| `-Exporter` | converts content to another file format (externalization with content equivalence) |
+| `-Generator` | produces new artifact with structure or presentation beyond pure format conversion |
+| `-Packager` | bundles existing artifacts into an archive |
+| `-Archiver` | low-level archive primitive |
+| `-Publisher` | writes content to a target system (with side effects on that system) |
+| `-Journal` / `-Tracker` | records state changes for replay/rollback |
+
+Application-layer orchestrators (Workflows) follow jBOM ADR 0014's convention: `<Verb>Workflow` class with `.run(<Verb>Request) -> <Verb>Result` method. The Verb is the canonical action name (`Publish`, `Audit`, etc.).
+
+## Producer Pattern
+
+Most kproj services follow a common shape — the **Producer Pattern** — regardless of suffix:
+
+- **Constructor** takes configuration options (immutable; behavior fixed at construction time).
+- **Single primary method** named for the domain operation (`.read()`, `.analyze()`, `.export_*()`, `.generate()`, `.package()`, `.archive()`, `.publish()`).
+- **Typed inputs** — paths or dataclasses, never `**kwargs`.
+- **Typed result** that includes `diagnostics: tuple[Finding, ...]` per jBOM's Diagnostic Collection Principle.
+- **No side effects** beyond the documented output (file at a known path, or returned dataclass).
+
+`ChangeJournal` is the lone non-Producer service: it is a Tracker (context manager that records writes), not a Producer of a domain artifact.
+
+## Audience framing
+
+The SPCoast site is a **developer-time tool** as well as a customer-facing production catalogue. Releases with audit or DRC/ERC findings are intentionally visible — a developer reading the site sees current state, not a polished-final-only view. Strict quality gating belongs in the (B) release-lifecycle layer (out of v1 scope; see ADR 0002 and ADR 0004).
+
 ## Per-service contracts
 
-Each service follows the **Producer Pattern** (per GLOSSARY): constructor takes config; single primary method returns typed result with `diagnostics: tuple[Finding, ...]`. Side-effect services (anything that writes to disk or invokes a subprocess) return an `ExportResult` so callers receive the produced artifact path + diagnostics + command + timing + skipped flag uniformly. Pure-analysis services (`KicadProjectReader.read`, `MetadataAnalyzer.analyze`, `DesignAnalyzer.analyze`) return their domain result + diagnostics.
+Each service follows the **Producer Pattern** (above): constructor takes config; single primary method returns typed result with `diagnostics: tuple[Finding, ...]`. Side-effect services (anything that writes to disk or invokes a subprocess) return an `ExportResult` so callers receive the produced artifact path + diagnostics + command + timing + skipped flag uniformly. Pure-analysis services (`KicadProjectReader.read`, `MetadataAnalyzer.analyze`, `DesignAnalyzer.analyze`) return their domain result + diagnostics.
 
 ### `ExportResult` (common return type for side-effect services)
 

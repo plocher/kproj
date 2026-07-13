@@ -1,10 +1,9 @@
 """The :class:`ChangeJournal` transactional write tracker.
 
-Per ``docs/adr/0005-writetracker-transactional-site-writes.md`` and
-``docs/GLOSSARY.md`` § *ChangeJournal*, this is a context-manager
-service that records every file the publish pipeline will create or
-modify in the site repo. On any exception (raised in the ``with``
-block), :meth:`__exit__` performs a rollback:
+Per ``docs/adr/0005-writetracker-transactional-site-writes.md``, this
+is a context-manager service that records every file the publish
+pipeline will create or modify in the site repo. On any exception
+(raised in the ``with`` block), :meth:`__exit__` performs a rollback:
 
 - Created files are unlinked.
 - Modified files are restored via ``git checkout -- <path>``.

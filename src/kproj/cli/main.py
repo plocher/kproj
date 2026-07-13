@@ -9,7 +9,7 @@ and maps the returned :class:`PublishResult` to a process exit code
 per ``docs/DESIGN.md`` § *Exit code mapping*.
 
 See:
-- ``docs/GLOSSARY.md`` for vocabulary,
+- ``CONTEXT.md`` for vocabulary,
 - ``docs/PRD.md`` for v1 user-facing requirements,
 - ``docs/DESIGN.md`` for implementation specs.
 """

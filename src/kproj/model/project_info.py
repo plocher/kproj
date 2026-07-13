@@ -6,8 +6,7 @@ The :class:`ProjectInfo` shape holds the point-in-time facts that
 ``${COMMENT1..9}``) plus any kproj-derived bookkeeping (tags, status,
 fabrication state).
 
-Per ``docs/GLOSSARY.md`` § *ProjectInfo* this is pure data: no I/O, no
-Jekyll-specific rendering.
+This is pure data: no I/O, no Jekyll-specific rendering.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from .raw_title_block import RawTitleBlock
 class Status(Enum):
     """A release's lifecycle attribute (closed taxonomy).
 
-    Sourced from ``${COMMENT9}`` per ``docs/GLOSSARY.md`` § *status*.
+    Sourced from ``${COMMENT9}`` per the SPCoast title-block convention.
     ``REPLACED_BY`` is parameterised - the actual target directory name
     lives in :attr:`ProjectInfo.replaced_by_target`.
     """

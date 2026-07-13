@@ -2,7 +2,7 @@
 Phase 3 deliverable. Defines what kproj v1 does from the user's perspective: the problem it solves, the solution shape, the user stories with Gherkin acceptance criteria, and the explicit out-of-scope boundary.
 
 This document is **user-facing requirements**. It does not specify implementation:
-- Vocabulary → `docs/GLOSSARY.md`
+- Vocabulary → `CONTEXT.md` (repo root)
 - Architecture decisions → `docs/adr/`
 - Implementation specs → `docs/DESIGN.md`
 
