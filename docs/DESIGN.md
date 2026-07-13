@@ -694,6 +694,8 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | warning | `replaced_by_target_missing` | `replaced-by:<X>` references nonexistent project under `~/Dropbox/KiCad/projects/` |
 | warning | `production_missing` | `<project_dir>/production/` missing or empty when fab artifacts expected |
 | warning | `production_stale` | `production/<gerber>.zip` mtime more than 5 minutes older than `<pcb>.kicad_pcb` mtime. Single policy home: `MetadataAnalyzer._production_rules` (`FabPackager` emits no duplicate). |
+| warning | `github_link_missing` | project directory is not (or not confirmed to be) a git repo with a GitHub `origin` remote - no repo backing at all (kproj#30 absence-highlighting; see § *GitHub project link*). Emitted by `common.github_link.derive_github_link_finding`, not `MetadataAnalyzer` (stamped `source="audit"` directly so it renders in the same Metadata Audit table). |
+| warning | `github_link_unpushed` | project directory has a GitHub `origin` remote configured, but the current commit isn't confirmed pushed there (no upstream tracking, a diverged/ahead `HEAD`, or a detached `HEAD`) - repo backing exists but isn't pushed. Same emitter as `github_link_missing`. |
 
 ## Front-matter shape
 
@@ -764,7 +766,24 @@ Locked decisions for the ticket's open design points:
 is a pure, local-only function: `PublishWorkflow.build_publication`
 calls it and threads the result onto `Publication.github_url` (empty
 string when not detected). `FrontMatterSummaryFormatter` emits the
-`github_url:` key only when non-empty.
+`github_url:` key only when non-empty. Front-matter-only emission is
+intentional for this PR (matches the `audit`/`drc`/`erc` precedent
+above: kproj emits the data, visible rendering is a Site-setup PR
+concern - see that list's new item below).
+
+**Absence-highlighting** (kproj#30 clarified requirement): the old
+EAGLE-era site linked every project to its GitHub repo; a KiCad project
+silently missing that backing would be a regression from that baseline
+that the maintainer should actively see, not a state kproj quietly
+tolerates. `kproj.common.github_link.derive_github_link_finding(project_dir, *, project="")
+-> Finding | None` runs the same local-only detection and returns a
+non-fatal `warning` `Finding` (never raises, never blocks publish;
+`source="audit"` so it renders in the existing Metadata Audit table -
+see the `github_link_missing` / `github_link_unpushed` rows in § *Audit
+heuristic list*) whenever the link is absent. `PublishWorkflow.run`
+merges this finding into the analysis right after DESIGN steps 2-3
+(read + analyze), so it surfaces on every outcome including
+`private-skip`, not only on a full publish.
 
 For `status == "private"`: no file is written (private-skip outcome). For `status ∈ {"retired", "replaced-by:<X>"}`: `iskicad: 'obsolete'` instead of `true`.
 
@@ -776,7 +795,8 @@ kproj is the driver of the site's evolution from EAGLE-era to KiCad-aware. The s
 2. Extend `_data/tags.yml` `allowed-tags` to include `kicad` and any new company names emitted by kproj. Without this, kproj-emitted tags are present in front-matter but don't render as buttons.
 3. Extend `_layouts/eagle.html`'s status-conditional block to recognize the v1 taxonomy values (`active`, `retired`, `replaced-by:<X>`) that don't currently match its `mature/released/replaced/broken/experimental` branches. v1 emits the locked kproj taxonomy verbatim; the layout PR adds the new branches.
 4. Optionally add quality-badge rendering for `audit`/`drc`/`erc` front-matter (deferred deepening; not v1-blocking). KiCad has DRC/ERC concepts EAGLE did not; surfacing the counts is a KiCad-specific UI evolution.
-5. Future: a dedicated `kicad.html` layout when KiCad-specific UI elements (inline iBOM viewer, inline STEP preview, hierarchical schematic navigation) outgrow `eagle.html`. Out of v1 site-setup-PR scope; tracked as a Phase 6+ deepening candidate.
+5. Render `github_url` (when present in the front-matter) as a visible "see/fork this project on GitHub" link on the version page (kproj#30; human-ruled scope split - kproj v1 emits the data, this PR renders it).
+6. Future: a dedicated `kicad.html` layout when KiCad-specific UI elements (inline iBOM viewer, inline STEP preview, hierarchical schematic navigation) outgrow `eagle.html`. Out of v1 site-setup-PR scope; tracked as a Phase 6+ deepening candidate.
 
 Body content (below the `---` front-matter terminator): the audit + DRC/ERC findings rendered as two adjacent Markdown tables via `MarkdownTableFormatter`. Optionally followed by README.md content if the user wants verbose project documentation in the version body (Phase 6 decision; for v1, body is just the tables).
 

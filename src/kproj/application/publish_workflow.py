@@ -34,7 +34,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
-from ..common.github_link import derive_github_link
+from ..common.github_link import derive_github_link, derive_github_link_finding
 from ..common.kicad_install import (
     SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
@@ -289,6 +289,19 @@ class PublishWorkflow:
         analysis = AnalysisInfo(
             findings=tuple(read_findings) + metadata_analysis.findings + design_analysis.findings
         )
+
+        # Absence-highlighting (kproj#30 clarified requirement): advise
+        # when the project directory has no (confirmed-pushed) GitHub
+        # repo backing, distinguishing "no repo at all" from "repo
+        # exists but not pushed". Never raises; merged into `analysis`
+        # here (rather than only at Publication-build time) so it shows
+        # up in the Metadata Audit table/stderr for every outcome,
+        # private-skip included.
+        github_link_finding = derive_github_link_finding(
+            resolved.project_dir, project=project_info.project
+        )
+        if github_link_finding is not None:
+            analysis = AnalysisInfo(findings=(*analysis.findings, github_link_finding))
 
         # ── Step 4: Status detection (private-skip) ──
         if project_info.status is Status.PRIVATE:

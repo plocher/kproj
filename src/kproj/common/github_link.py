@@ -23,11 +23,13 @@ Locked decisions for the open design points in kproj#30 (see
   GitHub repo if ``origin`` were merely configured but never pushed to).
 
 This module never raises for a non-repo / non-GitHub / unpushed project
-directory - every failure mode returns ``None`` so a publish never fails
-because of this optional, best-effort enrichment. This includes
-mechanical git failures (a subprocess timeout, or ``git`` being
-missing/unusable): those are indistinguishable, from this module's
-perspective, from "git said no" - both collapse to "omit the link".
+directory - every failure mode returns ``None`` (or, for
+:func:`derive_github_link_finding`, a non-fatal advisory ``Finding``)
+so a publish never fails because of this optional, best-effort
+enrichment. This includes mechanical git failures (a subprocess
+timeout, or ``git`` being missing/unusable): those are
+indistinguishable, from this module's perspective, from "git said no" -
+both collapse to "omit the link".
 
 Relatedly, :func:`_head_is_pushed` deliberately collapses two distinct
 situations - "inconclusive" (no upstream configured, detached HEAD, or
@@ -35,15 +37,53 @@ a mechanical git failure) and "confirmed unpushed" (HEAD diverged from
 a known upstream) - into the same ``False`` result. Both cases point to
 the same conservative action (omit the link), so kproj does not need to
 tell them apart.
+
+Absence-highlighting (kproj#30 clarified requirement): the old
+EAGLE-era site linked every project to its GitHub repo, so a KiCad
+project silently missing that backing is a regression the maintainer
+should see. :func:`derive_github_link_finding` surfaces this as a
+non-fatal ``warning``-severity :class:`~kproj.model.finding.Finding`
+(never raises, never blocks publish) whenever the link is absent,
+with wording that distinguishes two situations:
+
+- **no GitHub repo backing at all** (``field="github_link_missing"``) -
+  not a git repo, no ``origin`` remote, or ``origin`` isn't GitHub.
+- **GitHub repo backing exists but isn't (confirmed) pushed**
+  (``field="github_link_unpushed"``) - covers no upstream tracking, a
+  diverged/ahead ``HEAD``, and detached ``HEAD`` alike.
+
+No finding is emitted when the link is present (status ``"pushed"``).
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
+from ..model.finding import Finding
+from ..model.severity import Severity
 from .subprocess_runner import DEFAULT_GIT_TIMEOUT, SubprocessTimeoutError
 from .subprocess_runner import run as subprocess_run
+
+GithubLinkStatus = Literal[
+    "pushed", "not_a_repo", "no_origin_remote", "non_github_remote", "not_pushed"
+]
+"""Closed taxonomy of :func:`_detect`'s outcome.
+
+Only ``"pushed"`` yields a link; every other status is a reason to
+omit it (and, via :func:`derive_github_link_finding`, to advise why).
+"""
+
+
+@dataclass(frozen=True)
+class _Detection:
+    """Internal result of a single detection pass over *project_dir*."""
+
+    status: GithubLinkStatus
+    url: str | None = None
+
 
 # subprocess_run(..., check=False) only suppresses non-zero exits - a
 # timeout still raises SubprocessTimeoutError, and a missing/unusable
@@ -89,19 +129,11 @@ def parse_github_remote_url(remote_url: str) -> str | None:
 def derive_github_link(project_dir: Path) -> str | None:
     """Return the "see/fork on GitHub" link for *project_dir*, or ``None``.
 
-    Detection (local git metadata only; no network call):
-
-    1. *project_dir* must be inside a git work tree.
-    2. The ``origin`` remote must exist and resolve to a GitHub URL
-       (see :func:`parse_github_remote_url`).
-    3. ``HEAD`` must have a configured upstream (``@{u}``) whose commit
-       matches ``HEAD`` exactly - i.e. the current commit is known
-       (locally) to already be on the remote. No upstream, or a
-       diverged/ahead ``HEAD``, is treated as "not (confirmed) pushed".
-
-    Every failure mode - not a repo, no ``origin``, non-GitHub remote,
-    no upstream, unpushed ``HEAD`` - returns ``None`` rather than
-    raising, so publish never fails because of this optional enrichment.
+    Detection (local git metadata only; no network call) - see
+    :func:`_detect` for the full status taxonomy. Every failure mode -
+    not a repo, no ``origin``, non-GitHub remote, unpushed ``HEAD`` -
+    returns ``None`` rather than raising, so publish never fails
+    because of this optional enrichment.
 
     Args:
         project_dir: The resolved KiCad project directory.
@@ -110,24 +142,94 @@ def derive_github_link(project_dir: Path) -> str | None:
         The canonical ``https://github.com/<owner>/<repo>`` URL, or
         ``None`` when the project isn't a pushed GitHub repo.
     """
-    if not project_dir.is_dir():
+    return _detect(project_dir).url
+
+
+def derive_github_link_finding(project_dir: Path, *, project: str = "") -> Finding | None:
+    """Return an advisory :class:`Finding` when the GitHub link is absent, or ``None``.
+
+    Absence-highlighting (kproj#30 clarified requirement): the old
+    EAGLE-era site linked every project to its GitHub repo; kproj
+    surfaces the gap as a non-fatal ``warning`` finding (``source``
+    ``"audit"``, so it renders in the existing Metadata Audit table and
+    counts without any new rendering work) rather than silently
+    omitting the link. Never raises, and never returned when the link
+    is present - a project can only be advised about a genuine gap.
+
+    Args:
+        project_dir: The resolved KiCad project directory.
+        project: Project basename, threaded onto :attr:`Finding.project`
+            when known (empty string otherwise).
+
+    Returns:
+        ``None`` when *project_dir* is a pushed GitHub repo (the link
+        is present, nothing to advise). Otherwise a ``warning``
+        :class:`Finding` whose ``field`` is ``"github_link_missing"``
+        (no GitHub repo backing at all) or ``"github_link_unpushed"``
+        (backing exists, but isn't confirmed pushed).
+    """
+    detection = _detect(project_dir)
+    if detection.status == "pushed":
         return None
+    if detection.status == "not_pushed":
+        return Finding(
+            severity=Severity.WARNING,
+            field="github_link_unpushed",
+            value=str(project_dir),
+            reason=(
+                "project directory has a GitHub `origin` remote configured, but the "
+                "current commit isn't confirmed pushed there (no upstream tracking, a "
+                "diverged/ahead HEAD, or a detached HEAD); the see/fork-on-GitHub link "
+                "is omitted until a push is confirmed"
+            ),
+            project=project,
+            source="audit",
+        )
+    return Finding(
+        severity=Severity.WARNING,
+        field="github_link_missing",
+        value=str(project_dir),
+        reason=(
+            "project directory has no GitHub repo backing (not a git repo, no `origin` "
+            "remote, or `origin` isn't a GitHub remote); the see/fork-on-GitHub link is "
+            "omitted"
+        ),
+        project=project,
+        source="audit",
+    )
+
+
+def _detect(project_dir: Path) -> _Detection:
+    """Run the full local-git-metadata detection pass over *project_dir*.
+
+    Shared by :func:`derive_github_link` (wants just the URL) and
+    :func:`derive_github_link_finding` (wants the reason it's absent).
+    Running this only once per call keeps the two consumers' local git
+    reads consistent with each other within a single publish.
+
+    Returns:
+        A :class:`_Detection` whose ``status`` is one of
+        :data:`GithubLinkStatus`; ``url`` is set only when
+        ``status == "pushed"``.
+    """
+    if not project_dir.is_dir():
+        return _Detection(status="not_a_repo")
 
     if not _is_git_work_tree(project_dir):
-        return None
+        return _Detection(status="not_a_repo")
 
     remote_url = _git_output(project_dir, ["remote", "get-url", "origin"])
     if remote_url is None:
-        return None
+        return _Detection(status="no_origin_remote")
 
     github_url = parse_github_remote_url(remote_url)
     if github_url is None:
-        return None
+        return _Detection(status="non_github_remote")
 
     if not _head_is_pushed(project_dir):
-        return None
+        return _Detection(status="not_pushed")
 
-    return github_url
+    return _Detection(status="pushed", url=github_url)
 
 
 def _is_git_work_tree(project_dir: Path) -> bool:
