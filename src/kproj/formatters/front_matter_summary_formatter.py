@@ -135,6 +135,12 @@ class FrontMatterSummaryFormatter:
             for ref in publication.artifacts
         ]
 
+        # "See/fork on GitHub" link (kproj#30) — omitted (key absent) when
+        # the project directory isn't a pushed GitHub repo. Emitted
+        # alongside the artifact downloads per docs/DESIGN.md.
+        if publication.github_url:
+            data["github_url"] = publication.github_url
+
         # Audit / DRC / ERC count summaries.  Each block is counted
         # from its own Finding.source dimension (wave-3 M2 fix-up); a
         # DRC error therefore appears under drc.errors only, not under

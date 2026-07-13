@@ -391,6 +391,18 @@ class TestImagesAndArtifacts:
         assert isinstance(parsed["artifacts"], list)
 
 
+class TestGithubUrlField:
+    """The optional ``github_url:`` field (kproj#30)."""
+
+    def test_omitted_when_empty(self) -> None:
+        """The default (no GitHub link derived) omits the key entirely."""
+        assert "github_url" not in _parse(_pub())
+
+    def test_emitted_when_set(self) -> None:
+        pub = _pub(github_url="https://github.com/plocher/kproj")
+        assert _parse(pub)["github_url"] == "https://github.com/plocher/kproj"
+
+
 class TestRenderAuditMethod:
     """Validate the legacy render_audit(AnalysisInfo) -> dict helper."""
 

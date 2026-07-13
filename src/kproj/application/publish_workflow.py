@@ -34,6 +34,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
+from ..common.github_link import derive_github_link
 from ..common.kicad_install import (
     SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
@@ -503,11 +504,13 @@ class PublishWorkflow:
         This is DESIGN step 9 (build Publication).  It scans
         ``resolved.project_dir`` for the project-global content model:
         :func:`kproj.common.kicad_libraries.enumerate_libraries` for
-        library refs, and
+        library refs,
         :func:`kproj.common.project_docs.discover_datasheets` /
         :func:`kproj.common.project_docs.read_description` for the
         datasheet name-list + DESCRIPTION prose rendered on the project
-        section index.
+        section index, and
+        :func:`kproj.common.github_link.derive_github_link` for the
+        optional "see/fork on GitHub" link (kproj#30).
 
         Args:
             resolved: The resolved project (provides ``project_dir``).
@@ -535,6 +538,7 @@ class PublishWorkflow:
             images=images,
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
+            github_url=derive_github_link(resolved.project_dir) or "",
         )
 
 
