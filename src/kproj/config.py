@@ -2,13 +2,22 @@
 
 Implements the four-tier precedence from ``docs/DESIGN.md`` §
 *Configuration layer*:
-
-1. :class:`ConfigOverrides` field (set by a CLI flag)
+1.  :class:`ConfigOverrides` field (set by a CLI flag)
 2. Environment variable (``KPROJ_SITE_REPO`` / ``KPROJ_NO_PUSH`` /
-   ``KPROJ_KICAD_CLI``)
-3. ``~/.kproj.yaml`` key (``site_repo`` / ``no_push`` / ``kicad_cli``)
+   ``KPROJ_KICAD_CLI`` / ``KPROJ_INVENTORY``)
+3. ``~/.kproj.yaml`` key (``site_repo`` / ``no_push`` / ``kicad_cli`` /
+   ``inventory``)
 4. Hardcoded fallback (:data:`DEFAULT_SITE_REPO`, ``False``,
-   ``None``)
+   ``None``, ``None``)
+
+``inventory`` (kproj#29) intentionally has **no** hardcoded-path
+fallback, unlike ``site_repo``: per the datasheet document library's
+publish-mechanics resolution (``plocher/jBOM#350``), hardcoded
+user-machine paths are the antipattern that effort roots out. ``None``
+means kproj omits ``--inventory`` from its ``jbom bom`` invocation
+(:mod:`kproj.common.datasheet_library`) and jBOM degrades gracefully
+to blank ``Datasheet Name`` cells - an acceptable advisory-only state,
+never a publish blocker.
 
 Per ADR 0006, this module never imports ``argparse``. The CLI builds a
 :class:`ConfigOverrides` from its parsed namespace and calls
@@ -231,11 +240,15 @@ class ConfigOverrides:
         no_push: ``--no-push`` override.
         kicad_cli: Reserved for future ``--kicad-cli`` CLI flag; not
             exposed in v1 (env + yaml + locator probe suffice).
+        inventory: Reserved for a future ``--inventory`` CLI flag
+            (kproj#29); not exposed in v1 (env + yaml suffice). ``None``
+            omits ``--inventory`` from the ``jbom bom`` invocation.
     """
 
     site_repo: Path | None = None
     no_push: bool | None = None
     kicad_cli: Path | None = None
+    inventory: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -245,17 +258,22 @@ class KprojConfig:
     Attributes:
         site_repo: Local site-repo checkout where kproj will write.
         no_push: When ``True``, ``git push`` is skipped after commits.
-        kicad_cli: Optional explicit ``kicad-cli`` executable; ``None``
+        kicad_cli: Optional explicit ``kicad_cli`` executable; ``None``
             triggers :func:`kproj.common.kicad_install.find_kicad_cli`
             discovery in pre-flight.
         site_profile: :class:`SiteProfile` selecting the site-repo
             layout and front-matter shape.
+        inventory: Optional inventory CSV path forwarded to ``jbom
+            bom --inventory`` for datasheet-name lookup (kproj#29).
+            ``None`` omits ``--inventory`` entirely; no hardcoded
+            fallback (see :class:`ConfigOverrides`).
     """
 
     site_repo: Path
     no_push: bool
     kicad_cli: Path | None
     site_profile: SiteProfile
+    inventory: Path | None = None
 
 
 def _load_yaml_mapping(yaml_path: Path) -> Mapping[str, Any]:
@@ -321,6 +339,23 @@ def _resolve_kicad_cli(
     return None
 
 
+def _resolve_inventory(
+    overrides: ConfigOverrides, env: Mapping[str, str], yaml_data: Mapping[str, Any]
+) -> Path | None:
+    """Resolve the optional ``inventory`` CSV path (kproj#29).
+
+    ``None`` when unset at every tier - deliberately **no** hardcoded
+    fallback path (see the module docstring's ``inventory`` note).
+    """
+    if overrides.inventory is not None:
+        return overrides.inventory
+    if "KPROJ_INVENTORY" in env:
+        return Path(env["KPROJ_INVENTORY"])
+    if "inventory" in yaml_data:
+        return Path(str(yaml_data["inventory"]))
+    return None
+
+
 def load_config(
     overrides: ConfigOverrides,
     env: Mapping[str, str],
@@ -348,6 +383,7 @@ def load_config(
         no_push=_resolve_no_push(overrides, env, yaml_data),
         kicad_cli=_resolve_kicad_cli(overrides, env, yaml_data),
         site_profile=_resolve_site_profile(overrides, env, yaml_data),
+        inventory=_resolve_inventory(overrides, env, yaml_data),
     )
 
 

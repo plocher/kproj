@@ -608,14 +608,18 @@ Classification precedence: a `fp-lib-table` / `sym-lib-table` entry wins over a 
 
 ### Project-global docs (datasheets + DESCRIPTION)
 
-Alongside the library list, the project-global content model (per the EAGLE reference UX) includes prose docs and reference datasheet PDFs that are constant across board revisions. These render on the project section index (`<versions_dir>/<P>/_index.md`), not the per-version page.
+Alongside the library list, the project-global content model (per the EAGLE reference UX) includes prose docs and curated datasheet deep-links that are constant across board revisions. These render on the project section index (`<versions_dir>/<P>/_index.md`), not the per-version page.
 
-- **Utilities**: `common.project_docs.discover_datasheets(project_dir) -> tuple[str, ...]` and `common.project_docs.read_description(project_dir) -> str`.
-- **Datasheet scan**: recursive walk of `project_dir` for `*.pdf` (case-insensitive on the extension), so datasheets are found wherever the maintainer stores them (project root, `docs/`, `ds-downloads/`, ...). Generated / VCS / backup subtrees are pruned: hidden dirs (`.git`, `.history`), KiCad `*-backups`, and the fab `production/` tree. Returns case-insensitively sorted, de-duplicated basenames (stable for reproducible publishes).
-- **DESCRIPTION**: first of `DESCRIPTION.md` / `DESCRIPTION.txt` / `DESCRIPTION` at the project root wins; empty string when none.
-- **Fields**: `Publication.datasheets: tuple[str, ...]` and `Publication.description: str` (both frozen; default `()` / `""`).
-- **Workflow**: `PublishWorkflow.build_publication` calls both utilities against `resolved.project_dir` and threads the result onto the constructed `Publication` (DESIGN step 9), alongside `libraries`.
-- **Rendering**: `SitePublisher._build_project_index_content` appends the DESCRIPTION prose and a `## Datasheets` markdown bullet list (name-only) after the README body. Copying the PDFs into the site + link/preview UX are deferred follow-ups.
+kproj#29 (ADR 0010) retired the original per-project `*.pdf` disk-walk (`common.project_docs.discover_datasheets` / `discover_datasheet_files`, plus the `_copy_datasheets` site-copy step) in favour of deep-linking the shared, curated `plocher/SPCoast-inventory` document library — per jBOM#350's publish-mechanics resolution: no per-project PDF copies, ever.
+
+- **Lookup**: `common.datasheet_library.read_datasheet_names(project_dir, inventory) -> (names, findings)` invokes `jbom bom <project_dir> -f "Datasheet Name" -o -` live at publish time (ADR 0010 amends ADR 0003's read-not-invoke for this one narrow, read-only case) and parses the distinct, non-empty `Datasheet Name` values from stdout. Every failure mode (jBOM missing/old/crashed, absent column) degrades to an advisory `datasheet_field_missing` warning `Finding` rather than raising.
+- **URL construction**: `common.datasheet_library.build_datasheet_link(name) -> DatasheetLink` is a pure function building the two deterministic, `main`-branch URLs (view: GitHub blob; download: raw.githubusercontent.com) per jBOM#350's URL contract — no commit pinning, relying on the library's Never-Rename invariant.
+- **Advisory guard**: `common.datasheet_library.check_datasheet_links(names, library_repo) -> findings` is a read-only, never-blocking check against the conventional local `SPCoast-inventory` clone (`DEFAULT_LIBRARY_REPO`, overridable via `PublishWorkflow(library_repo=...)`), warning on an unresolvable name or an unpushed library clone.
+- **DESCRIPTION**: unchanged — `common.project_docs.read_description(project_dir) -> str`; first of `DESCRIPTION.md` / `DESCRIPTION.txt` / `DESCRIPTION` at the project root wins; empty string when none.
+- **Fields**: `Publication.datasheets: tuple[DatasheetLink, ...]` (frozen; default `()`) and `Publication.description: str` (unchanged).
+- **Workflow**: `PublishWorkflow.run` calls the lookup + guard exactly once per publish (mirroring the GitHub-link single-evaluation pattern), merges their findings into `analysis` (visible for every outcome, private-skip included), and threads the resulting `DatasheetLink` tuple into `PublishWorkflow.build_publication(..., datasheets=...)`.
+- **Rendering**: `SitePublisher._build_project_index_content` emits a `datasheets:` front-matter YAML list of `{name, view, download}` entries after the README + DESCRIPTION body; the site layer decides presentation (e.g. a Documentation list).
+- **Configuration**: `KprojConfig.inventory: Path | None` (CLI/`KPROJ_INVENTORY` env/`~/.kproj.yaml` `inventory:` key precedence, no hardcoded fallback) forwards to `jbom bom --inventory` when set.
 
 ### `ZipArchiver`
 

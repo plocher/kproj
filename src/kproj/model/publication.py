@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .analysis_info import AnalysisInfo
+from .datasheet_link import DatasheetLink
 from .library_ref import LibraryRef
 from .project_info import ProjectInfo
 
@@ -64,10 +65,13 @@ class Publication:
             fixtures that don't care about the publish time). Treated as
             a **volatile** key in new-release detection so a plain
             re-run stays a no-op.
-        datasheets: Project-global datasheet PDF filenames discovered in
-            the project directory (per
-            :func:`kproj.common.project_docs.discover_datasheets`). Listed
-            by name on the project section index. Empty when none.
+        datasheets: Distinct curated ``Datasheet Name`` deep-links (per
+            :func:`kproj.common.datasheet_library.build_datasheet_link`),
+            derived from the BOM's ``Datasheet Name`` column
+            (``production/jbom.csv``, per ADR 0003) rather than any
+            per-project PDF disk-walk. Listed on the project section
+            index. Empty when the project has no curated datasheets or
+            the BOM column is absent.
         description: Optional project-global ``DESCRIPTION`` prose (per
             :func:`kproj.common.project_docs.read_description`), rendered
             on the project section index alongside the README. Empty
@@ -99,7 +103,7 @@ class Publication:
     body_md: str
     readme_md: str = ""
     published_at: str = ""
-    datasheets: tuple[str, ...] = field(default_factory=tuple)
+    datasheets: tuple[DatasheetLink, ...] = field(default_factory=tuple)
     description: str = ""
     images: tuple[AssetRef, ...] = field(default_factory=tuple)
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)

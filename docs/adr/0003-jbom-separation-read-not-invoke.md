@@ -1,7 +1,16 @@
 # ADR 0003: jBOM Separation — Read, Don't Invoke
 Date: 2026-06-29
-Status: Accepted
-Related: ADR 0001 (inherit jBOM patterns), jBOM ADR 0006 (production folder)
+Status: Accepted (narrowly amended by ADR 0010)
+Related: ADR 0001 (inherit jBOM patterns), jBOM ADR 0006 (production folder), ADR 0010 (amendment)
+
+> **Amendment (ADR 0010, 2026-07-13):** kproj#29 carved out one narrow,
+> read-only exception to "don't invoke": kproj MAY invoke `jbom bom`
+> at publish time for live datasheet-name lookup (the ticket owner's
+> ruling — `production/jbom.csv` is a stale, fab-oriented snapshot, not
+> a substitute for querying the current inventory). Fab generation
+> (`jbom fab` / `FabricationWorkflow`) remains strictly out-of-process,
+> per this ADR's original decision below. See ADR 0010 for the full
+> rationale.
 
 ## Context
 
