@@ -1,8 +1,8 @@
 """Severity levels for kproj :class:`Finding` objects.
 
-Per ``docs/GLOSSARY.md`` § *Severity*, the metadata audit itself uses
-only ``error`` and ``warning``; DRC/ERC findings additionally use
-``exclusion`` to preserve KiCad's GUI-marked exclusions.
+The metadata audit itself uses only ``error`` and ``warning``; DRC/ERC
+findings additionally use ``exclusion`` to preserve KiCad's GUI-marked
+exclusions.
 
 The enum is intentionally orderable so callers can compare and rank
 findings without lookup tables (e.g. ``max(f.severity for f in

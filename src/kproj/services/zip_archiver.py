@@ -1,7 +1,7 @@
 """The :class:`ZipArchiver` low-level zip primitive.
 
-Per ``docs/GLOSSARY.md`` § *ZipArchiver* this is the domain-agnostic
-zip builder consumed by ``FabPackager`` and ``SourcePackager``. It
+The domain-agnostic zip builder consumed by ``FabPackager`` and
+``SourcePackager``. It
 takes a list of source paths + an output path + a ``root`` (the
 project directory) and produces a zip whose entries are named relative
 to ``root``.

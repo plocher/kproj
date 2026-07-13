@@ -10,7 +10,7 @@ KiCad project Jekyll publisher for the SPCoast site.
 
 - ✅ Phase 0 — scope contract
 - ✅ Phase 1 — analysis (jBOM reuse map, KiCad metadata survey, site platform assessment, audit prototype)
-- ✅ Phase 2 — informed grilling (locked v1 vocabulary in [`docs/GLOSSARY.md`](docs/GLOSSARY.md))
+- ✅ Phase 2 — informed grilling (locked v1 vocabulary in [`CONTEXT.md`](CONTEXT.md))
 - 🔄 Phase 3 — PRD + architecture proposal
 - ⏳ Phase 4 — adversarial review
 - ⏳ Phase 5 — issue breakdown into vertical tracer-bullet slices
@@ -19,7 +19,7 @@ KiCad project Jekyll publisher for the SPCoast site.
 
 ## v1 contract — quick orient
 
-Full glossary in [`docs/GLOSSARY.md`](docs/GLOSSARY.md); v1 requirements in [`docs/PRD.md`](docs/PRD.md); implementation specs in [`docs/DESIGN.md`](docs/DESIGN.md). Headlines:
+Full glossary in [`CONTEXT.md`](CONTEXT.md); v1 requirements in [`docs/PRD.md`](docs/PRD.md); implementation specs in [`docs/DESIGN.md`](docs/DESIGN.md). Headlines:
 
 - **What v1 is**: a local CLI Jekyll publisher. One invocation publishes a point-in-time snapshot of a KiCad project to the SPCoast site.
 - **What v1 isn't**: a release-lifecycle tool. No `git tag`, no `gh release create`, no CI integration. Those are the (B) lifecycle layer, composed externally via Makefile.
@@ -32,7 +32,7 @@ Full glossary in [`docs/GLOSSARY.md`](docs/GLOSSARY.md); v1 requirements in [`do
 
 ## Research artifacts
 
-- [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — canonical vocabulary (terms-only; Phase 2 deliverable).
+- [`CONTEXT.md`](CONTEXT.md) — canonical vocabulary (terms-only; Phase 2 deliverable).
 - [`docs/PRD.md`](docs/PRD.md) — v1 user-facing requirements (Phase 3 deliverable).
 - [`docs/DESIGN.md`](docs/DESIGN.md) — v1 implementation specs (Phase 3 deliverable).
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (Phase 3 deliverable; 7 entries).
