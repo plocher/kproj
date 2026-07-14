@@ -25,7 +25,8 @@ Full glossary in [`CONTEXT.md`](CONTEXT.md); v1 requirements in [`docs/PRD.md`](
 - **What v1 isn't**: a release-lifecycle tool. No `git tag`, no `gh release create`, no CI integration. Those are the (B) lifecycle layer, composed externally via Makefile.
 - **Pipeline**: `render` → `ibom` → `fab` → `publish`. Four steps.
 - **CLI surface**: `kproj [<project-or-dir-or-file>] [--dry-run] [--no-push] [-v|--verbose] [-d|--debug]` — five flags total.
-- **Config**: `~/.kproj.yaml` (`site_repo`, `no_push`). Env vars (`KPROJ_*`). CLI flag highest precedence.
+- **Config**: `~/.kproj.yaml` (`site_repo`, `no_push`, `inventory`). Env vars (`KPROJ_*`, incl. `KPROJ_INVENTORY`). CLI flag highest precedence. `inventory` is optional with no default — set it to your inventory catalog CSV to enable datasheet deep-links.
+- **Datasheet deep-links**: published version pages link curated `Datasheet Name`s (looked up live via `jbom bom` at publish time) into the shared SPCoast-inventory library — no PDFs copied into the site.
 - **Audit + DRC/ERC**: surfaced on the version page (Markdown table) and stderr; **never blocking** in v1.
 - **WriteTracker rollback**: site-repo writes are transactional. Mid-pipeline failure rolls back cleanly. No stray-file pollution across batch runs.
 - **Exit codes**: 0 clean / 1 findings present / 2 mechanical failure.
