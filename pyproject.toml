@@ -1,6 +1,6 @@
 [project]
 name = "kproj"
-version = "0.2.0"
+version = "0.3.0"
 description = "KiCad project Jekyll publisher for the SPCoast site"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,6 +46,7 @@ kproj = "kproj.cli.main:main"
 Homepage = "https://github.com/plocher/kproj"
 Repository = "https://github.com/plocher/kproj.git"
 Issues = "https://github.com/plocher/kproj/issues"
+
 
 
 
@@ -144,6 +145,7 @@ dist_glob_patterns = ["dist/*"]
 upload_to_vcs_release = true
 upload_to_pypi = true
 upload_to_repository = true
+
 
 
 

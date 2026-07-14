@@ -1,6 +1,99 @@
 # CHANGELOG
 
 
+## v0.3.0 (2026-07-14)
+
+### Bug Fixes
+
+* fix(publish): structurally enforce advisory-only datasheet guard; fix review findings
+
+Addresses PR #35 adversarial review blockings #2 and #3, plus cheap advisories.
+
+1. Structural enforcement (BLOCKING #2): PublishWorkflow.run no longer
+   calls the datasheet-name lookup + check_datasheet_links guard
+   unwrapped. New _lookup_datasheet_links() wraps both in a single
+   try/except Exception, degrading to a datasheet_lookup_failed
+   warning Finding instead of propagating - the 'advisory-only, never
+   a publish blocker' guarantee no longer rests solely on
+   read_datasheet_names/check_datasheet_links being individually
+   exhaustive. Also fixes the unguarded candidate.is_file() call
+   inside check_datasheet_links (new _is_file_safe() helper catches
+   OSError - e.g. ELOOP on a symlink cycle). New regression test
+   mutation-proves a raising lookup callable cannot fail a publish.
+
+2. KprojConfig.inventory test coverage (BLOCKING #3): added the
+   standard per-tier precedence tests (CLI > KPROJ_INVENTORY env >
+   yaml > None default) mirroring the existing site_repo/no_push/
+   kicad_cli pattern in tests/unit/test_config.py.
+
+3. Advisories addressed:
+   - Fixed stale 'read from production/jbom.csv, per ADR 0003'
+     docstrings in model/datasheet_link.py and model/publication.py
+     (both now correctly describe the live jbom-bom lookup, ADR 0010).
+   - Fixed wrong ADR-0011 citation in datasheet_links.feature's
+     comment (kproj's ADR is 0010; 0011 is jBOM's unrelated ADR).
+   - build_datasheet_link() now percent-encodes the name segment
+     (urllib.parse.quote) so a curated name with a space/reserved
+     character still produces a well-formed URL.
+   - read_datasheet_names() now dedups case-insensitively (casefold),
+     matching the library's stated case-insensitive uniqueness
+     invariant; previously a casing-differing duplicate from an
+     upstream curation slip would survive as two separate links.
+
+BLOCKING #1 (site-template mismatch) is being addressed via a
+companion PR against SPCoast.github.io, tracked separately.
+
+Validation: 453 pytest passed (+8 new), 12 features / 23 scenarios /
+142 steps behave passed, ruff + ruff-format + mypy clean.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`212bfad`](https://github.com/plocher/kproj/commit/212bfad85e7dfae0274301f5983b1ecb13e6aa88))
+
+### Features
+
+* feat(publish): datasheet deep-links from live jbom Datasheet Name lookup
+
+Closes #29. Publishes per-component datasheet view + download links
+into the public plocher/SPCoast-inventory library repo, sourced from
+the BOM's curated 'Datasheet Name' column - no PDF copies, ever (per
+jBOM#350's publish-mechanics resolution).
+
+- kproj.common.datasheet_library: build_datasheet_link() constructs
+  the deterministic view (GitHub blob) + download (raw.githubusercontent)
+  URLs from a curated name (main-branch, no commit pinning - the
+  library's Never-Rename invariant guarantees they cannot rot).
+  read_datasheet_names() invokes `jbom bom <project> -f "Datasheet
+  Name" -o -` live at publish time (not the stale production/jbom.csv
+  fab snapshot - ADR 0010 amends ADR 0003's read-not-invoke for this
+  one narrow, read-only case). check_datasheet_links() is the
+  advisory-only, never-blocking publish guard: read-only against the
+  conventional local SPCoast-inventory clone, warning on an
+  unresolvable name or an unpushed library clone.
+- Every failure mode (jbom missing/old/crashed, absent column,
+  unresolvable/unpushed library) degrades to an advisory Finding
+  rather than raising or blocking the publish.
+- KprojConfig.inventory: Path | None (CLI/KPROJ_INVENTORY env/yaml
+  precedence, no hardcoded fallback) forwards to `jbom bom
+  --inventory` when configured.
+- Publication.datasheets is now tuple[DatasheetLink, ...]; SitePublisher
+  renders a datasheets: front-matter YAML list of {name, view,
+  download} entries on the project section index.
+- Retires the per-project *.pdf disk-walk (project_docs.discover_datasheets
+  / discover_datasheet_files) and its site-copy sibling
+  (_copy_datasheets in publish_workflow's artifact generator).
+- New ADR 0010 documents the ADR 0003 amendment + the CLI-vs-services-API
+  mechanism choice; CONTEXT.md and ADR 0003 updated to match (single-context
+  docs rule).
+- New behave feature (datasheet_links.feature) covering curated/uncurated
+  components and jbom-too-old graceful degradation, driven through an
+  injected datasheet_name_lookup seam so no scenario execs a real jbom
+  subprocess.
+
+Validation: 445 pytest passed, 12 features / 23 scenarios / 142 steps
+behave passed, ruff + ruff-format + mypy clean.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`2edd007`](https://github.com/plocher/kproj/commit/2edd00738519836f646d73310acfadd3fbc62c16))
+
+
 ## v0.2.0 (2026-07-13)
 
 ### Bug Fixes
