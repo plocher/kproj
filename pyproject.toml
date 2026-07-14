@@ -1,16 +1,16 @@
 [project]
 name = "kproj"
 version = "0.3.0"
-description = "KiCad project Jekyll publisher for the SPCoast site"
+description = "KiCad project publisher for the SPCoast Hugo site"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
     { name = "John Plocher" },
 ]
-keywords = ["kicad", "jekyll", "pcb", "release", "spcoast"]
+keywords = ["kicad", "hugo", "static-site", "pcb", "release", "spcoast"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

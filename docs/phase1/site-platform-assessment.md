@@ -1,5 +1,11 @@
 # Site Platform Assessment — Phase 1 (architect, in-process)
 
+> **Superseded (kproj#38):** the "keep Jekyll" recommendation below was
+> overturned; production kproj (v0.3.0+) targets **Hugo** via the
+> `SiteProfile` abstraction (`HUGO_SITE_PROFILE`, `src/kproj/config.py`).
+> Kept as historical record of the Phase 1 analysis; do not treat as
+> current-behavior documentation.
+
 **Status:** draft, awaiting child-agent reports for cross-check
 **Author:** architect (orchestrator) — `019f0b2a-6eee-71d3-835d-65f8c655aa36`
 **Inputs:** sweep of `/Users/jplocher/Dropbox/eagle/SPCoast.github.io` (`_config.yml`, `_layouts/*.html`, `electronics.html`, `Gemfile`, `.github/workflows/jekyll.yml`, sample `_versions/<P>/<R>.md` and `pages/<P>.md`)

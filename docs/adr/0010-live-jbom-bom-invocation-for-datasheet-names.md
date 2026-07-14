@@ -1,8 +1,8 @@
 # ADR 0010: Live `jbom bom` Invocation for Datasheet-Name Lookup
 
-Date: 2026-07-13
+Date: 2026-07-13 (amended 2026-07-14, kproj#36)
 Status: Accepted
-Related: ADR 0003 (jBOM Separation — Read, Don't Invoke; amended by this ADR), jBOM#342 (datasheet document library map), jBOM#350 (kproj publish-mechanics resolution)
+Related: ADR 0003 (jBOM Separation — Read, Don't Invoke; amended by this ADR), jBOM#342 (datasheet document library map), jBOM#350 (kproj publish-mechanics resolution), kproj#36 (invocation bug fix + multi-field row shape), kproj#37 (CLI/config surface for `inventory` / `datasheet_library` / `datasheet_repo`)
 
 ## Context
 
@@ -17,13 +17,15 @@ That design was rejected by the ticket owner during implementation, verified aga
 
 ## Decision
 
-kproj invokes jBOM's `bom` subcommand read-only, at publish time, specifically for the `Datasheet Name` column:
+kproj invokes jBOM's `bom` subcommand read-only, at publish time, for a small, extensible set of BOM fields:
 
 ```
-jbom bom <project_dir> -f "Datasheet Name" -o -
+jbom bom <project_dir> --inventory <path> -f "reference,datasheet,datasheet_name" -o -
 ```
 
-(plus `--inventory <path>` when `KprojConfig.inventory` is configured — see below). Output is CSV on stdout, parsed for distinct non-empty `Datasheet Name` values.
+**kproj#36 correction**: the original implementation of this ADR passed the *display header* `"Datasheet Name"` (with a space) as the `-f` token — jBOM's `-f` expects comma-separated, normalized field names (a token containing a space is a syntax error against real jBOM 7.8.0), so every publish silently degraded to the `datasheet_field_missing` advisory. The field list is `reference,datasheet,datasheet_name` — normalized snake_case tokens — declared as a single constant (`kproj.common.datasheet_library.DATASHEET_BOM_FIELDS`) built from an extensible tuple, since this is general BOM-row plumbing whose eventual consumer is the iBOM interactive-BOM viewer (more fields will be needed there; out of scope for kproj#36 itself). jBOM still *renders* the output CSV header in title-cased display form (`"Reference","Datasheet","Datasheet Name"`) regardless of the `-f` token casing, so the parser side is unaffected by this fix. Output is CSV on stdout, parsed into structured **per-reference rows** (`kproj.model.datasheet_row.DatasheetRow`); the project-index Documentation list derives its distinct, case-insensitively-deduped names from those rows via `distinct_datasheet_names`.
+
+**kproj#36 owner ruling — no inventory, no invocation**: `--inventory` is no longer optional-but-omittable. When `KprojConfig.inventory` is unconfigured (`None`), kproj never builds or runs the `jbom bom` command at all: the `datasheet_name` column only exists in the inventory, so there is no data to fetch and the invocation would be pointless. This is a silent, advisory-free degraded state (no `Finding` is emitted) — see kproj#37's first-run INFO hint for the discoverability companion. This supersedes the original "omit `--inventory` and accept blank columns" design below.
 
 This **amends ADR 0003**, narrowly: kproj is no longer strictly "read jBOM's `production/` files, never invoke jBOM." The reversal is scoped precisely —
 
@@ -41,15 +43,19 @@ jBOM exposes both a CLI (`jbom bom ...`) and an internal services API (`jbom.app
 - `jbom bom -f ... -o -`'s CSV-to-stdout contract is jBOM's own behave-feature-tested public surface (`features/bom/datasheet_name_field.feature`), a stronger stability guarantee for this narrow need than coupling to `BOMWorkflow`'s internal `BOMRequest`/`BOMData`/`BOMEntry` shapes and its fabricator-projection pipeline, which carry more surface area than this lookup requires.
 - Subprocess invocation mirrors kproj's existing external-tool integration pattern (`kicad-cli`), rather than introducing a second integration style alongside it.
 
-Invocation goes via `[sys.executable, "-m", "jbom", ...]`, not a bare `jbom` on `PATH`: jBOM is a normal Python dependency of kproj (`tool.uv.sources`), so it's guaranteed importable in kproj's own venv — no separate executable-discovery locator is needed (unlike `kicad-cli`, which lives outside any Python environment).
+**kproj#36 owner ruling — invoke `jbom` from PATH**: the original invocation went via `[sys.executable, "-m", "jbom", ...]`, reasoned as "jBOM is a normal Python dependency of kproj". This rationale was overruled: kproj now resolves the `jbom` executable from `PATH` (`shutil.which("jbom")`), falling back to `[sys.executable, "-m", "jbom"]` only when no `jbom` is found on `PATH` (`kproj.common.datasheet_library._resolve_jbom_executable`). Both invocation shapes degrade to the same advisory finding on failure, so this is a pure preference change, not a new failure mode.
 
 ### Advisory-only, never a publish blocker
 
-Every failure mode — jBOM missing or too old to recognise the field, a non-zero exit, a subprocess timeout, or unparseable output — degrades to a warning `Finding` (`datasheet_field_missing`) rather than raising. kproj publishes without datasheet links in that case. See `kproj.common.datasheet_library.read_datasheet_names`.
+Every failure mode — jBOM missing or too old to recognise the field, a non-zero exit, a subprocess timeout, or a missing `Datasheet Name` column — degrades to a warning `Finding` (`datasheet_field_missing`) rather than raising. kproj publishes without datasheet links in that case. See `kproj.common.datasheet_library.read_datasheet_rows` (and its `read_datasheet_names` convenience wrapper). The no-inventory skip (above) is the one exception: it is not a failure mode, so it emits no `Finding` at all.
 
 ### Inventory path: `KprojConfig.inventory`, no hardcoded convention
 
-`jbom bom --inventory <path>` has no profile/defaults-hierarchy fallback in jBOM today (verified against jBOM main, 7.5.0-era: `inventory_files` defaults to an empty tuple with no resolution beyond the CLI flag). kproj therefore owns `KprojConfig.inventory: Path | None`, resolved via the same CLI-override / `KPROJ_INVENTORY` env / `~/.kproj.yaml` `inventory:` key precedence as `site_repo`. Unlike `site_repo`, it has **no hardcoded fallback path** — per jBOM#350's rejection of hardcoded user-machine paths as an antipattern. `None` omits `--inventory` entirely; jBOM then has no curated data to join against, so every row's `Datasheet Name` comes back blank — a valid, advisory-free degraded state, not every project need be inventory-curated.
+`jbom bom --inventory <path>` has no profile/defaults-hierarchy fallback in jBOM today (verified against jBOM main, 7.5.0-era: `inventory_files` defaults to an empty tuple with no resolution beyond the CLI flag). kproj therefore owns `KprojConfig.inventory: Path | None`, resolved via the same CLI-override / `KPROJ_INVENTORY` env / `~/.kproj.yaml` `inventory:` key precedence as `site_repo` (and, per kproj#37, exposed as a first-class `--inventory` CLI flag rather than being reserved for a future one). Unlike `site_repo`, it has **no hardcoded fallback path** — per jBOM#350's rejection of hardcoded user-machine paths as an antipattern. `None` now skips the `jbom bom` invocation entirely (kproj#36 ruling above), rather than omitting just the `--inventory` flag.
+
+### Local library clone + public repo slug are now configurable (kproj#37)
+
+The advisory guard's local clone path (`KprojConfig.datasheet_library`) and the published deep-link `<owner>/<repo>` slug (`KprojConfig.datasheet_repo`) each gained the same CLI/env/yaml override tiers as `site_repo`, but - per ADR 0007 - keep their SPCoast-convention hardcoded fallback (`~/Dropbox/KiCad/SPCoast-inventory` / `plocher/SPCoast-inventory`) rather than defaulting to `None`. `kproj.common.datasheet_library.build_datasheet_link` takes `owner_repo` and `check_datasheet_links` takes `library_repo`, both as explicit parameters instead of reading a module-level constant, so a `kproj --datasheet-repo` / `--datasheet-library` override can retarget the published URLs and local guard clone for a forked or private library.
 
 ## Consequences
 

@@ -16,11 +16,16 @@ from pathlib import Path
 import pytest
 
 from kproj.common.datasheet_library import (
+    DATASHEET_BOM_FIELDS,
+    _default_jbom_command,
     build_datasheet_link,
     check_datasheet_links,
+    distinct_datasheet_names,
     read_datasheet_names,
+    read_datasheet_rows,
 )
 from kproj.model.datasheet_link import DatasheetLink
+from kproj.model.datasheet_row import DatasheetRow
 
 # ----------------------------------------------------------------------
 # build_datasheet_link
@@ -90,14 +95,39 @@ def _fake_jbom_script(tmp_path: Path, *, stdout: str, exit_code: int = 0) -> lis
 def test_read_datasheet_names_returns_distinct_curated_names(tmp_path: Path) -> None:
     """Only rows with a populated Datasheet Name contribute a name."""
     stdout = (
-        "Reference,Value,Datasheet Name\n"
-        "R1,10K,yageo_rc0805_resistor\n"
-        "R2,22K,yageo_rc0805_resistor\n"
+        "Reference,Datasheet,Datasheet Name\n"
+        "R1,https://example.com/rc0805.pdf,yageo_rc0805_resistor\n"
+        "R2,https://example.com/rc0805.pdf,yageo_rc0805_resistor\n"
         "R3,1K,\n"
     )
     command = _fake_jbom_script(tmp_path, stdout=stdout)
     names, findings = read_datasheet_names(tmp_path, jbom_command=command)
     assert names == ("yageo_rc0805_resistor",)
+    assert findings == ()
+
+
+def test_read_datasheet_rows_returns_structured_per_reference_rows(tmp_path: Path) -> None:
+    """The live lookup keeps reference, datasheet URL, and curated name per row."""
+    stdout = (
+        "Reference,Datasheet,Datasheet Name\n"
+        "R1,https://example.com/r1.pdf,yageo_rc0805_resistor\n"
+        "R2,https://example.com/r2.pdf,\n"
+    )
+    command = _fake_jbom_script(tmp_path, stdout=stdout)
+    rows, findings = read_datasheet_rows(
+        tmp_path,
+        inventory=tmp_path / "inventory.csv",
+        jbom_command=command,
+    )
+    assert rows == (
+        DatasheetRow(
+            reference="R1",
+            datasheet="https://example.com/r1.pdf",
+            datasheet_name="yageo_rc0805_resistor",
+        ),
+        DatasheetRow(reference="R2", datasheet="https://example.com/r2.pdf", datasheet_name=""),
+    )
+    assert distinct_datasheet_names(rows) == ("yageo_rc0805_resistor",)
     assert findings == ()
 
 
@@ -164,23 +194,56 @@ def test_read_datasheet_names_dedups_case_insensitively(tmp_path: Path) -> None:
 
 
 def test_read_datasheet_names_omits_inventory_flag_when_unconfigured(tmp_path: Path) -> None:
-    """With no jbom_command override, the default argv omits --inventory when unset."""
-    from kproj.common.datasheet_library import _default_jbom_command
+    """With no inventory configured, the real jbom subprocess is skipped entirely."""
+    names, findings = read_datasheet_names(tmp_path, inventory=None)
+    assert names == ()
+    assert findings == ()
 
-    command = _default_jbom_command(tmp_path, None)
-    assert "--inventory" not in command
+
+def test_default_jbom_command_returns_none_when_inventory_unconfigured(tmp_path: Path) -> None:
+    """No inventory means no jbom command is built or run."""
+    assert _default_jbom_command(tmp_path, None) is None
 
 
 def test_read_datasheet_names_default_command_includes_inventory_when_configured(
     tmp_path: Path,
 ) -> None:
-    """The default argv forwards --inventory when a path is configured."""
-    from kproj.common.datasheet_library import _default_jbom_command
+    """The default argv uses PATH jbom and the extensible multi-field field list."""
 
     inventory = tmp_path / "inventory.csv"
     command = _default_jbom_command(tmp_path, inventory)
-    assert "--inventory" in command
-    assert str(inventory) in command
+    assert command is not None
+    assert command[1:] == [
+        "bom",
+        str(tmp_path),
+        "--inventory",
+        str(inventory),
+        "-f",
+        DATASHEET_BOM_FIELDS,
+        "-o",
+        "-",
+    ]
+    assert command[0].endswith("jbom") or command[:3] == [sys.executable, "-m", "jbom"]
+
+
+def test_real_jbom_supports_datasheet_lookup_field_list(tmp_path: Path) -> None:
+    """Real jBOM accepts the production field token list and emits every header."""
+    from tests._kicad_fixtures import make_minimal_project
+
+    project_dir = make_minimal_project(tmp_path / "demo", "demo")
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text(
+        "IPN,Category,Value,Package,Manufacturer,MFGPN,Datasheet,Datasheet Name\n",
+        encoding="utf-8",
+    )
+    command = _default_jbom_command(project_dir, inventory)
+    assert command is not None
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    header = completed.stdout.splitlines()[0]
+    assert "Reference" in header
+    assert "Datasheet" in header
+    assert "Datasheet Name" in header
 
 
 # ----------------------------------------------------------------------

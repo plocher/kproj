@@ -17,6 +17,7 @@ See:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from collections.abc import Mapping, Sequence
@@ -29,7 +30,33 @@ from ..formatters.stderr_formatter import StderrFormatter
 from ..model.publish_request import PublishRequest
 from ..model.publish_result import PublishResult, compute_exit_code
 
+_log = logging.getLogger(__name__)
+
 _DEFAULT_YAML_FILENAME = ".kproj.yaml"
+
+_CONFIG_EPILOG = """\
+Configuration precedence (highest wins):
+  CLI flag > KPROJ_* environment variable > ~/.kproj.yaml > default
+
+Environment variables:
+  KPROJ_SITE_REPO          overrides --site-repo
+  KPROJ_NO_PUSH            overrides --no-push (1/true/yes/on/y/t)
+  KPROJ_KICAD_CLI          overrides the kicad-cli executable path
+  KPROJ_INVENTORY          overrides --inventory
+  KPROJ_DATASHEET_LIBRARY  overrides --datasheet-library
+  KPROJ_DATASHEET_REPO     overrides --datasheet-repo
+
+~/.kproj.yaml example:
+  site_repo: /home/you/Dropbox/workspace/SPCoast.github.io
+  no_push: false
+  kicad_cli: /usr/local/bin/kicad-cli
+  inventory: /home/you/Dropbox/KiCad/SPCoast-inventory/SPCoast-INVENTORY.csv
+  datasheet_library: /home/you/Dropbox/KiCad/SPCoast-inventory
+  datasheet_repo: plocher/SPCoast-inventory
+
+Without a ~/.kproj.yaml and no --inventory/KPROJ_INVENTORY, kproj publishes
+without datasheet deep-links (jbom is never invoked - see --inventory below).
+"""
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -43,8 +70,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kproj",
         description=(
-            "Publish a point-in-time snapshot of a KiCad project to the SPCoast Jekyll site."
+            "Publish a point-in-time snapshot of a KiCad project to the SPCoast Hugo site."
         ),
+        epilog=_CONFIG_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "project",
@@ -62,6 +91,39 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help="Override the local SPCoast site-repo checkout (highest precedence).",
+    )
+    parser.add_argument(
+        "--inventory",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Inventory CSV to enrich the BOM with curated datasheet names "
+            "(env: KPROJ_INVENTORY; yaml: inventory:). Unset means kproj never "
+            "invokes jbom and publishes without datasheet deep-links."
+        ),
+    )
+    parser.add_argument(
+        "--datasheet-library",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Local datasheet-library clone used by the advisory publish guard "
+            "(env: KPROJ_DATASHEET_LIBRARY; yaml: datasheet_library:). "
+            "Default: ~/Dropbox/KiCad/SPCoast-inventory."
+        ),
+    )
+    parser.add_argument(
+        "--datasheet-repo",
+        type=str,
+        default=None,
+        metavar="OWNER/REPO",
+        help=(
+            "Public <owner>/<repo> slug that published datasheet deep-links point at "
+            "(env: KPROJ_DATASHEET_REPO; yaml: datasheet_repo:). "
+            "Default: plocher/SPCoast-inventory."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -122,6 +184,11 @@ def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
         # so that absence falls through to env / yaml / default.
         no_push=True if namespace.no_push else None,
         kicad_cli=None,  # reserved for future --kicad-cli flag
+        inventory=Path(namespace.inventory) if namespace.inventory else None,
+        datasheet_library=(
+            Path(namespace.datasheet_library) if namespace.datasheet_library else None
+        ),
+        datasheet_repo=namespace.datasheet_repo or None,
     )
 
 
@@ -179,6 +246,24 @@ def _default_yaml_path() -> Path:
     return Path.home() / _DEFAULT_YAML_FILENAME
 
 
+def _emit_first_run_hint(*, yaml_path: Path, inventory: Path | None) -> None:
+    """Emit a one-time INFO hint when config is fully undiscovered (kproj#37).
+
+    Per the owner ruling on kproj#36, an unset ``inventory`` is a valid,
+    advisory-free degraded state (no ``Finding``, no ``jbom`` invocation).
+    Without this hint the resulting blank-datasheet degradation is
+    silent and undiscoverable; this is deliberately INFO-level (not a
+    warning/finding) - the degraded state itself stays advisory-free.
+    """
+    if not yaml_path.exists() and inventory is None:
+        _log.info(
+            "no %s found and no --inventory/KPROJ_INVENTORY set; datasheet "
+            "deep-links will be blank until configured. Run `kproj --help` "
+            "for the full ~/.kproj.yaml example.",
+            yaml_path,
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """kproj CLI entry point.
 
@@ -191,14 +276,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = list(sys.argv[1:]) if argv is None else list(argv)
     namespace = parse_args(args)
+    yaml_path = _default_yaml_path()
     request = build_request(
         namespace,
         env=os.environ,
-        yaml_path=_default_yaml_path(),
+        yaml_path=yaml_path,
     )
     # Wire -v / -d to the kproj-namespaced logger BEFORE the workflow runs
     # so subprocess argv, git invocations, and regen decisions are visible.
     configure_logging(verbose_level=request.verbose_level, debug=request.debug)
+    _emit_first_run_hint(yaml_path=yaml_path, inventory=request.config.inventory)
     workflow = PublishWorkflow()
     result = workflow.run(request)
     _render_result_to_stderr(result, verbose_level=request.verbose_level)

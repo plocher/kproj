@@ -30,7 +30,12 @@ from _kicad_fixtures import (  # noqa: E402
 )
 from kproj.application import publish_workflow as workflow_module  # noqa: E402
 from kproj.application.publish_workflow import PublishWorkflow  # noqa: E402
-from kproj.config import GENERIC_SITE_PROFILE, KprojConfig  # noqa: E402
+from kproj.config import (  # noqa: E402
+    DEFAULT_DATASHEET_LIBRARY,
+    DEFAULT_DATASHEET_REPO,
+    GENERIC_SITE_PROFILE,
+    KprojConfig,
+)
 
 # Steps below reference GENERIC_SITE_PROFILE's directory constants
 # instead of literal ``_versions`` / ``pages`` paths so scenarios exercise
@@ -202,6 +207,9 @@ def _build_request(context: Any, *, dry_run: bool = False) -> PublishRequest:
             no_push=getattr(context, "no_push", True),
             kicad_cli=fake_cli,
             site_profile=GENERIC_SITE_PROFILE,
+            inventory=getattr(context, "inventory", None),
+            datasheet_library=getattr(context, "datasheet_library", DEFAULT_DATASHEET_LIBRARY),
+            datasheet_repo=getattr(context, "datasheet_repo", DEFAULT_DATASHEET_REPO),
         ),
         dry_run=dry_run,
     )

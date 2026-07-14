@@ -1,46 +1,69 @@
-"""Datasheet deep-links from the BOM's ``Datasheet Name`` column (kproj#29).
+"""Datasheet deep-links from the BOM's curated ``Datasheet Name`` column.
 
 Per the datasheet document library map (``plocher/jBOM#342``), its
-publish-mechanics resolution (``plocher/jBOM#350``), and the
-ticket-owner's live-lookup ruling on kproj#29 (which amends ADR 0003 —
-see ``docs/adr/0010-live-jbom-bom-invocation-for-datasheet-names.md``):
+publish-mechanics resolution (``plocher/jBOM#350``), the kproj#29
+ticket-owner's live-lookup ruling (ADR 0003 amendment), and the kproj#36
+follow-up ruling that fixed the broken invocation and multi-field shape
+(see ``docs/adr/0010-live-jbom-bom-invocation-for-datasheet-names.md``):
 
-1. **Resolution path**: kproj invokes ``jbom bom <project_dir> -f
-   "Datasheet Name" -o -`` at publish time and parses the CSV from
-   stdout (:func:`read_datasheet_names`). This is a deliberate,
-   narrowly-scoped exception to ADR 0003's "read, don't invoke":
-   ``production/jbom.csv`` is a stale, fab-oriented snapshot that may
-   predate the ``Datasheet Name`` field entirely, whereas datasheet
-   links must reflect the *current* inventory. kproj still never
-   writes to the inventory, never runs ``jbom fab``, and never invokes
-   any other jBOM subcommand. When the invocation fails (jbom missing,
-   too old to know the field, or any other mechanical failure) or the
-   column comes back absent, kproj publishes without datasheet links
-   and :func:`read_datasheet_names` returns an advisory ``Finding``
-   instead of raising - the lookup is never a publish blocker.
-2. **Site representation**: no site copies. Published pages deep-link
-   the public ``plocher/SPCoast-inventory`` repo directly.
+1. **Resolution path**: kproj invokes ``jbom bom <project_dir>
+   --inventory <path> -f "reference,datasheet,datasheet_name" -o -``
+   at publish time and parses the CSV from stdout
+   (:func:`read_datasheet_rows`) into structured, **per-reference**
+   rows. This is a deliberate, narrowly-scoped exception to ADR 0003's
+   "read, don't invoke": ``production/jbom.csv`` is a stale,
+   fab-oriented snapshot that may predate the ``Datasheet Name`` field
+   entirely, whereas datasheet links must reflect the *current*
+   inventory. kproj still never writes to the inventory, never runs
+   ``jbom fab``, and never invokes any other jBOM subcommand.
+2. **PATH invocation, `-m` fallback**: the ``jbom`` executable is
+   resolved from ``PATH`` (:func:`shutil.which`); when not found on
+   ``PATH`` kproj falls back to ``[sys.executable, "-m", "jbom"]``
+   (jBOM is also a normal Python dependency of kproj). Both invocation
+   shapes degrade to the same advisory finding on failure.
+3. **No inventory, no invocation (kproj#36 owner ruling)**: the
+   ``datasheet_name`` column only exists in the inventory, so when
+   ``inventory`` is unconfigured (``None``) kproj never builds or
+   runs the ``jbom bom`` command at all - there is no data to fetch.
+   This is a silent, advisory-free degraded state (the kproj#37
+   first-run INFO hint is the discoverability companion), not the
+   "invoke without ``--inventory`` and accept blank columns" behavior
+   this module previously implemented.
+4. **Extensible field list**: :data:`DATASHEET_BOM_FIELDS` is a single
+   declared, comma-joined constant built from a field-token tuple.
+   Today it fetches ``reference,datasheet,datasheet_name`` - general
+   BOM-row plumbing whose eventual consumer is the iBOM
+   interactive-BOM viewer (out of scope for kproj#36 itself), which
+   will need more fields; extending the tuple is the only change
+   required.
+5. **Site representation**: no site copies. Published pages deep-link
+   the public datasheet-library repo directly (default
+   ``plocher/SPCoast-inventory``, overridable per
+   :mod:`kproj.config`'s ``datasheet_repo`` precedence).
    :func:`build_datasheet_link` constructs the two deterministic URLs
    (view + download) from a curated name.
-3. **URL-stability**: ``main``-branch URLs, no commit pinning — the
+6. **URL-stability**: ``main``-branch URLs, no commit pinning — the
    library's Never-Rename / append-only invariant guarantees they
    cannot rot.
-4. **Guard**: :func:`check_datasheet_links` is kproj's advisory-only
+7. **Guard**: :func:`check_datasheet_links` is kproj's advisory-only
    publish check. It runs read-only against the conventional local
-   library clone path (:data:`DEFAULT_LIBRARY_REPO`, overridable —
-   mirrors the ``~/Dropbox/KiCad/projects`` convention used by
-   :mod:`kproj.services.metadata_analyzer` for ``replaced-by:<X>``
-   resolution) and emits warning findings for unresolvable or
-   not-yet-pushed names. It never blocks a publish: short 404 windows
-   on rarely-followed links are acceptable, and publish/push ordering
-   is owned by Makefile orchestration, not a kproj gate.
+   library clone path (default :data:`kproj.config.DEFAULT_DATASHEET_LIBRARY`,
+   overridable per :mod:`kproj.config`'s ``datasheet_library``
+   precedence - mirrors the ``~/Dropbox/KiCad/projects`` convention
+   used by :mod:`kproj.services.metadata_analyzer` for
+   ``replaced-by:<X>`` resolution) and emits warning findings for
+   unresolvable or not-yet-pushed names. It never blocks a publish:
+   short 404 windows on rarely-followed links are acceptable, and
+   publish/push ordering is owned by Makefile orchestration, not a
+   kproj gate.
 
 The per-project ``*.pdf`` disk-walk (:mod:`kproj.common.project_docs`'
 former ``discover_datasheets`` / ``discover_datasheet_files``) and its
 site-copy sibling (``_copy_datasheets`` in
 :mod:`kproj.application.publish_workflow`) are retired: the
-project-index Documentation list derives solely from the BOM's
-distinct ``Datasheet Name`` values, per this module.
+project-index Documentation list derives its distinct names from the
+structured :func:`read_datasheet_rows` rows via
+:func:`distinct_datasheet_names`.
 """
 
 from __future__ import annotations
@@ -48,12 +71,15 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import quote as _urlquote
 
+from ..config import DEFAULT_DATASHEET_REPO
 from ..model.datasheet_link import DatasheetLink
+from ..model.datasheet_row import DatasheetRow
 from ..model.finding import Finding
 from ..model.severity import Severity
 from .subprocess_runner import DEFAULT_GIT_TIMEOUT, DEFAULT_KICAD_TIMEOUT, SubprocessTimeoutError
@@ -61,23 +87,18 @@ from .subprocess_runner import run as subprocess_run
 
 _log = logging.getLogger(__name__)
 
-DEFAULT_LIBRARY_REPO: Path = Path.home() / "Dropbox" / "KiCad" / "SPCoast-inventory"
-"""SPCoast convention for the local ``SPCoast-inventory`` clone used by the
-advisory publish guard (mirrors ``metadata_analyzer._DEFAULT_PROJECTS_ROOT``'s
-``~/Dropbox/KiCad/projects`` convention)."""
+_DATASHEET_BOM_FIELD_TOKENS: tuple[str, ...] = ("reference", "datasheet", "datasheet_name")
+"""Extensible field-token tuple joined into :data:`DATASHEET_BOM_FIELDS`.
 
-_LIBRARY_OWNER_REPO: str = "plocher/SPCoast-inventory"
-"""The public library repo's ``<owner>/<repo>`` slug (jBOM#350 resolution)."""
+General BOM-row plumbing (kproj#36 owner ruling): the eventual consumer
+is the iBOM interactive-BOM viewer, which will need more fields than
+``datasheet_name`` alone. Adding a future field is a one-line change
+to this tuple; nothing else in this module hardcodes the field list.
+"""
 
-_VIEW_URL_TEMPLATE: str = (
-    f"https://github.com/{_LIBRARY_OWNER_REPO}/blob/main/datasheets/{{name}}.pdf"
-)
-_DOWNLOAD_URL_TEMPLATE: str = (
-    f"https://raw.githubusercontent.com/{_LIBRARY_OWNER_REPO}/main/datasheets/{{name}}.pdf"
-)
-
-_DATASHEET_NAME_COLUMN: str = "Datasheet Name"
-"""The jBOM ``--fields`` output header (jBOM#359), as it lands in ``jbom.csv``."""
+DATASHEET_BOM_FIELDS: str = ",".join(_DATASHEET_BOM_FIELD_TOKENS)
+"""The ``jbom bom -f`` value: comma-separated, normalized field tokens
+(NOT display headers - see the kproj#36 bug this constant fixes)."""
 
 _GIT_INVOCATION_ERRORS: tuple[type[Exception], ...] = (SubprocessTimeoutError, OSError)
 """Mirrors ``common.github_link``'s collapsing of git failure modes: a slow
@@ -98,7 +119,7 @@ def _strip_pdf_suffix(name: str) -> str:
     return name
 
 
-def build_datasheet_link(name: str) -> DatasheetLink:
+def build_datasheet_link(name: str, *, owner_repo: str = DEFAULT_DATASHEET_REPO) -> DatasheetLink:
     """Construct the deterministic view + download URLs for *name*.
 
     Pure function — no I/O — per the jBOM#350 URL contract: ``main``
@@ -113,6 +134,10 @@ def build_datasheet_link(name: str) -> DatasheetLink:
             carrying a redundant ``.pdf`` suffix, which is stripped).
             :attr:`DatasheetLink.name` carries the raw (unencoded) bare
             name; only the URL fields are encoded.
+        owner_repo: The public library repo's ``<owner>/<repo>`` slug.
+            Defaults to :data:`kproj.config.DEFAULT_DATASHEET_REPO`;
+            production callers pass ``KprojConfig.datasheet_repo`` so a
+            CLI/env/yaml override (kproj#37) is honored.
 
     Returns:
         A populated :class:`DatasheetLink`.
@@ -121,93 +146,127 @@ def build_datasheet_link(name: str) -> DatasheetLink:
     encoded = _urlquote(bare)
     return DatasheetLink(
         name=bare,
-        view_url=_VIEW_URL_TEMPLATE.format(name=encoded),
-        download_url=_DOWNLOAD_URL_TEMPLATE.format(name=encoded),
+        view_url=f"https://github.com/{owner_repo}/blob/main/datasheets/{encoded}.pdf",
+        download_url=(
+            f"https://raw.githubusercontent.com/{owner_repo}/main/datasheets/{encoded}.pdf"
+        ),
     )
 
 
 JbomInvoker = Sequence[str]
 """Type alias documenting the argv shape a caller may inject in place of
-the real ``python -m jbom`` invocation, for hermetic testing."""
+the real ``jbom bom`` invocation, for hermetic testing."""
 
 
-def _default_jbom_command(project_dir: Path, inventory: Path | None) -> list[str]:
-    """Build the ``python -m jbom bom ...`` argv for datasheet-name lookup.
+def _resolve_jbom_executable() -> tuple[str, ...]:
+    """Return the argv prefix that invokes ``jbom`` (kproj#36 owner ruling).
 
-    Uses ``[sys.executable, "-m", "jbom", ...]`` rather than a bare
-    ``jbom`` on ``PATH``: jBOM is a normal Python dependency of kproj
-    (``tool.uv.sources``), guaranteed importable in kproj's own venv,
-    so this needs no separate executable-discovery locator (unlike
-    kicad-cli, which lives outside any Python environment).
+    Prefers the ``jbom`` executable on ``PATH`` (:func:`shutil.which`);
+    falls back to ``[sys.executable, "-m", "jbom"]`` when not found
+    (jBOM is also a normal Python dependency of kproj). Both shapes
+    degrade to the same advisory finding on failure.
     """
-    command = [
-        sys.executable,
-        "-m",
-        "jbom",
+    jbom_path = shutil.which("jbom")
+    if jbom_path is not None:
+        return (jbom_path,)
+    return (sys.executable, "-m", "jbom")
+
+
+def _default_jbom_command(project_dir: Path, inventory: Path | None) -> list[str] | None:
+    """Build the ``jbom bom ...`` argv for the datasheet-row lookup.
+
+    Returns ``None`` when *inventory* is unconfigured: per the kproj#36
+    owner ruling, the ``datasheet_name`` column only exists in the
+    inventory, so there is nothing to fetch and the command is never
+    built (callers must not invoke jBOM at all in that case).
+    """
+    if inventory is None:
+        return None
+    return [
+        *_resolve_jbom_executable(),
         "bom",
         str(project_dir),
+        "--inventory",
+        str(inventory),
         "-f",
-        _DATASHEET_NAME_COLUMN,
+        DATASHEET_BOM_FIELDS,
         "-o",
         "-",
     ]
-    if inventory is not None:
-        command.extend(["--inventory", str(inventory)])
-    return command
 
 
-def read_datasheet_names(
+def _display_header(field: str) -> str:
+    """Return jBOM's rendered CSV header for a normalized field token.
+
+    jBOM renders a title-cased, space-joined header regardless of the
+    ``-f`` token's casing (verified against real jBOM 7.8.0:
+    ``-f reference,datasheet,datasheet_name`` renders
+    ``"Reference","Datasheet","Datasheet Name"``). This is the parser
+    side of the kproj#36 fix: the *token* passed to ``-f`` must be
+    normalized snake_case, but the *column* it renders under is still
+    the display header.
+    """
+    return field.replace("_", " ").title()
+
+
+def read_datasheet_rows(
     project_dir: Path,
     inventory: Path | None = None,
     *,
     project: str = "",
     jbom_command: Sequence[str] | None = None,
-) -> tuple[tuple[str, ...], tuple[Finding, ...]]:
-    """Return the distinct curated ``Datasheet Name`` values via ``jbom bom``.
+) -> tuple[tuple[DatasheetRow, ...], tuple[Finding, ...]]:
+    """Return structured per-reference BOM rows via a live ``jbom bom`` query.
 
-    Invokes ``jbom bom <project_dir> -f "Datasheet Name" -o -`` (plus
-    ``--inventory <inventory>`` when configured) and parses the CSV
-    from stdout. This queries jBOM's *current* view of the inventory at
+    Invokes ``jbom bom <project_dir> --inventory <path> -f
+    "reference,datasheet,datasheet_name" -o -`` (the PATH executable;
+    see :func:`_resolve_jbom_executable`) and parses the CSV from
+    stdout. This queries jBOM's *current* view of the inventory at
     publish time rather than a stale ``production/jbom.csv`` fab
     snapshot (kproj#29 ticket-owner ruling amending ADR 0003 — see
     ``docs/adr/0010-live-jbom-bom-invocation-for-datasheet-names.md``).
 
-    Every failure mode - jbom missing, too old to recognise the field,
-    a non-zero exit, a subprocess timeout, or unparseable output -
-    degrades to an advisory ``Finding`` rather than raising: the
-    datasheet-name lookup is never a publish blocker. Rows with an
-    absent or empty ``Datasheet Name`` (uncurated Items) are silently
-    excluded - no per-row finding, per the Acceptance criterion.
+    Per the kproj#36 owner ruling, when *inventory* is ``None`` and no
+    *jbom_command* test seam is injected, the subprocess is never
+    built or run at all: there is no advisory finding either, since
+    omitting ``--inventory`` is a deliberate configuration choice, not
+    a failure (the kproj#37 first-run INFO hint is the discoverability
+    companion). Every other failure mode - jbom missing, too old to
+    recognise the field, a non-zero exit, a subprocess timeout, or a
+    missing ``Datasheet Name`` column - degrades to an advisory
+    ``Finding`` rather than raising: the lookup is never a publish
+    blocker.
 
     Args:
         project_dir: The resolved KiCad project directory (``jbom bom``
             accepts a project directory, ``.kicad_sch`` path, or
             basename; kproj always passes the resolved directory).
         inventory: Optional inventory CSV path forwarded as ``jbom bom
-            --inventory``. ``None`` omits the flag; jBOM then has no
-            curated data to join against, so every row's ``Datasheet
-            Name`` comes back blank (a valid, advisory-free degraded
-            state - not every project need be inventory-curated).
+            --inventory``. ``None`` skips the invocation entirely.
         project: Project basename, threaded onto any emitted
             :class:`Finding`.
         jbom_command: Test-only seam: an explicit argv to run instead of
-            the real ``python -m jbom bom ...`` invocation. Production
-            callers omit this; hermetic tests inject a fake script.
+            the real ``jbom bom ...`` invocation. Production callers
+            omit this; hermetic tests inject a fake script. When given,
+            the command always runs regardless of *inventory*.
 
     Returns:
         A 2-tuple of:
-        - The distinct names, case-insensitively sorted, with any
-          redundant ``.pdf`` suffix left intact (callers pass names
-          through :func:`build_datasheet_link`, which strips it).
-        - Diagnostics: empty in the happy path; one warning ``Finding``
-          when the invocation fails or the ``Datasheet Name`` column is
-          absent from its output.
+        - Every parsed row (including uncurated references with an
+          empty ``datasheet_name``) - callers wanting only curated,
+          deduped names should use :func:`distinct_datasheet_names`.
+        - Diagnostics: empty in the happy path (including the
+          no-inventory skip); one warning ``Finding`` when the
+          invocation fails or the ``Datasheet Name`` column is absent
+          from its output.
     """
-    command = (
-        list(jbom_command)
-        if jbom_command is not None
-        else _default_jbom_command(project_dir, inventory)
-    )
+    if jbom_command is not None:
+        command = list(jbom_command)
+    else:
+        built = _default_jbom_command(project_dir, inventory)
+        if built is None:
+            return (), ()
+        command = built
 
     try:
         result = subprocess_run(command, timeout=DEFAULT_KICAD_TIMEOUT, check=False)
@@ -219,7 +278,7 @@ def read_datasheet_names(
                 value=" ".join(command),
                 reason=(
                     f"`jbom bom` invocation failed ({exc}); publishing without "
-                    "datasheet links. Ensure jBOM is installed and importable."
+                    "datasheet links. Ensure jBOM is installed and on PATH."
                 ),
                 project=project,
             ),
@@ -241,32 +300,90 @@ def read_datasheet_names(
 
     reader = csv.DictReader(io.StringIO(result.stdout))
     fieldnames = reader.fieldnames or ()
-    if _DATASHEET_NAME_COLUMN not in fieldnames:
+    name_header = _display_header("datasheet_name")
+    if name_header not in fieldnames:
         return (), (
             Finding(
                 severity=Severity.WARNING,
                 field="datasheet_field_missing",
                 value=" ".join(command),
                 reason=(
-                    f"`jbom bom` output has no '{_DATASHEET_NAME_COLUMN}' column; "
+                    f"`jbom bom` output has no '{name_header}' column; "
                     "publishing without datasheet links. This jBOM version may "
                     "predate the Datasheet Name field (jBOM >= 7.4.0 required)."
                 ),
                 project=project,
             ),
         )
-    # Dedup case-insensitively: the library's Datasheet Name uniqueness
-    # invariant is case-insensitive (SPCoast-inventory's glossary: "Names
-    # are unique case-insensitively"), so two BOM rows differing only in
-    # casing for the same document must collapse to one link, not two.
-    # First-seen casing wins per name-fold; final order is still the
-    # case-insensitively sorted tuple callers already depend on.
+
+    reference_header = _display_header("reference")
+    datasheet_header = _display_header("datasheet")
+    rows = tuple(
+        DatasheetRow(
+            reference=(row.get(reference_header) or "").strip(),
+            datasheet=(row.get(datasheet_header) or "").strip(),
+            datasheet_name=(row.get(name_header) or "").strip(),
+        )
+        for row in reader
+    )
+    return rows, ()
+
+
+def distinct_datasheet_names(rows: Sequence[DatasheetRow]) -> tuple[str, ...]:
+    """Return the distinct, case-insensitively deduped, sorted curated names.
+
+    The project-index Documentation list derives its distinct names
+    from :func:`read_datasheet_rows`' structured rows via this helper
+    (kproj#36 acceptance criterion), rather than the lookup collapsing
+    to a single-column shape internally.
+
+    Dedup is case-insensitive: the library's stated uniqueness
+    invariant (SPCoast-inventory's glossary: "Names are unique
+    case-insensitively") means a curation slip upstream that produces
+    two different casings of the same document must not survive as
+    two distinct links. First-seen casing wins per name-fold; the
+    final order is case-insensitively sorted.
+
+    Args:
+        rows: Rows as returned by :func:`read_datasheet_rows`. Rows
+            with an absent or empty ``datasheet_name`` (uncurated
+            references) contribute nothing.
+
+    Returns:
+        The distinct names, case-insensitively sorted.
+    """
     by_fold: dict[str, str] = {}
-    for row in reader:
-        raw = row.get(_DATASHEET_NAME_COLUMN, "").strip()
+    for row in rows:
+        raw = row.datasheet_name.strip()
         if raw:
             by_fold.setdefault(raw.casefold(), raw)
-    return tuple(sorted(by_fold.values(), key=str.lower)), ()
+    return tuple(sorted(by_fold.values(), key=str.lower))
+
+
+def read_datasheet_names(
+    project_dir: Path,
+    inventory: Path | None = None,
+    *,
+    project: str = "",
+    jbom_command: Sequence[str] | None = None,
+) -> tuple[tuple[str, ...], tuple[Finding, ...]]:
+    """Return the distinct curated ``Datasheet Name`` values via ``jbom bom``.
+
+    Convenience wrapper composing :func:`read_datasheet_rows` +
+    :func:`distinct_datasheet_names` for callers that only need the
+    distinct-name shape (e.g. the advisory :func:`check_datasheet_links`
+    guard). See :func:`read_datasheet_rows` for the full argument and
+    failure-mode documentation.
+
+    Returns:
+        A 2-tuple of ``(names, findings)`` - the distinct,
+        case-insensitively sorted curated names, and diagnostics
+        (empty in the happy path; one warning ``Finding`` on failure).
+    """
+    rows, findings = read_datasheet_rows(
+        project_dir, inventory, project=project, jbom_command=jbom_command
+    )
+    return distinct_datasheet_names(rows), findings
 
 
 def check_datasheet_links(

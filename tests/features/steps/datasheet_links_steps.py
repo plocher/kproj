@@ -30,6 +30,12 @@ def step_jbom_reports_no_datasheet_names(context: Any) -> None:
     context.datasheet_names = ()
 
 
+@given('the datasheet repo is configured as "{owner_repo}"')
+def step_datasheet_repo_configured(context: Any, owner_repo: str) -> None:
+    """Override ``KprojConfig.datasheet_repo`` for this scenario (kproj#37)."""
+    context.datasheet_repo = owner_repo
+
+
 @given("jbom is too old to recognize the Datasheet Name field")
 def step_jbom_too_old(context: Any) -> None:
     """Simulate a `jbom bom` invocation whose output has no Datasheet Name column.
@@ -69,6 +75,18 @@ def step_project_page_links_datasheet(context: Any, name: str) -> None:
     )
     assert "view:" in content and "download:" in content, (
         f"expected view: + download: URLs in:\n{content}"
+    )
+
+
+@then('the project page links the datasheet "{name}" to repo "{owner_repo}"')
+def step_project_page_links_datasheet_to_repo(context: Any, name: str, owner_repo: str) -> None:
+    """Assert the deep-link URLs point at the configured owner/repo slug."""
+    content = _project_index_text(context)
+    assert f"github.com/{owner_repo}/blob/main/datasheets/{name}.pdf" in content, (
+        f"expected a github.com/{owner_repo}/... view URL in:\n{content}"
+    )
+    assert f"raw.githubusercontent.com/{owner_repo}/main/datasheets/{name}.pdf" in content, (
+        f"expected a raw.githubusercontent.com/{owner_repo}/... download URL in:\n{content}"
     )
 
 

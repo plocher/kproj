@@ -32,6 +32,9 @@ def test_parse_args_defaults_to_cwd_positional() -> None:
     parsed = cli.parse_args([])
     assert parsed.project == "."
     assert parsed.site_repo is None
+    assert parsed.inventory is None
+    assert parsed.datasheet_library is None
+    assert parsed.datasheet_repo is None
     assert parsed.dry_run is False
     assert parsed.no_push is False
     assert parsed.verbose == 0
@@ -45,6 +48,12 @@ def test_parse_args_supports_all_documented_flags() -> None:
             "/tmp/proj",
             "--site-repo",
             "/tmp/site",
+            "--inventory",
+            "/tmp/inventory.csv",
+            "--datasheet-library",
+            "/tmp/datasheets",
+            "--datasheet-repo",
+            "example/datasheets",
             "--dry-run",
             "--no-push",
             "-v",
@@ -53,6 +62,9 @@ def test_parse_args_supports_all_documented_flags() -> None:
     )
     assert parsed.project == "/tmp/proj"
     assert parsed.site_repo == "/tmp/site"
+    assert parsed.inventory == "/tmp/inventory.csv"
+    assert parsed.datasheet_library == "/tmp/datasheets"
+    assert parsed.datasheet_repo == "example/datasheets"
     assert parsed.dry_run is True
     assert parsed.no_push is True
     assert parsed.verbose == 1
@@ -78,13 +90,86 @@ def test_parse_args_long_form_verbose() -> None:
 
 def test_build_request_propagates_cli_overrides(tmp_path: Path) -> None:
     """CLI flags surface as :class:`ConfigOverrides` non-None fields."""
-    parsed = cli.parse_args(["/tmp/proj", "--site-repo", str(tmp_path), "--dry-run", "--no-push"])
+    parsed = cli.parse_args(
+        [
+            "/tmp/proj",
+            "--site-repo",
+            str(tmp_path),
+            "--inventory",
+            str(tmp_path / "inventory.csv"),
+            "--datasheet-library",
+            str(tmp_path / "datasheets"),
+            "--datasheet-repo",
+            "example/datasheets",
+            "--dry-run",
+            "--no-push",
+        ]
+    )
     request = cli.build_request(parsed, env={}, yaml_path=tmp_path / "missing.yaml")
     assert isinstance(request, PublishRequest)
     assert request.project_arg == "/tmp/proj"
     assert request.dry_run is True
     assert request.config.site_repo == tmp_path
     assert request.config.no_push is True
+    assert request.config.inventory == tmp_path / "inventory.csv"
+    assert request.config.datasheet_library == tmp_path / "datasheets"
+    assert request.config.datasheet_repo == "example/datasheets"
+
+
+def test_help_documents_config_precedence_and_yaml_example(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``kproj --help`` makes yaml/env/precedence discoverable."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli.parse_args(["--help"])
+    assert exc_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "CLI flag > KPROJ_* environment variable > ~/.kproj.yaml > default" in help_text
+    assert "KPROJ_INVENTORY" in help_text
+    assert "KPROJ_DATASHEET_LIBRARY" in help_text
+    assert "KPROJ_DATASHEET_REPO" in help_text
+    assert "site_repo:" in help_text
+    assert "datasheet_library:" in help_text
+    assert "datasheet_repo:" in help_text
+
+
+def test_first_run_hint_emitted_when_no_yaml_and_no_inventory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """kproj#37: an INFO hint fires when ~/.kproj.yaml is absent and inventory is unset.
+
+    Calls ``_emit_first_run_hint`` directly (bypassing ``configure_logging``'s
+    ``propagate = False`` side effect on the ``kproj`` logger, which would
+    otherwise make this hint invisible to pytest's root-attached ``caplog``).
+    """
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli_main._log, "info", lambda *args: calls.append(args))
+    cli_main._emit_first_run_hint(yaml_path=tmp_path / ".kproj.yaml", inventory=None)
+    assert len(calls) == 1
+
+
+def test_first_run_hint_suppressed_when_inventory_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No hint when the user has already configured an inventory."""
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli_main._log, "info", lambda *args: calls.append(args))
+    cli_main._emit_first_run_hint(
+        yaml_path=tmp_path / ".kproj.yaml", inventory=tmp_path / "inventory.csv"
+    )
+    assert calls == []
+
+
+def test_first_run_hint_suppressed_when_yaml_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No hint when ~/.kproj.yaml exists, even with inventory unset."""
+    yaml_path = tmp_path / ".kproj.yaml"
+    yaml_path.write_text("site_repo: /x\n")
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(cli_main._log, "info", lambda *args: calls.append(args))
+    cli_main._emit_first_run_hint(yaml_path=yaml_path, inventory=None)
+    assert calls == []
 
 
 def test_build_request_omits_no_push_override_when_flag_not_given(

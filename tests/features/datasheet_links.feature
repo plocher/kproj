@@ -24,7 +24,7 @@ Feature: kproj publishes datasheet deep-links from the BOM's Datasheet Name (kpr
     Then kproj reports outcome "published"
     And the project page has no datasheet links
 
-  Scenario: jbom too old to know the Datasheet Name field degrades gracefully
+  Scenario: jbom too old to recognize the Datasheet Name field degrades gracefully
     Given a populated KiCad project with status active
     And a clean site repo
     And jbom is too old to recognize the Datasheet Name field
@@ -32,3 +32,12 @@ Feature: kproj publishes datasheet deep-links from the BOM's Datasheet Name (kpr
     Then kproj reports outcome "published"
     And the project page has no datasheet links
     And kproj exit code signals findings present
+
+  Scenario: a configured datasheet-repo override retargets the published deep-link URLs (kproj#37)
+    Given a populated KiCad project with status active
+    And a clean site repo
+    And jbom reports the datasheet name "yageo_rc0805_resistor" for this project
+    And the datasheet repo is configured as "example-org/example-datasheets"
+    When I run kproj
+    Then kproj reports outcome "published"
+    And the project page links the datasheet "yageo_rc0805_resistor" to repo "example-org/example-datasheets"
