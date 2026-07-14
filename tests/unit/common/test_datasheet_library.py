@@ -213,7 +213,10 @@ def test_read_datasheet_names_default_command_includes_inventory_when_configured
     inventory = tmp_path / "inventory.csv"
     command = _default_jbom_command(tmp_path, inventory)
     assert command is not None
-    assert command[1:] == [
+    # -q is jBOM's *global* quiet flag (kproj#41): it must precede the
+    # bom subcommand, not follow it.
+    assert command[-9:] == [
+        "-q",
         "bom",
         str(tmp_path),
         "--inventory",

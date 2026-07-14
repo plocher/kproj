@@ -1,8 +1,8 @@
 # ADR 0010: Live `jbom bom` Invocation for Datasheet-Name Lookup
 
-Date: 2026-07-13 (amended 2026-07-14, kproj#36)
+Date: 2026-07-13 (amended 2026-07-14, kproj#36; amended 2026-07-14, kproj#41)
 Status: Accepted
-Related: ADR 0003 (jBOM Separation — Read, Don't Invoke; amended by this ADR), jBOM#342 (datasheet document library map), jBOM#350 (kproj publish-mechanics resolution), kproj#36 (invocation bug fix + multi-field row shape), kproj#37 (CLI/config surface for `inventory` / `datasheet_library` / `datasheet_repo`)
+Related: ADR 0003 (jBOM Separation — Read, Don't Invoke; amended by this ADR), jBOM#342 (datasheet document library map), jBOM#350 (kproj publish-mechanics resolution), kproj#36 (invocation bug fix + multi-field row shape), kproj#37 (CLI/config surface for `inventory` / `datasheet_library` / `datasheet_repo`), kproj#41 (global `-q` flag)
 
 ## Context
 
@@ -20,8 +20,10 @@ That design was rejected by the ticket owner during implementation, verified aga
 kproj invokes jBOM's `bom` subcommand read-only, at publish time, for a small, extensible set of BOM fields:
 
 ```
-jbom bom <project_dir> --inventory <path> -f "reference,datasheet,datasheet_name" -o -
+jbom -q bom <project_dir> --inventory <path> -f "reference,datasheet,datasheet_name" -o -
 ```
+
+**kproj#41 addition**: the global `-q` flag (jBOM 7.8.1+, `plocher/jBOM#376`) suppresses jBOM's info/warning guidance diagnostics (e.g. "Missing important generic fields: ...") on stderr, which otherwise leaked into kproj's terminal/captured stderr during a publish run. Errors still print. `-q` is a *global* jBOM flag and MUST precede the `bom` subcommand. No version detection or fallback - per the owner ruling, latest jBOM and latest kproj are always used together; the flag is harmless (unrecognised-but-ignored, not an error) against any jBOM version, so there is no ordering hazard while PyPI propagates the new release.
 
 **kproj#36 correction**: the original implementation of this ADR passed the *display header* `"Datasheet Name"` (with a space) as the `-f` token — jBOM's `-f` expects comma-separated, normalized field names (a token containing a space is a syntax error against real jBOM 7.8.0), so every publish silently degraded to the `datasheet_field_missing` advisory. The field list is `reference,datasheet,datasheet_name` — normalized snake_case tokens — declared as a single constant (`kproj.common.datasheet_library.DATASHEET_BOM_FIELDS`) built from an extensible tuple, since this is general BOM-row plumbing whose eventual consumer is the iBOM interactive-BOM viewer (more fields will be needed there; out of scope for kproj#36 itself). jBOM still *renders* the output CSV header in title-cased display form (`"Reference","Datasheet","Datasheet Name"`) regardless of the `-f` token casing, so the parser side is unaffected by this fix. Output is CSV on stdout, parsed into structured **per-reference rows** (`kproj.model.datasheet_row.DatasheetRow`); the project-index Documentation list derives its distinct, case-insensitively-deduped names from those rows via `distinct_datasheet_names`.
 

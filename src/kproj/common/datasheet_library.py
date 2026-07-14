@@ -6,7 +6,7 @@ ticket-owner's live-lookup ruling (ADR 0003 amendment), and the kproj#36
 follow-up ruling that fixed the broken invocation and multi-field shape
 (see ``docs/adr/0010-live-jbom-bom-invocation-for-datasheet-names.md``):
 
-1. **Resolution path**: kproj invokes ``jbom bom <project_dir>
+1. **Resolution path**: kproj invokes ``jbom -q bom <project_dir>
    --inventory <path> -f "reference,datasheet,datasheet_name" -o -``
    at publish time and parses the CSV from stdout
    (:func:`read_datasheet_rows`) into structured, **per-reference**
@@ -15,7 +15,9 @@ follow-up ruling that fixed the broken invocation and multi-field shape
    fab-oriented snapshot that may predate the ``Datasheet Name`` field
    entirely, whereas datasheet links must reflect the *current*
    inventory. kproj still never writes to the inventory, never runs
-   ``jbom fab``, and never invokes any other jBOM subcommand.
+   ``jbom fab``, and never invokes any other jBOM subcommand. The
+   global ``-q`` flag (kproj#41) suppresses jBOM's info/warning
+   guidance diagnostics on stderr; errors still print.
 2. **PATH invocation, `-m` fallback**: the ``jbom`` executable is
    resolved from ``PATH`` (:func:`shutil.which`); when not found on
    ``PATH`` kproj falls back to ``[sys.executable, "-m", "jbom"]``
@@ -173,17 +175,27 @@ def _resolve_jbom_executable() -> tuple[str, ...]:
 
 
 def _default_jbom_command(project_dir: Path, inventory: Path | None) -> list[str] | None:
-    """Build the ``jbom bom ...`` argv for the datasheet-row lookup.
+    """Build the ``jbom -q bom ...`` argv for the datasheet-row lookup.
 
     Returns ``None`` when *inventory* is unconfigured: per the kproj#36
     owner ruling, the ``datasheet_name`` column only exists in the
     inventory, so there is nothing to fetch and the command is never
     built (callers must not invoke jBOM at all in that case).
+
+    ``-q`` (kproj#41) is jBOM's *global* quiet flag - it suppresses
+    info/warning guidance diagnostics (e.g. "Missing important generic
+    fields: ...") on stderr so they don't leak into kproj's terminal /
+    captured stderr during a publish run. Errors still print. Being a
+    global flag, it MUST precede the ``bom`` subcommand. No version
+    detection or fallback: per the owner ruling, latest jBOM and latest
+    kproj are always used together (the flag is a no-op, not an error,
+    against any jBOM version that already understands ``-q``).
     """
     if inventory is None:
         return None
     return [
         *_resolve_jbom_executable(),
+        "-q",
         "bom",
         str(project_dir),
         "--inventory",
@@ -218,7 +230,7 @@ def read_datasheet_rows(
 ) -> tuple[tuple[DatasheetRow, ...], tuple[Finding, ...]]:
     """Return structured per-reference BOM rows via a live ``jbom bom`` query.
 
-    Invokes ``jbom bom <project_dir> --inventory <path> -f
+    Invokes ``jbom -q bom <project_dir> --inventory <path> -f
     "reference,datasheet,datasheet_name" -o -`` (the PATH executable;
     see :func:`_resolve_jbom_executable`) and parses the CSV from
     stdout. This queries jBOM's *current* view of the inventory at
