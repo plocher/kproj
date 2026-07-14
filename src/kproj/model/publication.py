@@ -67,11 +67,11 @@ class Publication:
             re-run stays a no-op.
         datasheets: Distinct curated ``Datasheet Name`` deep-links (per
             :func:`kproj.common.datasheet_library.build_datasheet_link`),
-            derived from the BOM's ``Datasheet Name`` column
-            (``production/jbom.csv``, per ADR 0003) rather than any
-            per-project PDF disk-walk. Listed on the project section
-            index. Empty when the project has no curated datasheets or
-            the BOM column is absent.
+            derived from a live ``jbom bom`` query at publish time (per
+            ADR 0010 - not ``production/jbom.csv``, a stale fab-oriented
+            snapshot) rather than any per-project PDF disk-walk. Listed
+            on the project section index. Empty when the project has no
+            curated datasheets or the lookup failed/found no column.
         description: Optional project-global ``DESCRIPTION`` prose (per
             :func:`kproj.common.project_docs.read_description`), rendered
             on the project section index alongside the README. Empty

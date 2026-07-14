@@ -43,53 +43,107 @@ def test_load_config_falls_back_to_defaults(tmp_path: Path) -> None:
     assert config.site_repo == DEFAULT_SITE_REPO
     assert config.no_push == DEFAULT_NO_PUSH
     assert config.kicad_cli is None
+    assert config.inventory is None
 
 
 def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
     """A populated ``~/.kproj.yaml`` overrides defaults."""
     yaml_path = tmp_path / "kproj.yaml"
-    yaml_path.write_text("site_repo: /opt/site\nno_push: true\nkicad_cli: /opt/kicad-cli\n")
+    yaml_path.write_text(
+        "site_repo: /opt/site\nno_push: true\nkicad_cli: /opt/kicad-cli\n"
+        "inventory: /opt/inventory.csv\n"
+    )
     config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
     assert config.site_repo == Path("/opt/site")
     assert config.no_push is True
     assert config.kicad_cli == Path("/opt/kicad-cli")
+    assert config.inventory == Path("/opt/inventory.csv")
 
 
 def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
     """Environment variables take precedence over ``~/.kproj.yaml``."""
     yaml_path = tmp_path / "kproj.yaml"
-    yaml_path.write_text("site_repo: /from/yaml\nno_push: false\n")
+    yaml_path.write_text("site_repo: /from/yaml\nno_push: false\ninventory: /from/yaml.csv\n")
     config = load_config(
         ConfigOverrides(),
         env={
             "KPROJ_SITE_REPO": "/from/env",
             "KPROJ_NO_PUSH": "1",
             "KPROJ_KICAD_CLI": "/env/kicad-cli",
+            "KPROJ_INVENTORY": "/from/env.csv",
         },
         yaml_path=yaml_path,
     )
     assert config.site_repo == Path("/from/env")
     assert config.no_push is True
     assert config.kicad_cli == Path("/env/kicad-cli")
+    assert config.inventory == Path("/from/env.csv")
 
 
 def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
     """CLI ``ConfigOverrides`` win over both env and yaml."""
     yaml_path = tmp_path / "kproj.yaml"
-    yaml_path.write_text("site_repo: /from/yaml\nno_push: false\n")
+    yaml_path.write_text("site_repo: /from/yaml\nno_push: false\ninventory: /from/yaml.csv\n")
     overrides = ConfigOverrides(
         site_repo=Path("/from/cli"),
         no_push=False,
         kicad_cli=Path("/cli/kicad-cli"),
+        inventory=Path("/from/cli.csv"),
     )
     config = load_config(
         overrides,
-        env={"KPROJ_SITE_REPO": "/from/env", "KPROJ_NO_PUSH": "1"},
+        env={
+            "KPROJ_SITE_REPO": "/from/env",
+            "KPROJ_NO_PUSH": "1",
+            "KPROJ_INVENTORY": "/from/env.csv",
+        },
         yaml_path=yaml_path,
     )
     assert config.site_repo == Path("/from/cli")
     assert config.no_push is False
     assert config.kicad_cli == Path("/cli/kicad-cli")
+    assert config.inventory == Path("/from/cli.csv")
+
+
+class TestInventoryPrecedence:
+    """Per-tier tests for ``KprojConfig.inventory`` (kproj#29 / ADR 0010).
+
+    Mirrors the established per-tier pattern for ``site_repo`` /
+    ``no_push`` / ``kicad_cli`` above. Unlike those, ``inventory`` has
+    **no hardcoded fallback** - the ticket owner explicitly rejected a
+    convention path (see ``config.py``'s module docstring); the
+    bottom tier is always ``None``.
+    """
+
+    def test_defaults_to_none_with_no_inputs(self, tmp_path: Path) -> None:
+        config = load_config(ConfigOverrides(), env={}, yaml_path=tmp_path / "missing.yaml")
+        assert config.inventory is None
+
+    def test_yaml_overrides_the_none_default(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("inventory: /from/yaml.csv\n")
+        config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
+        assert config.inventory == Path("/from/yaml.csv")
+
+    def test_env_beats_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("inventory: /from/yaml.csv\n")
+        config = load_config(
+            ConfigOverrides(),
+            env={"KPROJ_INVENTORY": "/from/env.csv"},
+            yaml_path=yaml_path,
+        )
+        assert config.inventory == Path("/from/env.csv")
+
+    def test_cli_override_beats_env_and_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("inventory: /from/yaml.csv\n")
+        config = load_config(
+            ConfigOverrides(inventory=Path("/from/cli.csv")),
+            env={"KPROJ_INVENTORY": "/from/env.csv"},
+            yaml_path=yaml_path,
+        )
+        assert config.inventory == Path("/from/cli.csv")
 
 
 @pytest.mark.parametrize(

@@ -3,9 +3,11 @@
 Per the datasheet document library map (``plocher/jBOM#342``) and its
 publish-mechanics resolution (``plocher/jBOM#350``), kproj never copies
 datasheet PDFs into the site. Instead it deep-links a curated
-``Datasheet Name`` (read from ``production/jbom.csv``, per ADR 0003) to
-the public ``plocher/SPCoast-inventory`` library repo. See
-:mod:`kproj.common.datasheet_library` for the URL constructors.
+``Datasheet Name`` (looked up live via ``jbom bom`` at publish time,
+per ADR 0010 - not read from ``production/jbom.csv``, a stale
+fab-oriented snapshot) to the public ``plocher/SPCoast-inventory``
+library repo. See :mod:`kproj.common.datasheet_library` for the URL
+constructors.
 """
 
 from __future__ import annotations

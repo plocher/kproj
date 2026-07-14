@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from kproj.common.datasheet_library import (
     build_datasheet_link,
     check_datasheet_links,
@@ -47,6 +49,21 @@ def test_build_datasheet_link_strips_redundant_pdf_suffix() -> None:
     assert link.name == "Cap-Foo"
     assert link.view_url.endswith("/datasheets/Cap-Foo.pdf")
     assert link.download_url.endswith("/datasheets/Cap-Foo.pdf")
+
+
+def test_build_datasheet_link_url_encodes_reserved_characters() -> None:
+    """A name containing a space (or other reserved char) is percent-encoded.
+
+    Nothing upstream enforces the hyphenated-ASCII convention the real
+    library currently follows; a future curated name with a space must
+    still produce a well-formed URL rather than a broken one.
+    """
+    link = build_datasheet_link("Resistor Series A")
+    assert link.name == "Resistor Series A", "the raw name field is left unencoded"
+    assert " " not in link.view_url
+    assert " " not in link.download_url
+    assert "Resistor%20Series%20A" in link.view_url
+    assert "Resistor%20Series%20A" in link.download_url
 
 
 # ----------------------------------------------------------------------
@@ -131,6 +148,21 @@ def test_read_datasheet_names_empty_when_no_curated_rows(tmp_path: Path) -> None
     assert findings == ()
 
 
+def test_read_datasheet_names_dedups_case_insensitively(tmp_path: Path) -> None:
+    """Two rows differing only in casing collapse to one name.
+
+    The library's stated uniqueness invariant (SPCoast-inventory's
+    glossary: "Names are unique case-insensitively") means a curation
+    slip upstream that produces two different casings of the same
+    document must not survive as two distinct links.
+    """
+    stdout = "Reference,Datasheet Name\nR1,Yageo_RC0805\nR2,yageo_rc0805\n"
+    command = _fake_jbom_script(tmp_path, stdout=stdout)
+    names, findings = read_datasheet_names(tmp_path, jbom_command=command)
+    assert names == ("Yageo_RC0805",), "first-seen casing wins; only one entry survives"
+    assert findings == ()
+
+
 def test_read_datasheet_names_omits_inventory_flag_when_unconfigured(tmp_path: Path) -> None:
     """With no jbom_command override, the default argv omits --inventory when unset."""
     from kproj.common.datasheet_library import _default_jbom_command
@@ -204,6 +236,31 @@ def test_check_datasheet_links_resolvable_and_pushed_is_clean(tmp_path: Path) ->
     (library_repo / "datasheets" / "present_doc.pdf").write_bytes(b"%PDF-1.4")
 
     assert check_datasheet_links(("present_doc",), library_repo) == ()
+
+
+def test_check_datasheet_links_tolerates_is_file_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OSError from the per-name existence check degrades to a warning.
+
+    ``Path.is_file()`` can raise for reasons unrelated to "not found"
+    (e.g. ``ELOOP`` on a symlink cycle, permission-denied walking a
+    parent directory). Before the fix, this propagated uncaught through
+    ``check_datasheet_links`` - proven here by monkeypatching
+    ``Path.is_file`` to always raise and asserting the guard still
+    returns a warning `Finding` instead of raising.
+    """
+    library_repo = tmp_path / "lib"
+    _init_pushed_repo(library_repo, remote_dir=tmp_path / "remote.git")
+    (library_repo / "datasheets").mkdir()
+
+    def _raising_is_file(self: Path) -> bool:
+        raise OSError("simulated ELOOP on a symlink cycle")
+
+    monkeypatch.setattr(Path, "is_file", _raising_is_file)  # type: ignore[attr-defined]
+
+    findings = check_datasheet_links(("any_doc",), library_repo, project="Demo")
+    assert [f.field for f in findings] == ["datasheet_unresolvable"]
 
 
 def test_check_datasheet_links_not_pushed_warns_once(tmp_path: Path) -> None:

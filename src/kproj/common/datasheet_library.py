@@ -51,6 +51,7 @@ import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import quote as _urlquote
 
 from ..model.datasheet_link import DatasheetLink
 from ..model.finding import Finding
@@ -101,20 +102,27 @@ def build_datasheet_link(name: str) -> DatasheetLink:
     """Construct the deterministic view + download URLs for *name*.
 
     Pure function — no I/O — per the jBOM#350 URL contract: ``main``
-    branch, no commit pinning.
+    branch, no commit pinning. The URL path segment is percent-encoded
+    (:func:`urllib.parse.quote`, default ``safe="/"``) so a curated name
+    containing a space or other reserved character still produces a
+    well-formed URL; the library's current names are hyphenated ASCII
+    in practice, but nothing upstream enforces that convention.
 
     Args:
         name: The curated ``Datasheet Name`` (bare name, optionally
             carrying a redundant ``.pdf`` suffix, which is stripped).
+            :attr:`DatasheetLink.name` carries the raw (unencoded) bare
+            name; only the URL fields are encoded.
 
     Returns:
         A populated :class:`DatasheetLink`.
     """
     bare = _strip_pdf_suffix(name)
+    encoded = _urlquote(bare)
     return DatasheetLink(
         name=bare,
-        view_url=_VIEW_URL_TEMPLATE.format(name=bare),
-        download_url=_DOWNLOAD_URL_TEMPLATE.format(name=bare),
+        view_url=_VIEW_URL_TEMPLATE.format(name=encoded),
+        download_url=_DOWNLOAD_URL_TEMPLATE.format(name=encoded),
     )
 
 
@@ -247,12 +255,18 @@ def read_datasheet_names(
                 project=project,
             ),
         )
-    names = {
-        row[_DATASHEET_NAME_COLUMN].strip()
-        for row in reader
-        if row.get(_DATASHEET_NAME_COLUMN, "").strip()
-    }
-    return tuple(sorted(names, key=str.lower)), ()
+    # Dedup case-insensitively: the library's Datasheet Name uniqueness
+    # invariant is case-insensitive (SPCoast-inventory's glossary: "Names
+    # are unique case-insensitively"), so two BOM rows differing only in
+    # casing for the same document must collapse to one link, not two.
+    # First-seen casing wins per name-fold; final order is still the
+    # case-insensitively sorted tuple callers already depend on.
+    by_fold: dict[str, str] = {}
+    for row in reader:
+        raw = row.get(_DATASHEET_NAME_COLUMN, "").strip()
+        if raw:
+            by_fold.setdefault(raw.casefold(), raw)
+    return tuple(sorted(by_fold.values(), key=str.lower)), ()
 
 
 def check_datasheet_links(
@@ -320,7 +334,7 @@ def check_datasheet_links(
     datasheets_dir = library_repo / "datasheets"
     for name in names:
         candidate = datasheets_dir / f"{_strip_pdf_suffix(name)}.pdf"
-        if not candidate.is_file():
+        if not _is_file_safe(candidate):
             findings.append(
                 Finding(
                     severity=Severity.WARNING,
@@ -334,6 +348,21 @@ def check_datasheet_links(
                 )
             )
     return tuple(findings)
+
+
+def _is_file_safe(path: Path) -> bool:
+    """Return whether *path* is a regular file, tolerating filesystem errors.
+
+    ``Path.is_file()`` can raise ``OSError`` for reasons unrelated to
+    "the file doesn't exist" - a symlink cycle (``ELOOP``), a permission
+    error walking a parent directory, or similar. Per the advisory-only
+    guard's contract, any such surprise is treated the same as "not
+    found" (conservative: warn, never crash the publish).
+    """
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _is_git_work_tree(repo_dir: Path) -> bool:
