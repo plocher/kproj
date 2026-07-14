@@ -66,6 +66,7 @@ from ..model.publication import AssetRef, Publication
 from ..model.publish_request import PublishRequest
 from ..model.publish_result import Outcome, PublishResult
 from ..model.resolved_project import ResolvedProject
+from ..model.severity import Severity
 from ..services.change_journal import ChangeJournal
 from ..services.design_analyzer import DesignAnalysisError, DesignAnalyzer
 from ..services.fab_packager import FabPackager
@@ -344,18 +345,18 @@ class PublishWorkflow:
         # findings merged into `analysis` here - mirroring the GitHub-link
         # single-evaluation pattern above - so it shows up in the Metadata
         # Audit table/stderr for every outcome, private-skip included.
-        # Never raises; every failure mode (jbom missing/old/crashed) comes
-        # back as an advisory Finding from the lookup callable itself.
-        datasheet_names, datasheet_lookup_findings = self._datasheet_name_lookup(
-            resolved.project_dir, request.config.inventory
+        #
+        # Structural enforcement of "advisory-only, never blocks": both
+        # calls are wrapped here, not just internally. `read_datasheet_names`
+        # / `check_datasheet_links` already catch every failure mode they
+        # know about, but the ticket-owner's "never a publish blocker"
+        # guarantee must not rest solely on those two functions being
+        # perfectly exhaustive - an injected fake (tests), an unmapped
+        # OSError variant, or any other surprise here degrades to a
+        # warning Finding rather than propagating and failing the publish.
+        datasheet_links, datasheet_findings = self._lookup_datasheet_links(
+            resolved.project_dir, request.config.inventory, project_info.project
         )
-        datasheet_links: tuple[DatasheetLink, ...] = tuple(
-            build_datasheet_link(name) for name in datasheet_names
-        )
-        datasheet_guard_findings = check_datasheet_links(
-            datasheet_names, self._library_repo, project=project_info.project
-        )
-        datasheet_findings = (*datasheet_lookup_findings, *datasheet_guard_findings)
         if datasheet_findings:
             analysis = AnalysisInfo(findings=(*analysis.findings, *datasheet_findings))
 
@@ -545,6 +546,53 @@ class PublishWorkflow:
                 "failed",
                 message=f"kproj: pipeline failed: {exc}",
                 findings=analysis.findings,
+            )
+
+    def _lookup_datasheet_links(
+        self,
+        project_dir: Path,
+        inventory: Path | None,
+        project: str,
+    ) -> tuple[tuple[DatasheetLink, ...], tuple[Finding, ...]]:
+        """Run the datasheet-name lookup + advisory guard, never raising.
+
+        Structural enforcement of the "advisory-only, never a publish
+        blocker" contract (kproj#29 / ADR 0010): every step here is
+        wrapped so an unexpected exception - from the injected lookup
+        callable, from :func:`~kproj.common.datasheet_library.check_datasheet_links`,
+        or from anything in between - degrades to a single warning
+        ``Finding`` (``datasheet_lookup_failed``) instead of propagating
+        and failing the publish. This is deliberately *in addition to*
+        (not a replacement for) the exhaustive error handling already
+        inside ``read_datasheet_names`` / ``check_datasheet_links``.
+
+        Args:
+            project_dir: The resolved KiCad project directory.
+            inventory: Optional inventory CSV path (``KprojConfig.inventory``).
+            project: Project basename, threaded onto any emitted ``Finding``.
+
+        Returns:
+            A 2-tuple of ``(datasheet_links, findings)``. Both are empty
+            on the (never-raising) failure path.
+        """
+        try:
+            names, lookup_findings = self._datasheet_name_lookup(project_dir, inventory)
+            links = tuple(build_datasheet_link(name) for name in names)
+            guard_findings = check_datasheet_links(names, self._library_repo, project=project)
+            return links, (*lookup_findings, *guard_findings)
+        except Exception as exc:  # advisory-only, deliberately broad; see docstring
+            _log.warning("datasheet-name lookup/guard failed unexpectedly: %s", exc)
+            return (), (
+                Finding(
+                    severity=Severity.WARNING,
+                    field="datasheet_lookup_failed",
+                    value=str(exc),
+                    reason=(
+                        "datasheet-name lookup or the advisory library guard raised "
+                        f"unexpectedly ({exc!r}); publishing without datasheet links"
+                    ),
+                    project=project,
+                ),
             )
 
     @staticmethod

@@ -297,6 +297,63 @@ def test_run_detects_github_link_exactly_once_per_publish(
     )
 
 
+def test_raising_datasheet_lookup_cannot_fail_a_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A datasheet-name lookup that raises degrades to a warning, never a failure.
+
+    Structural-enforcement regression test (PR #35 adversarial review
+    finding #2): mutation-proves that ``PublishWorkflow.run`` itself -
+    not just ``read_datasheet_names`` / ``check_datasheet_links``
+    internally - upholds the "advisory-only, never a publish blocker"
+    contract. Injects a ``datasheet_name_lookup`` that unconditionally
+    raises (standing in for any surprise exception, including one from
+    inside ``check_datasheet_links`` that the mutation-tested
+    ``candidate.is_file()`` call used to be able to leak).
+    """
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "private"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    def _raising_lookup(_project_dir: Path, _inventory: Path | None) -> object:
+        raise RuntimeError("simulated unexpected failure inside the datasheet guard")
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        datasheet_name_lookup=_raising_lookup,
+    )
+    result = workflow.run(_make_request(str(proj_dir), fake_cli))
+
+    assert result.outcome == "private-skip", (
+        f"a raising datasheet lookup must never turn into outcome=failed; "
+        f"got {result.outcome!r} - {result.message!r}"
+    )
+    lookup_findings = [f for f in result.findings if f.field == "datasheet_lookup_failed"]
+    assert len(lookup_findings) == 1, (
+        f"expected exactly one datasheet_lookup_failed advisory finding; "
+        f"got fields={[f.field for f in result.findings]}"
+    )
+
+
 def test_active_project_fails_preflight_without_ibom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

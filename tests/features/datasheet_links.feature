@@ -5,7 +5,7 @@ Feature: kproj publishes datasheet deep-links from the BOM's Datasheet Name (kpr
 
   # The `jbom bom` invocation is faked (tests/features/steps/publish_steps.py's
   # _default_fake_datasheet_lookup) so these scenarios never exec a real jBOM
-  # subprocess or touch the network - per ADR 0011's advisory-only, never-blocking
+  # subprocess or touch the network - per ADR 0010's advisory-only, never-blocking
   # contract.
 
   Scenario: A curated component's Datasheet Name becomes a view + download link
