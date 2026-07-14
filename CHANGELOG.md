@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.3.2 (2026-07-14)
+
+### Bug Fixes
+
+* fix(datasheet): pass -q to the jbom invocation to silence guidance diagnostics (#41)
+
+jBOM emits guidance diagnostics (e.g. 'Warning: Missing important
+generic fields: ...') on stderr during bom generation, which leaked
+into kproj's terminal/captured stderr during publish runs.
+
+Adds the global -q flag unconditionally to both jbom invocation forms
+in _default_jbom_command (PATH jbom and the python -m jbom fallback),
+preceding the bom subcommand as required for a global jBOM flag:
+jbom -q bom <project_dir> --inventory <path> -f ... -o -
+
+No version detection or backwards-compat gating, per owner ruling:
+latest jBOM and latest kproj are always used together. Updated the
+unit test asserting the invocation argv, and ADR 0010 + DESIGN.md.
+
+Closes #41.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`74a7a39`](https://github.com/plocher/kproj/commit/74a7a392112709617e9f85d0c107aca7c5386328))
+
+
 ## v0.3.1 (2026-07-14)
 
 ### Bug Fixes
