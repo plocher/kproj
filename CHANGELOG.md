@@ -1,6 +1,40 @@
 # CHANGELOG
 
 
+## v0.3.1 (2026-07-14)
+
+### Bug Fixes
+
+* fix(datasheet): invoke jbom from PATH with correct field tokens (#36)
+
+Fixes the broken `jbom bom` datasheet-name lookup:
+
+- `-f` now passes normalized snake_case field tokens
+  (reference,datasheet,datasheet_name) via the single extensible
+  DATASHEET_BOM_FIELDS constant, instead of the display header
+  'Datasheet Name' (a jBOM CLI syntax error that silently degraded
+  every publish to the advisory finding).
+- jbom is invoked from PATH (shutil.which), falling back to
+  [sys.executable, -m, jbom] only when not found on PATH.
+- When inventory is unconfigured, kproj no longer invokes jbom at
+  all (no subprocess, no advisory finding) - there is no
+  datasheet_name data to fetch without one.
+- read_datasheet_rows returns structured per-reference DatasheetRow
+  rows (reference, datasheet, datasheet_name); distinct_datasheet_names
+  derives the deduped name list the Documentation section uses.
+  read_datasheet_names is now a thin convenience wrapper over both.
+- New real-jBOM integration test asserts the production field list
+  against the actual jbom CLI (jbom is a declared kproj dependency,
+  so .venv/bin/jbom exists after uv sync), closing the seam gap that
+  let this ship broken.
+- Updates ADR 0010, the datasheet_library module docstring, and
+  DESIGN.md to match.
+
+Closes #36.
+
+Co-Authored-By: Oz <oz-agent@warp.dev> ([`97ee497`](https://github.com/plocher/kproj/commit/97ee4976d530425b6d7a30eb6b019ed168ac76f0))
+
+
 ## v0.3.0 (2026-07-14)
 
 ### Bug Fixes
