@@ -34,7 +34,6 @@ from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetim
 from pathlib import Path
 
 from ..common.datasheet_library import (
-    DEFAULT_LIBRARY_REPO,
     build_datasheet_link,
     check_datasheet_links,
     read_datasheet_names,
@@ -238,9 +237,13 @@ class PublishWorkflow:
                 :func:`~kproj.common.datasheet_library.read_datasheet_names`
                 (live ``jbom bom`` invocation).  Tests inject a fake to
                 avoid a real jBOM subprocess.
-            library_repo: Optional local ``SPCoast-inventory`` clone path
-                for the advisory publish guard (kproj#29).  Defaults to
-                :data:`~kproj.common.datasheet_library.DEFAULT_LIBRARY_REPO`.
+            library_repo: Optional local datasheet-library clone path
+                override for the advisory publish guard (kproj#29), for
+                tests that need to bypass the real clone. Production
+                callers omit this; the effective path resolves from
+                ``request.config.datasheet_library`` (kproj#37) on each
+                :meth:`run` call instead of being fixed at construction
+                time.
         """
         self._project_reader = project_reader or KicadProjectReader()
         self._metadata_analyzer = metadata_analyzer or MetadataAnalyzer()
@@ -254,7 +257,7 @@ class PublishWorkflow:
         self._datasheet_name_lookup: DatasheetNameLookup = (
             datasheet_name_lookup or read_datasheet_names
         )
-        self._library_repo: Path = library_repo or DEFAULT_LIBRARY_REPO
+        self._library_repo_override: Path | None = library_repo
 
     def run(self, request: PublishRequest) -> PublishResult:
         """Run the full 11-step publish pipeline against *request*.
@@ -354,8 +357,17 @@ class PublishWorkflow:
         # perfectly exhaustive - an injected fake (tests), an unmapped
         # OSError variant, or any other surprise here degrades to a
         # warning Finding rather than propagating and failing the publish.
+        library_repo = (
+            self._library_repo_override
+            if self._library_repo_override is not None
+            else request.config.datasheet_library
+        )
         datasheet_links, datasheet_findings = self._lookup_datasheet_links(
-            resolved.project_dir, request.config.inventory, project_info.project
+            resolved.project_dir,
+            request.config.inventory,
+            project_info.project,
+            library_repo=library_repo,
+            datasheet_repo=request.config.datasheet_repo,
         )
         if datasheet_findings:
             analysis = AnalysisInfo(findings=(*analysis.findings, *datasheet_findings))
@@ -553,6 +565,9 @@ class PublishWorkflow:
         project_dir: Path,
         inventory: Path | None,
         project: str,
+        *,
+        library_repo: Path,
+        datasheet_repo: str,
     ) -> tuple[tuple[DatasheetLink, ...], tuple[Finding, ...]]:
         """Run the datasheet-name lookup + advisory guard, never raising.
 
@@ -570,6 +585,10 @@ class PublishWorkflow:
             project_dir: The resolved KiCad project directory.
             inventory: Optional inventory CSV path (``KprojConfig.inventory``).
             project: Project basename, threaded onto any emitted ``Finding``.
+            library_repo: Resolved local datasheet-library clone path
+                (``KprojConfig.datasheet_library``, kproj#37).
+            datasheet_repo: Resolved public ``<owner>/<repo>`` slug
+                (``KprojConfig.datasheet_repo``, kproj#37).
 
         Returns:
             A 2-tuple of ``(datasheet_links, findings)``. Both are empty
@@ -577,8 +596,8 @@ class PublishWorkflow:
         """
         try:
             names, lookup_findings = self._datasheet_name_lookup(project_dir, inventory)
-            links = tuple(build_datasheet_link(name) for name in names)
-            guard_findings = check_datasheet_links(names, self._library_repo, project=project)
+            links = tuple(build_datasheet_link(name, owner_repo=datasheet_repo) for name in names)
+            guard_findings = check_datasheet_links(names, library_repo, project=project)
             return links, (*lookup_findings, *guard_findings)
         except Exception as exc:  # advisory-only, deliberately broad; see docstring
             _log.warning("datasheet-name lookup/guard failed unexpectedly: %s", exc)

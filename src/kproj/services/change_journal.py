@@ -48,7 +48,7 @@ class ChangeJournal:
     """Transactional write tracker scoped to a single ``site_repo``.
 
     Attributes:
-        site_repo: Local checkout of the SPCoast Jekyll site repo.
+        site_repo: Local checkout of the SPCoast Hugo site repo.
         dry_run: When ``True``, rollback records intent only; git is
             not invoked. Useful for ``kproj --dry-run`` invocations.
     """

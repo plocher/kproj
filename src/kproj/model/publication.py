@@ -4,8 +4,9 @@ The bundle ready for site emission. It carries the project metadata,
 audit findings, asset references, and pre-rendered Markdown body that
 ``SitePublisher`` consumes.
 
-The dataclass is pure data - no I/O, no Jekyll-specific YAML rendering
-(that lives inside ``SitePublisher``).
+The dataclass is pure data - no I/O, no backend-specific YAML rendering
+(that lives inside ``SitePublisher`` / ``FrontMatterSummaryFormatter``,
+selected by :class:`~kproj.config.SiteProfile`; production targets Hugo).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from .project_info import ProjectInfo
 class AssetRef:
     """A reference to a per-version asset emitted into the site repo.
 
-    Mirrors the entries kproj writes into the Jekyll front-matter
+    Mirrors the entries kproj writes into the site front-matter
     ``images:`` and ``artifacts:`` lists.
 
     Attributes:

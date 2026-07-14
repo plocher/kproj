@@ -1,23 +1,26 @@
 """kproj configuration layer.
 
 Implements the four-tier precedence from ``docs/DESIGN.md`` §
-*Configuration layer*:
+*Configuration layer* (CLI flag > ``KPROJ_*`` env var > ``~/.kproj.yaml``
+> hardcoded default), exposed via ``kproj --help``'s epilog (kproj#37):
 1.  :class:`ConfigOverrides` field (set by a CLI flag)
 2. Environment variable (``KPROJ_SITE_REPO`` / ``KPROJ_NO_PUSH`` /
-   ``KPROJ_KICAD_CLI`` / ``KPROJ_INVENTORY``)
+   ``KPROJ_KICAD_CLI`` / ``KPROJ_INVENTORY`` / ``KPROJ_DATASHEET_LIBRARY`` /
+   ``KPROJ_DATASHEET_REPO``)
 3. ``~/.kproj.yaml`` key (``site_repo`` / ``no_push`` / ``kicad_cli`` /
-   ``inventory``)
-4. Hardcoded fallback (:data:`DEFAULT_SITE_REPO`, ``False``,
-   ``None``, ``None``)
+   ``inventory`` / ``datasheet_library`` / ``datasheet_repo``)
+4. Hardcoded fallback (:data:`DEFAULT_SITE_REPO`, ``False``, ``None``,
+   ``None``, :data:`DEFAULT_DATASHEET_LIBRARY`, :data:`DEFAULT_DATASHEET_REPO`)
 
 ``inventory`` (kproj#29) intentionally has **no** hardcoded-path
 fallback, unlike ``site_repo``: per the datasheet document library's
 publish-mechanics resolution (``plocher/jBOM#350``), hardcoded
 user-machine paths are the antipattern that effort roots out. ``None``
-means kproj omits ``--inventory`` from its ``jbom bom`` invocation
-(:mod:`kproj.common.datasheet_library`) and jBOM degrades gracefully
-to blank ``Datasheet Name`` cells - an acceptable advisory-only state,
-never a publish blocker.
+means kproj never invokes ``jbom bom`` at all (kproj#36 owner ruling;
+see :mod:`kproj.common.datasheet_library`) - an acceptable,
+advisory-free degraded state, never a publish blocker. When neither
+``~/.kproj.yaml`` nor ``--inventory``/``KPROJ_INVENTORY`` is set, the
+CLI emits a one-time INFO-level discoverability hint (kproj#37).
 
 Per ADR 0006, this module never imports ``argparse``. The CLI builds a
 :class:`ConfigOverrides` from its parsed namespace and calls
@@ -67,6 +70,17 @@ this constant when the actual filesystem location is needed."""
 
 DEFAULT_NO_PUSH: bool = False
 """Hardcoded fallback for ``--no-push`` (off by default)."""
+
+DEFAULT_DATASHEET_LIBRARY: Path = Path.home() / "Dropbox" / "KiCad" / "SPCoast-inventory"
+"""SPCoast convention for the local datasheet-library clone used by the
+advisory publish guard (:func:`kproj.common.datasheet_library.check_datasheet_links`).
+Unlike ``inventory``, this keeps a hardcoded fallback (ADR 0007 unchanged
+conventions; kproj#37 only adds override tiers + discoverability)."""
+
+DEFAULT_DATASHEET_REPO: str = "plocher/SPCoast-inventory"
+"""The public datasheet-library repo's ``<owner>/<repo>`` slug that
+published deep-links point at (:func:`kproj.common.datasheet_library.build_datasheet_link`).
+Hardcoded fallback (ADR 0007 unchanged conventions)."""
 
 
 # ---- SiteProfile abstraction (mirrors jBOM's ADR 0008 GENERIC pattern) ----
@@ -240,15 +254,24 @@ class ConfigOverrides:
         no_push: ``--no-push`` override.
         kicad_cli: Reserved for future ``--kicad-cli`` CLI flag; not
             exposed in v1 (env + yaml + locator probe suffice).
-        inventory: Reserved for a future ``--inventory`` CLI flag
-            (kproj#29); not exposed in v1 (env + yaml suffice). ``None``
-            omits ``--inventory`` from the ``jbom bom`` invocation.
+        inventory: ``--inventory`` override (kproj#37). ``None`` means
+            the flag was not provided by the user; when unset at every
+            tier, kproj skips the ``jbom bom`` invocation entirely
+            (kproj#36) rather than omitting just the ``--inventory``
+            flag.
+        datasheet_library: ``--datasheet-library`` override (kproj#37):
+            the local datasheet-library clone path used by the
+            advisory publish guard.
+        datasheet_repo: ``--datasheet-repo`` override (kproj#37): the
+            public ``<owner>/<repo>`` slug published deep-links point at.
     """
 
     site_repo: Path | None = None
     no_push: bool | None = None
     kicad_cli: Path | None = None
     inventory: Path | None = None
+    datasheet_library: Path | None = None
+    datasheet_repo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -265,8 +288,16 @@ class KprojConfig:
             layout and front-matter shape.
         inventory: Optional inventory CSV path forwarded to ``jbom
             bom --inventory`` for datasheet-name lookup (kproj#29).
-            ``None`` omits ``--inventory`` entirely; no hardcoded
-            fallback (see :class:`ConfigOverrides`).
+            ``None`` skips the ``jbom bom`` invocation entirely
+            (kproj#36); no hardcoded fallback (see :class:`ConfigOverrides`).
+        datasheet_library: Local datasheet-library clone path for the
+            advisory publish guard (kproj#37). Defaults to
+            :data:`DEFAULT_DATASHEET_LIBRARY` (SPCoast convention,
+            unchanged) when unset at every tier.
+        datasheet_repo: Public ``<owner>/<repo>`` slug published
+            deep-links point at (kproj#37). Defaults to
+            :data:`DEFAULT_DATASHEET_REPO` (SPCoast convention,
+            unchanged) when unset at every tier.
     """
 
     site_repo: Path
@@ -274,6 +305,8 @@ class KprojConfig:
     kicad_cli: Path | None
     site_profile: SiteProfile
     inventory: Path | None = None
+    datasheet_library: Path = DEFAULT_DATASHEET_LIBRARY
+    datasheet_repo: str = DEFAULT_DATASHEET_REPO
 
 
 def _load_yaml_mapping(yaml_path: Path) -> Mapping[str, Any]:
@@ -356,6 +389,32 @@ def _resolve_inventory(
     return None
 
 
+def _resolve_datasheet_library(
+    overrides: ConfigOverrides, env: Mapping[str, str], yaml_data: Mapping[str, Any]
+) -> Path:
+    """Resolve the effective local datasheet-library clone path (kproj#37)."""
+    if overrides.datasheet_library is not None:
+        return overrides.datasheet_library
+    if "KPROJ_DATASHEET_LIBRARY" in env:
+        return Path(env["KPROJ_DATASHEET_LIBRARY"])
+    if "datasheet_library" in yaml_data:
+        return Path(str(yaml_data["datasheet_library"]))
+    return DEFAULT_DATASHEET_LIBRARY
+
+
+def _resolve_datasheet_repo(
+    overrides: ConfigOverrides, env: Mapping[str, str], yaml_data: Mapping[str, Any]
+) -> str:
+    """Resolve the effective public datasheet-repo ``<owner>/<repo>`` slug (kproj#37)."""
+    if overrides.datasheet_repo is not None:
+        return overrides.datasheet_repo
+    if "KPROJ_DATASHEET_REPO" in env:
+        return env["KPROJ_DATASHEET_REPO"]
+    if "datasheet_repo" in yaml_data:
+        return str(yaml_data["datasheet_repo"])
+    return DEFAULT_DATASHEET_REPO
+
+
 def load_config(
     overrides: ConfigOverrides,
     env: Mapping[str, str],
@@ -384,6 +443,8 @@ def load_config(
         kicad_cli=_resolve_kicad_cli(overrides, env, yaml_data),
         site_profile=_resolve_site_profile(overrides, env, yaml_data),
         inventory=_resolve_inventory(overrides, env, yaml_data),
+        datasheet_library=_resolve_datasheet_library(overrides, env, yaml_data),
+        datasheet_repo=_resolve_datasheet_repo(overrides, env, yaml_data),
     )
 
 

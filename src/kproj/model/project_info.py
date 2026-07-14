@@ -6,7 +6,7 @@ The :class:`ProjectInfo` shape holds the point-in-time facts that
 ``${COMMENT1..9}``) plus any kproj-derived bookkeeping (tags, status,
 fabrication state).
 
-This is pure data: no I/O, no Jekyll-specific rendering.
+This is pure data: no I/O, no backend-specific rendering.
 """
 
 from __future__ import annotations

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from kproj.config import (
+    DEFAULT_DATASHEET_LIBRARY,
+    DEFAULT_DATASHEET_REPO,
     DEFAULT_NO_PUSH,
     DEFAULT_SITE_REPO,
     GENERIC_SITE_PROFILE,
@@ -44,6 +46,8 @@ def test_load_config_falls_back_to_defaults(tmp_path: Path) -> None:
     assert config.no_push == DEFAULT_NO_PUSH
     assert config.kicad_cli is None
     assert config.inventory is None
+    assert config.datasheet_library == DEFAULT_DATASHEET_LIBRARY
+    assert config.datasheet_repo == DEFAULT_DATASHEET_REPO
 
 
 def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
@@ -52,18 +56,28 @@ def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
     yaml_path.write_text(
         "site_repo: /opt/site\nno_push: true\nkicad_cli: /opt/kicad-cli\n"
         "inventory: /opt/inventory.csv\n"
+        "datasheet_library: /opt/datasheets\n"
+        "datasheet_repo: example/datasheets\n"
     )
     config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
     assert config.site_repo == Path("/opt/site")
     assert config.no_push is True
     assert config.kicad_cli == Path("/opt/kicad-cli")
     assert config.inventory == Path("/opt/inventory.csv")
+    assert config.datasheet_library == Path("/opt/datasheets")
+    assert config.datasheet_repo == "example/datasheets"
 
 
 def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
     """Environment variables take precedence over ``~/.kproj.yaml``."""
     yaml_path = tmp_path / "kproj.yaml"
-    yaml_path.write_text("site_repo: /from/yaml\nno_push: false\ninventory: /from/yaml.csv\n")
+    yaml_path.write_text(
+        "site_repo: /from/yaml\n"
+        "no_push: false\n"
+        "inventory: /from/yaml.csv\n"
+        "datasheet_library: /from/yaml-lib\n"
+        "datasheet_repo: yaml/repo\n"
+    )
     config = load_config(
         ConfigOverrides(),
         env={
@@ -71,6 +85,8 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
             "KPROJ_NO_PUSH": "1",
             "KPROJ_KICAD_CLI": "/env/kicad-cli",
             "KPROJ_INVENTORY": "/from/env.csv",
+            "KPROJ_DATASHEET_LIBRARY": "/from/env-lib",
+            "KPROJ_DATASHEET_REPO": "env/repo",
         },
         yaml_path=yaml_path,
     )
@@ -78,6 +94,8 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
     assert config.no_push is True
     assert config.kicad_cli == Path("/env/kicad-cli")
     assert config.inventory == Path("/from/env.csv")
+    assert config.datasheet_library == Path("/from/env-lib")
+    assert config.datasheet_repo == "env/repo"
 
 
 def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
@@ -89,6 +107,8 @@ def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
         no_push=False,
         kicad_cli=Path("/cli/kicad-cli"),
         inventory=Path("/from/cli.csv"),
+        datasheet_library=Path("/from/cli-lib"),
+        datasheet_repo="cli/repo",
     )
     config = load_config(
         overrides,
@@ -103,6 +123,76 @@ def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
     assert config.no_push is False
     assert config.kicad_cli == Path("/cli/kicad-cli")
     assert config.inventory == Path("/from/cli.csv")
+    assert config.datasheet_library == Path("/from/cli-lib")
+    assert config.datasheet_repo == "cli/repo"
+
+
+class TestDatasheetLibraryPrecedence:
+    """Per-tier tests for the local datasheet-library clone path."""
+
+    def test_defaults_to_spcoast_convention(self, tmp_path: Path) -> None:
+        config = load_config(ConfigOverrides(), env={}, yaml_path=tmp_path / "missing.yaml")
+        assert config.datasheet_library == DEFAULT_DATASHEET_LIBRARY
+
+    def test_yaml_overrides_default(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("datasheet_library: /from/yaml-lib\n")
+        config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
+        assert config.datasheet_library == Path("/from/yaml-lib")
+
+    def test_env_beats_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("datasheet_library: /from/yaml-lib\n")
+        config = load_config(
+            ConfigOverrides(),
+            env={"KPROJ_DATASHEET_LIBRARY": "/from/env-lib"},
+            yaml_path=yaml_path,
+        )
+        assert config.datasheet_library == Path("/from/env-lib")
+
+    def test_cli_override_beats_env_and_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("datasheet_library: /from/yaml-lib\n")
+        config = load_config(
+            ConfigOverrides(datasheet_library=Path("/from/cli-lib")),
+            env={"KPROJ_DATASHEET_LIBRARY": "/from/env-lib"},
+            yaml_path=yaml_path,
+        )
+        assert config.datasheet_library == Path("/from/cli-lib")
+
+
+class TestDatasheetRepoPrecedence:
+    """Per-tier tests for the public datasheet owner/repo slug."""
+
+    def test_defaults_to_spcoast_convention(self, tmp_path: Path) -> None:
+        config = load_config(ConfigOverrides(), env={}, yaml_path=tmp_path / "missing.yaml")
+        assert config.datasheet_repo == DEFAULT_DATASHEET_REPO
+
+    def test_yaml_overrides_default(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("datasheet_repo: yaml/repo\n")
+        config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
+        assert config.datasheet_repo == "yaml/repo"
+
+    def test_env_beats_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("datasheet_repo: yaml/repo\n")
+        config = load_config(
+            ConfigOverrides(),
+            env={"KPROJ_DATASHEET_REPO": "env/repo"},
+            yaml_path=yaml_path,
+        )
+        assert config.datasheet_repo == "env/repo"
+
+    def test_cli_override_beats_env_and_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("datasheet_repo: yaml/repo\n")
+        config = load_config(
+            ConfigOverrides(datasheet_repo="cli/repo"),
+            env={"KPROJ_DATASHEET_REPO": "env/repo"},
+            yaml_path=yaml_path,
+        )
+        assert config.datasheet_repo == "cli/repo"
 
 
 class TestInventoryPrecedence:
