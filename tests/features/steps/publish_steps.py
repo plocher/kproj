@@ -43,8 +43,10 @@ from kproj.config import (  # noqa: E402
 # configured versions dir") rather than pinning to a specific backend.
 _VDIR = GENERIC_SITE_PROFILE.versions_dir
 from kproj.model.analysis_info import AnalysisInfo  # noqa: E402
+from kproj.model.finding import Finding  # noqa: E402
 from kproj.model.publication import AssetRef  # noqa: E402
 from kproj.model.publish_request import PublishRequest  # noqa: E402
+from kproj.model.severity import Severity  # noqa: E402
 from kproj.services.change_journal import ChangeJournal  # noqa: E402
 from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: E402
 from kproj.services.site_publisher import SitePublisher  # noqa: E402
@@ -59,6 +61,17 @@ class _SilentDesignAnalyzer:
 
     def analyze(self, _resolved: object) -> AnalysisInfo:
         return AnalysisInfo(findings=())
+
+
+class _StaticMetadataAnalyzer:
+    """Metadata analyzer stand-in used to isolate BDD exit-code contracts."""
+
+    def __init__(self, findings: tuple[Finding, ...]) -> None:
+        self._findings = findings
+
+    def analyze(self, _project_info: object, _project_dir: Path) -> AnalysisInfo:
+        """Return the scenario-selected findings."""
+        return AnalysisInfo(findings=self._findings)
 
 
 def _make_site_repo(base_dir: Path) -> Path:
@@ -183,6 +196,7 @@ def _build_workflow(context: Any) -> PublishWorkflow:
     )
     return PublishWorkflow(
         project_reader=KicadProjectReader(projects_root=Path(context.tmpdir)),
+        metadata_analyzer=getattr(context, "metadata_analyzer", None),
         design_analyzer_factory=design_analyzer_factory,
         ibom_script_locator=lambda: fake_ibom,
         kicad_python_locator=lambda: fake_python,
@@ -272,6 +286,29 @@ def step_given_project_with_status(context: Any, status: str) -> None:
     context.site_repo = _make_site_repo(Path(context.tmpdir))
 
 
+@given("a project with exactly one audit warning")
+def step_given_project_with_one_audit_warning(context: Any) -> None:
+    """Create a project with one isolated WARNING finding."""
+    step_given_project_with_status(context, "active")
+    context.metadata_analyzer = _StaticMetadataAnalyzer(
+        (
+            Finding(
+                severity=Severity.WARNING,
+                field="metadata_warning",
+                value="",
+                reason="A genuine metadata warning.",
+                source="audit",
+            ),
+        )
+    )
+
+
+@given("no findings except the GitHub-link advisory")
+def step_given_only_github_link_finding(context: Any) -> None:
+    """Suppress unrelated metadata findings for INFO exit-code scenarios."""
+    context.metadata_analyzer = _StaticMetadataAnalyzer(())
+
+
 @given("a project with audit warnings")
 def step_given_project_with_warnings(context: Any) -> None:
     """Create a project that will trigger audit warnings."""
@@ -355,6 +392,12 @@ def step_given_project_content_unchanged(context: Any) -> None:
     context.staged_names = []
 
 
+@given("the site repo upstream is unavailable")
+def step_given_unavailable_site_upstream(context: Any) -> None:
+    """Make the pending-push probe use its advisory unavailable state."""
+    context.pending_push_count = None
+
+
 @given("an artifact producer will fail after writing one asset")
 def step_given_failing_producer(context: Any) -> None:
     """Install a failing artifact generator for the next kproj run.
@@ -408,6 +451,15 @@ def step_when_run_dry_run(context: Any) -> None:
 @when("I run kproj a second time with the same project")
 def step_when_run_kproj_again(context: Any) -> None:
     """Run the pipeline a second time (for no-op detection)."""
+    _run_workflow(context)
+
+
+@when("I run plain kproj with unchanged content")
+def step_when_run_plain_kproj_unchanged(context: Any) -> None:
+    """Run the final batch invocation with the first run's pending commit."""
+    context.no_push = False
+    context.staged_names = []
+    context.pending_push_count = 1
     _run_workflow(context)
 
 
@@ -593,7 +645,16 @@ def step_then_no_push_invoked(context: Any) -> None:
 def step_then_pending_site_commits_pushed(context: Any) -> None:
     """Assert a plain no-op invokes git push to flush pending commits."""
     assert any(call and call[0] == "push" for call in context.git_calls)
-    assert "pushed 2 pending site commit(s)" in context.result.message
+    assert "pushed 1 pending site commit(s)" in context.result.message
+
+
+@then("a site commit was made without a push")
+def step_then_batch_commit_was_not_pushed(context: Any) -> None:
+    """Prove the initial no-push invocation committed but did not push."""
+    assert any(call and call[0] == "commit" for call in context.git_calls)
+    assert not any(call and call[0] == "push" for call in context.git_calls)
+    os.system(f"git -C '{context.site_repo}' add -A")
+    os.system(f"git -C '{context.site_repo}' commit -q -m 'batched publish'")
 
 
 @then("the unchanged no-op is quiet")
@@ -606,6 +667,21 @@ def step_then_unchanged_noop_is_quiet(context: Any) -> None:
 def step_then_pending_debt_is_reported(context: Any, mode: str) -> None:
     """Assert the non-pushing mode names its queued site commit debt."""
     assert f"Note: site repo has 2 unpushed commit(s) ({mode})." in context.result.message
+
+
+@then("stderr shows the GitHub-link Note")
+def step_then_github_link_note_is_rendered(context: Any) -> None:
+    """Assert the INFO advisory uses the default human Note presentation."""
+    from kproj.formatters.stderr_formatter import StderrFormatter
+
+    rendered = StderrFormatter().format_findings(context.result.findings)
+    assert "Note: Project is not a Git repository" in rendered
+
+
+@then("the unavailable upstream advisory is reported")
+def step_then_unavailable_upstream_advisory(context: Any) -> None:
+    """Assert the probe's unavailable state surfaces as an INFO finding."""
+    assert "site_push_pending_unknown" in {finding.field for finding in context.result.findings}
 
 
 # ─────────────────────────── M4 round-2 steps ────────────────────────────────

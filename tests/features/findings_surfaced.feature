@@ -4,7 +4,8 @@ Feature: kproj surfaces findings honestly on the version page (PRD Stories 4, 5)
   So that I can iterate against the published findings.
 
   Scenario: Story 4 — publish proceeds despite audit warnings; exit code 1
-    Given a project with audit warnings
+    Given a project with exactly one audit warning
+    And the project directory is a git repo with a pushed GitHub remote
     And a clean site repo
     When I run kproj
     Then kproj reports outcome "published"

@@ -133,6 +133,13 @@ def test_help_documents_config_precedence_and_yaml_example(
     assert "datasheet_repo:" in help_text
 
 
+def test_help_explains_no_push_batch_flush(capsys: pytest.CaptureFixture[str]) -> None:
+    """``--no-push`` help tells users how a final plain run flushes batches."""
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--help"])
+    assert "final plain run flushes pending site commits" in capsys.readouterr().out
+
+
 def test_first_run_hint_emitted_when_no_yaml_and_no_inventory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
