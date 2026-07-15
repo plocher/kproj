@@ -219,27 +219,36 @@ def finding_for_detection(
         return None
     if detection.status == "not_pushed":
         return Finding(
-            severity=Severity.WARNING,
+            severity=Severity.INFO,
             field="github_link_unpushed",
-            value=str(project_dir),
+            value="",
             reason=(
-                "project directory has a GitHub `origin` remote configured, but the "
-                "current commit isn't confirmed pushed there (no upstream tracking, a "
-                "diverged/ahead HEAD, or a detached HEAD); the see/fork-on-GitHub link "
-                "is omitted until a push is confirmed"
+                "Project has a GitHub `origin`, but the current commit is not confirmed "
+                "pushed there, so no links to a repo will be published. Push the current "
+                "branch and run kproj again."
             ),
             project=project,
             source="audit",
         )
-    return Finding(
-        severity=Severity.WARNING,
-        field="github_link_missing",
-        value=str(project_dir),
-        reason=(
-            "project directory has no GitHub repo backing (not a git repo, no `origin` "
-            "remote, or `origin` isn't a GitHub remote); the see/fork-on-GitHub link is "
-            "omitted"
+    reasons = {
+        "not_a_repo": (
+            "Project is not a Git repository, so no links to a repo will be published. "
+            "You can run `git init` to start tracking this project."
         ),
+        "no_origin_remote": (
+            "Project is a Git repository with no `origin` remote, so no links to a repo "
+            "will be published. Consider adding one that points to GitHub before publishing."
+        ),
+        "non_github_remote": (
+            "Project `origin` is not hosted on GitHub, so no links to a repo will be "
+            "published. Repository links only support GitHub."
+        ),
+    }
+    return Finding(
+        severity=Severity.INFO,
+        field="github_link_missing",
+        value="",
+        reason=reasons.get(detection.status, reasons["not_a_repo"]),
         project=project,
         source="audit",
     )

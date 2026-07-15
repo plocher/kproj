@@ -8,3 +8,4 @@ Feature: kproj --dry-run previews without writing (PRD Story 2)
     And a clean site repo
     When I run kproj with --dry-run
     Then no files are written to the site repo
+    And the dry-run destination is reported

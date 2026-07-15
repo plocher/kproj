@@ -698,8 +698,8 @@ Implemented by `MetadataAnalyzer`. Each heuristic produces a `Finding(severity, 
 | warning | `replaced_by_target_missing` | `replaced-by:<X>` references nonexistent project under `~/Dropbox/KiCad/projects/` |
 | warning | `production_missing` | `<project_dir>/production/` missing or empty when fab artifacts expected |
 | warning | `production_stale` | `production/<gerber>.zip` mtime more than 5 minutes older than `<pcb>.kicad_pcb` mtime. Single policy home: `MetadataAnalyzer._production_rules` (`FabPackager` emits no duplicate). |
-| warning | `github_link_missing` | project directory is not (or not confirmed to be) a git repo with a GitHub `origin` remote - no repo backing at all (kproj#30 absence-highlighting; see § *GitHub project link*). Emitted by `common.github_link.finding_for_detection`, not `MetadataAnalyzer` (stamped `source="audit"` directly so it renders in the same Metadata Audit table). |
-| warning | `github_link_unpushed` | project directory has a GitHub `origin` remote configured, but the current commit isn't confirmed pushed there (no upstream tracking, a diverged/ahead `HEAD`, or a detached `HEAD`) - repo backing exists but isn't pushed. Same emitter as `github_link_missing`. |
+| info | `github_link_missing` | environment diagnosis: the project has no GitHub backing; kproj identifies whether it is not a Git repository, lacks `origin`, or has a non-GitHub origin, then gives a tailored remedy. Visibility is preserved without exit-code escalation. |
+| info | `github_link_unpushed` | GitHub backing exists but the current commit is not confirmed pushed; kproj advises pushing it. Same emitter as `github_link_missing`; exit-neutral. |
 
 ## Front-matter shape
 
@@ -792,7 +792,7 @@ EAGLE-era site linked every project to its GitHub repo; a KiCad project
 silently missing that backing would be a regression from that baseline
 that the maintainer should actively see, not a state kproj quietly
 tolerates. `finding_for_detection` surfaces this as a non-fatal
-`warning` `Finding` (never raises, never blocks publish; `source="audit"`
+`info` `Finding` (never raises, never blocks publish; `source="audit"`
 so it renders in the existing Metadata Audit table - see the
 `github_link_missing` / `github_link_unpushed` rows in § *Audit
 heuristic list*) whenever the link is absent. `PublishWorkflow.run`
@@ -825,11 +825,12 @@ Inside `SitePublisher.publish()` (after all writes are staged via `ChangeJournal
 git -C <site_repo> add <touched files>
 git -C <site_repo> commit -m "<commit-message>"
 journal.mark_committed()
-git -C <site_repo> push    # skipped if no_push
+git -C <site_repo> rev-list --count @{u}..HEAD
+git -C <site_repo> push    # when ahead and not no_push
 journal.mark_pushed()
 ```
 
-Commit messages per pattern in *Per-service contracts › SitePublisher*. Push target is whatever branch is checked out (user keeps the site repo on the deployment branch; kproj does not `git checkout`).
+Commit messages per pattern in *Per-service contracts › SitePublisher*. Push eligibility depends on the repository being ahead of upstream, not solely on this invocation making a commit: a final ordinary run flushes commits accumulated by `--no-push`; a `--no-push` or `--dry-run` run reports the debt without pushing. Missing upstream/detached HEAD is an advisory INFO finding. Push target is whatever branch is checked out (user keeps the site repo on the deployment branch; kproj does not `git checkout`).
 
 ## Exit code mapping
 
@@ -837,8 +838,8 @@ Commit messages per pattern in *Per-service contracts › SitePublisher*. Push t
 
 | Code | When |
 |---|---|
-| 0 | `outcome` in `{published, refreshed, noop, private-skip}` AND no findings of any severity |
-| 1 | `outcome` in `{published, refreshed, noop, private-skip}` AND audit/DRC/ERC findings exist |
+| 0 | `outcome` in `{published, refreshed, noop, private-skip}` AND no warning/error findings |
+| 1 | `outcome` in `{published, refreshed, noop, private-skip}` AND at least one warning/error finding exists |
 | 2 | `outcome == failed` (pre-flight failure, mid-pipeline exception, rollback triggered) |
 
 ## Dry-run semantics
@@ -851,8 +852,8 @@ Commit messages per pattern in *Per-service contracts › SitePublisher*. Push t
 - Run `DesignAnalyzer.analyze` (read-only; JSON in-memory only, no JSON files written to disk).
 - **Skip** `PcbExporter`, `SchematicExporter`, `IbomGenerator`, `FabPackager`, `SourcePackager` invocations.
 - **Skip** all writes to the site repo.
-- **Skip** all git operations on the site repo.
-- Log to stderr: pre-flight pass/fail, findings, would-be file paths, would-be commit message, would-be push target.
+- **Skip** git writes on the site repo; a read-only upstream-ahead probe may run to report pending commit debt.
+- Log to stderr: pre-flight pass/fail, findings, and the would-be public destination. The destination derives `baseURL` from `<site_repo>/hugo.toml`; if unavailable, kproj prints the site-relative URL.
 
 `--dry-run` is read-only and idempotent. Wall-clock time is dominated by the DRC/ERC subprocess invocations (typically seconds per project, longer for boards with many violations).
 
@@ -864,7 +865,7 @@ Commit messages per pattern in *Per-service contracts › SitePublisher*. Push t
 | `-v` / `--verbose` | INFO | Subprocess (kicad-cli / iBOM / git) argv on every invocation; per-artifact Make-style regen decisions; `production_stale` tolerance suppression (with mtime delta); BOM/POS candidate selection. |
 | `-d` / `--debug` | DEBUG | Everything at INFO plus subprocess return codes and captured stdout/stderr on completion. |
 `-d` wins when both flags are present. The stderr handler is attached only to the `kproj` root logger with `propagate=False`, and handler attachment is idempotent (repeat `configure` calls do not stack handlers). Third-party loggers (`jbom`, `urllib3`, ...) keep their pre-configure levels, so a `-d` run does not turn into a firehose from unrelated libraries.
-Audit / DRC / ERC findings still surface via `StderrFormatter` regardless of level (ADR 0004 “show what is provided”) - logging is additive to the finding stream, not a substitute for it.
+Audit / DRC / ERC findings still surface via `StderrFormatter` regardless of level (ADR 0004 “show what is provided”) - logging is additive to the finding stream, not a substitute for it. Default terminal output uses `Info:`, `Note:`, `Warning:`, and `Error:` prefixes and presents the diagnosis only; `-v` retains finding codes and raw values for machine-oriented inspection.
 
 ## Testing strategy
 

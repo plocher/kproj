@@ -37,6 +37,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -47,13 +48,16 @@ from ..common.subprocess_runner import DEFAULT_GIT_TIMEOUT
 from ..common.subprocess_runner import run as subprocess_run
 from ..config import SiteProfile
 from ..formatters.front_matter_summary_formatter import FrontMatterSummaryFormatter
+from ..model.finding import Finding
 from ..model.publication import Publication
 from ..model.publish_result import PublishResult
+from ..model.severity import Severity
 from .change_journal import ChangeJournal
 
 _log = logging.getLogger(__name__)
 
 _fm_formatter = FrontMatterSummaryFormatter()
+_HUGO_BASE_URL_RE = re.compile(r'^\s*baseURL\s*=\s*["\']([^"\']+)["\']\s*(?:#.*)?$')
 
 
 # ──────────────────────────── module-level git helpers ────────────────────────
@@ -99,6 +103,53 @@ def _git_staged_names(site_repo: Path) -> list[str]:
         check=False,
     )
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _git_pending_push_count(site_repo: Path) -> int | None:
+    """Return commits ahead of upstream, or ``None`` when no upstream is usable."""
+    try:
+        result = subprocess_run(
+            ["git", "-C", str(site_repo), "rev-list", "--count", "@{u}..HEAD"],
+            timeout=DEFAULT_GIT_TIMEOUT,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _pending_push_finding() -> Finding:
+    """Describe a non-blocking site repository whose upstream is unavailable."""
+    return Finding(
+        severity=Severity.INFO,
+        field="site_push_pending_unknown",
+        value="",
+        reason="Site repository upstream is unavailable, so kproj cannot determine pending commits.",
+        source="audit",
+    )
+
+
+def public_version_destination(site_repo: Path, project: str, board_rev: str) -> str:
+    """Return the public version URL from ``site_repo/hugo.toml``.
+
+    A missing or unparseable ``baseURL`` falls back to a site-relative URL.
+    """
+    anchor = re.sub(r"[^a-z0-9]+", "", board_rev.lower())
+    relative = f"/versions/{project.lower()}/#v-{anchor}"
+    try:
+        lines = (site_repo / "hugo.toml").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return relative
+    for line in lines:
+        match = _HUGO_BASE_URL_RE.match(line)
+        if match is not None:
+            return f"{match.group(1).rstrip('/')}{relative}"
+    return relative
 
 
 # ──────────────────────────── content builders ─────────────────────────────────
@@ -209,6 +260,11 @@ class SitePublisher:
         project_index_file = site_profile.project_index_path(site_repo, P)
 
         if dry_run:
+            pending = _git_pending_push_count(site_repo)
+            dry_run_findings = (*findings, _pending_push_finding()) if pending is None else findings
+            debt_note = (
+                f"\nNote: site repo has {pending} unpushed commit(s) (dry-run)." if pending else ""
+            )
             _log.info(
                 "dry-run: would write %s + %s",
                 version_file,
@@ -216,8 +272,12 @@ class SitePublisher:
             )
             return PublishResult.build(
                 "published",
-                message=f"kproj: --dry-run; would publish {PR}.",
-                findings=findings,
+                message=(
+                    "Note: --dry-run only. Would have published to "
+                    f"{public_version_destination(site_repo, P, R)}"
+                    f"{debt_note}"
+                ),
+                findings=dry_run_findings,
             )
 
         # File existence BEFORE writing decides the commit-prefix verb.
@@ -258,10 +318,23 @@ class SitePublisher:
 
         staged = _git_staged_names(site_repo)
         if not staged:
+            pending = _git_pending_push_count(site_repo)
+            noop_findings = (*findings, _pending_push_finding()) if pending is None else findings
+            if pending and not no_push:
+                _git_run(["push"], site_repo=site_repo)
+                self._journal.mark_pushed()
+                message = f"Info: {PR} unchanged; pushed {pending} pending site commit(s)."
+            elif pending:
+                message = (
+                    f"Info: {PR} unchanged - nothing to publish.\n"
+                    f"Note: site repo has {pending} unpushed commit(s) (--no-push)."
+                )
+            else:
+                message = f"Info: {PR} unchanged - nothing to publish."
             return PublishResult.build(
                 "noop",
-                message=f"kproj: {PR} unchanged - nothing to publish.",
-                findings=findings,
+                message=message,
+                findings=noop_findings,
             )
 
         commit_msg = _commit_message(
@@ -275,20 +348,25 @@ class SitePublisher:
         _git_run(["commit", "-m", commit_msg], site_repo=site_repo)
         self._journal.mark_committed()
 
-        if not no_push:
+        pending = _git_pending_push_count(site_repo)
+        result_findings = (*findings, _pending_push_finding()) if pending is None else findings
+        debt_note = ""
+        if pending and not no_push:
             _git_run(["push"], site_repo=site_repo)
             self._journal.mark_pushed()
+        elif pending:
+            debt_note = f"\nNote: site repo has {pending} unpushed commit(s) (--no-push)."
 
         if commit_msg.startswith("refresh:"):
             return PublishResult.build(
                 "refreshed",
-                message=f"kproj: refreshed {PR}.",
-                findings=findings,
+                message=f"Info: Refreshed {PR}.{debt_note}",
+                findings=result_findings,
             )
         return PublishResult.build(
             "published",
-            message=f"kproj: published {PR}.",
-            findings=findings,
+            message=f"Info: Published {PR}.{debt_note}",
+            findings=result_findings,
         )
 
     def _collect_paths_to_stage(

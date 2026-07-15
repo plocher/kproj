@@ -234,7 +234,10 @@ def test_derive_github_link_finding_missing_for_non_repo(tmp_path: Path) -> None
     finding = derive_github_link_finding(project_dir, project="Demo")
     assert finding is not None
     assert finding.field == "github_link_missing"
-    assert finding.severity is Severity.WARNING
+    assert finding.severity is Severity.INFO
+    assert finding.value == ""
+    assert "not a Git repository" in finding.reason
+    assert "git init" in finding.reason
     assert finding.project == "Demo"
     assert finding.source == "audit"
 
@@ -246,6 +249,8 @@ def test_derive_github_link_finding_missing_for_no_origin_remote(tmp_path: Path)
     finding = derive_github_link_finding(project_dir)
     assert finding is not None
     assert finding.field == "github_link_missing"
+    assert "no `origin` remote" in finding.reason
+    assert "adding one" in finding.reason
 
 
 def test_derive_github_link_finding_missing_for_non_github_remote(tmp_path: Path) -> None:
@@ -267,7 +272,8 @@ def test_derive_github_link_finding_unpushed_for_no_upstream(tmp_path: Path) -> 
     finding = derive_github_link_finding(project_dir)
     assert finding is not None
     assert finding.field == "github_link_unpushed"
-    assert finding.severity is Severity.WARNING
+    assert finding.severity is Severity.INFO
+    assert "push" in finding.reason
     assert finding.source == "audit"
 
 

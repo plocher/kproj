@@ -57,16 +57,18 @@ class StderrFormatter:
 
     # ----- private helpers -----
 
-    @staticmethod
-    def _format_one(finding: Finding) -> str:
-        """Format a single :class:`Finding` as a one-line stderr entry."""
-        sev = finding.severity.value.lower()  # "warning", "error", "exclusion"
+    def _format_one(self, finding: Finding) -> str:
+        """Format a finding in the human or verbose-machine presentation."""
+        if self._verbose_level == 0:
+            prefix = (
+                "Note"
+                if finding.severity.value in {"info", "exclusion"}
+                else finding.severity.value.title()
+            )
+            return f"{prefix}: {finding.reason}"
+        sev = finding.severity.value.lower()
         field = finding.field
-
-        # Build the subject portion: "<project>:<field>" or just "<field>"
         subject = f"{finding.project}:{field}" if finding.project else field
-
-        # Optional value trailer
         value_part = f" (value: {finding.value})" if finding.value else ""
 
         return f"{sev} [{field}] {subject}: {finding.reason}{value_part}"

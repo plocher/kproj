@@ -227,7 +227,11 @@ def _run_workflow(context: Any, *, dry_run: bool = False) -> None:
         patch("kproj.services.site_publisher._git_run") as mock_git,
         patch(
             "kproj.services.site_publisher._git_staged_names",
-            return_value=["versions/staged"],
+            return_value=getattr(context, "staged_names", ["versions/staged"]),
+        ),
+        patch(
+            "kproj.services.site_publisher._git_pending_push_count",
+            return_value=getattr(context, "pending_push_count", 0),
         ),
     ):
         context.result = workflow.run(request)
@@ -331,6 +335,24 @@ def step_given_dirty_site_repo(context: Any) -> None:
 def step_given_no_push(context: Any) -> None:
     """Enable no-push mode (KPROJ_NO_PUSH semantics)."""
     context.no_push = True
+
+
+@given("push is enabled")
+def step_given_push_enabled(context: Any) -> None:
+    """Disable batch-only no-push behavior for this run."""
+    context.no_push = False
+
+
+@given("the site repo has {count:d} pending commits")
+def step_given_pending_site_commits(context: Any, count: int) -> None:
+    """Set the mocked upstream-ahead count for the next publish."""
+    context.pending_push_count = count
+
+
+@given("the project content is unchanged")
+def step_given_project_content_unchanged(context: Any) -> None:
+    """Make the publisher follow its no-op branch."""
+    context.staged_names = []
 
 
 @given("an artifact producer will fail after writing one asset")
@@ -448,6 +470,14 @@ def step_then_no_files_written(context: Any) -> None:
     assert not versions, f"dry-run wrote files: versions={versions}"
 
 
+@then("the dry-run destination is reported")
+def step_then_dry_run_destination_reported(context: Any) -> None:
+    """Assert the site-relative fallback destination reaches the user."""
+    assert context.result.message == (
+        "Note: --dry-run only. Would have published to /versions/myproject/#v-10"
+    )
+
+
 @then("the version page contains the audit findings table")
 def step_then_version_page_has_audit_table(context: Any) -> None:
     """Assert the version markdown body has a Metadata Audit table."""
@@ -557,6 +587,25 @@ def step_then_no_push_invoked(context: Any) -> None:
         return
     push_calls = [call for call in git_calls if call and call[0] == "push"]
     assert not push_calls, f"Expected no git push invocations under no_push mode; got: {push_calls}"
+
+
+@then("pending site commits were pushed")
+def step_then_pending_site_commits_pushed(context: Any) -> None:
+    """Assert a plain no-op invokes git push to flush pending commits."""
+    assert any(call and call[0] == "push" for call in context.git_calls)
+    assert "pushed 2 pending site commit(s)" in context.result.message
+
+
+@then("the unchanged no-op is quiet")
+def step_then_unchanged_noop_is_quiet(context: Any) -> None:
+    """Assert a no-debt no-op keeps its concise existing summary."""
+    assert context.result.message == "Info: MyProject-1.0 unchanged - nothing to publish."
+
+
+@then('pending site commit debt is reported for "{mode}"')
+def step_then_pending_debt_is_reported(context: Any, mode: str) -> None:
+    """Assert the non-pushing mode names its queued site commit debt."""
+    assert f"Note: site repo has 2 unpushed commit(s) ({mode})." in context.result.message
 
 
 # ─────────────────────────── M4 round-2 steps ────────────────────────────────

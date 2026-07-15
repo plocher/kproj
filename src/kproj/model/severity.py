@@ -20,14 +20,14 @@ class Severity(Enum):
     """Closed taxonomy of kproj finding severity levels.
 
     Ordering (most severe to least severe): ``ERROR > WARNING >
-    EXCLUSION``. ``EXCLUSION`` represents a finding KiCad's GUI has
-    marked as intentionally suppressed and ranks below ``WARNING`` so
-    that ``max(...)`` over a mixed set returns the loudest level.
+    EXCLUSION > INFO``. ``INFO`` describes exit-neutral environment
+    diagnostics.
     """
 
     ERROR = "error"
     WARNING = "warning"
     EXCLUSION = "exclusion"
+    INFO = "info"
 
     def __lt__(self, other: object) -> bool:
         """Return ``True`` when *self* is less severe than *other*.
@@ -37,5 +37,5 @@ class Severity(Enum):
         """
         if not isinstance(other, Severity):
             return NotImplemented
-        order = (Severity.EXCLUSION, Severity.WARNING, Severity.ERROR)
+        order = (Severity.INFO, Severity.EXCLUSION, Severity.WARNING, Severity.ERROR)
         return order.index(self) < order.index(other)
