@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.5.1 (2026-07-15)
+
+### Bug Fixes
+
+* fix: handle publish-context drift and add republish flag ([`c596c8d`](https://github.com/plocher/kproj/commit/c596c8d12008e773e58c307494f5d97af5ac1c34))
+
+
 ## v0.5.0 (2026-07-15)
 
 ### Bug Fixes
