@@ -97,6 +97,10 @@ class Publication:
             isn't (locally) confirmed pushed (kproj#30). Emitted as the
             front-matter ``github_url`` field alongside the artifact
             downloads when non-empty.
+        publish_context: Internal publish-provenance metadata persisted
+            in front-matter as ``kproj_publish_context``. Used by the
+            workflow's regeneration decision to detect output-affecting
+            context drift across runs/releases.
     """
 
     project_info: ProjectInfo
@@ -110,3 +114,4 @@ class Publication:
     artifacts: tuple[AssetRef, ...] = field(default_factory=tuple)
     libraries: tuple[LibraryRef, ...] = field(default_factory=tuple)
     github_url: str = ""
+    publish_context: dict[str, object] = field(default_factory=dict)

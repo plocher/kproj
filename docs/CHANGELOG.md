@@ -1,5 +1,8 @@
 # Changelog
 ## Unreleased
+- Added publish-context drift detection to regeneration decisions, so legacy version pages missing context metadata are regenerated once and no-op checks account for output-affecting publish changes.
+- Added `--republish` (alias `--force`) to bypass unchanged optimization and force artifact regeneration.
+- Gated toolchain discovery lines (`Info: Using kicad-cli ...`, `Info: Using jbom ...`) behind verbose mode (`-v`).
 - Extended iBOM enrichment to consume inventory-derived jBOM data (datasheet link/name, manufacturer, MPN mapping, fabricator part number, description, and DNP semantics) via iBOM extra-data XML without forking iBOM.
 - Added grouped-reference expansion (`"R1, R2"` -> per-reference rows) so enriched inventory fields align with iBOM component refs.
 - Added configurable `ibom_extra_fields` with full precedence support (CLI `--ibom-extra-fields`, env `KPROJ_IBOM_EXTRA_FIELDS`, yaml `ibom_extra_fields`, default value).
