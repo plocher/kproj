@@ -14,9 +14,9 @@ The argv, fixed by ADR 0008:
         --no-browser --no-compression
         --dest-dir <staging>
         --name-format <P>-<R>.ibom
-        --extra-data-file <pcb>
+        --extra-data-file <pcb|inventory-xml>
         --dnp-field kicad_dnp
-        --extra-fields MPN,Manufacturer
+        --extra-fields <configured-extra-fields>
         --include-tracks
         <pcb>
 
@@ -39,10 +39,13 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+import xml.etree.ElementTree as ElementTree
+from collections.abc import Sequence
 from pathlib import Path
 
 from ..common.subprocess_runner import DEFAULT_KICAD_TIMEOUT
 from ..common.subprocess_runner import run as subprocess_run
+from ..model.datasheet_row import DatasheetRow
 from ..model.export_result import ExportResult
 from .change_journal import ChangeJournal
 
@@ -55,6 +58,12 @@ non-interactive Makefile / CI tool per ADR 0007 + ADR 0008).  Setting the
 var lets the script run headless against the locally-installed PCM iBOM.
 """
 
+_DEFAULT_EXTRA_FIELDS: tuple[str, ...] = ("MPN", "Manufacturer")
+"""Backwards-compatible default extra fields (ADR 0008 contract)."""
+
+_TRUE_DNP_MARKERS: frozenset[str] = frozenset({"1", "true", "yes", "y", "dnp"})
+"""Truthy string markers treated as DNP during XML projection."""
+
 
 class IbomGenerator:
     """Interactive HTML BOM generator.
@@ -63,7 +72,13 @@ class IbomGenerator:
     per ADR 0008.
     """
 
-    def __init__(self, ibom_script: Path, python_exe: Path) -> None:
+    def __init__(
+        self,
+        ibom_script: Path,
+        python_exe: Path,
+        *,
+        extra_fields: Sequence[str] = _DEFAULT_EXTRA_FIELDS,
+    ) -> None:
         """Construct an iBOM generator.
 
         Args:
@@ -77,9 +92,13 @@ class IbomGenerator:
                 during pre-flight.  Required (no default) so callers
                 cannot silently fall back to ``sys.executable``, which
                 lacks ``pcbnew`` (ADR 0008 amendment / kproj#10).
+            extra_fields: Extra iBOM table columns to surface from the
+                extra-data source (inventory-derived XML when provided,
+                otherwise the PCB metadata path).
         """
         self._ibom_script = ibom_script
         self._python_exe = python_exe
+        self._extra_fields = tuple(field.strip() for field in extra_fields if field.strip())
 
     def generate(
         self,
@@ -88,14 +107,15 @@ class IbomGenerator:
         name_format: str,
         *,
         journal: ChangeJournal | None = None,
+        extra_data_rows: Sequence[DatasheetRow] | None = None,
     ) -> ExportResult:
         """Generate the interactive HTML BOM for *pcb_path*.
 
         Args:
-            pcb_path: Path to the source ``.kicad_pcb``. iBOM is
-                directed at it twice — once via ``--extra-data-file``
-                (for the variants / properties data extraction) and
-                once as the positional argument.
+            pcb_path: Path to the source ``.kicad_pcb``. Always passed
+                as iBOM's positional board argument and used as the
+                ``--extra-data-file`` fallback when no inventory XML
+                projection is provided.
             output_file: Final HTML path. iBOM is allowed to write
                 into a private staging directory and the produced
                 HTML is then atomically moved here.
@@ -104,6 +124,12 @@ class IbomGenerator:
                 ``.ibom`` suffix is part of *name_format* per
                 ``docs/DESIGN.md`` § *Release asset set*.
             journal: Optional open :class:`ChangeJournal`.
+            extra_data_rows: Optional inventory-enriched per-reference
+                rows. When provided, kproj projects them to a temporary
+                XML netlist and passes that via ``--extra-data-file`` so
+                iBOM can surface jBOM-derived fields without forking.
+                When omitted, the legacy ``--extra-data-file <pcb>``
+                path is retained.
 
         Returns:
             A populated :class:`ExportResult` carrying the invoked
@@ -124,6 +150,14 @@ class IbomGenerator:
 
         with tempfile.TemporaryDirectory(prefix="kproj-ibom-") as staging:
             staging_dir = Path(staging)
+            extra_data_file = pcb_path
+            if extra_data_rows:
+                extra_data_file = staging_dir / "kproj-ibom-extra-data.xml"
+                _write_extra_data_xml(
+                    extra_data_file,
+                    extra_data_rows,
+                    self._extra_fields,
+                )
             argv = [
                 str(self._python_exe),
                 str(self._ibom_script),
@@ -134,14 +168,18 @@ class IbomGenerator:
                 "--name-format",
                 name_format,
                 "--extra-data-file",
-                str(pcb_path),
+                str(extra_data_file),
                 "--dnp-field",
                 "kicad_dnp",
-                "--extra-fields",
-                "MPN,Manufacturer",
-                "--include-tracks",
-                str(pcb_path),
             ]
+            if self._extra_fields:
+                argv.extend(["--extra-fields", ",".join(self._extra_fields)])
+            argv.extend(
+                [
+                    "--include-tracks",
+                    str(pcb_path),
+                ]
+            )
             started = time.monotonic()
             env = {**os.environ, _IBOM_HEADLESS_ENV_VAR: "1"}
             result = subprocess_run(
@@ -165,3 +203,71 @@ class IbomGenerator:
             command=result.command,
             elapsed_seconds=elapsed,
         )
+
+
+def _normalize_field_name(field: str) -> str:
+    """Normalize a user-facing field name for lookup matching."""
+    return field.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _is_dnp_marker(value: str) -> bool:
+    """Return whether *value* should be interpreted as DNP."""
+    return value.strip().lower() in _TRUE_DNP_MARKERS
+
+
+def _resolve_extra_field_value(field_name: str, row: DatasheetRow) -> str:
+    """Resolve one requested iBOM field value from a :class:`DatasheetRow`."""
+    normalized = _normalize_field_name(field_name)
+    if normalized == "datasheet_name":
+        return row.datasheet_name
+    if normalized in {"manufacturer"}:
+        return row.manufacturer
+    if normalized in {"mpn", "mfgpn", "manufacturer_part_number", "part_number"}:
+        return row.mpn or row.mfgpn
+    if normalized in {
+        "fabricator_part_number",
+        "supplier_part_number",
+        "fabricator_pn",
+        "spn",
+        "lcsc",
+    }:
+        return row.fabricator_part_number
+    if normalized == "description":
+        return row.description
+    if normalized == "datasheet":
+        return row.datasheet
+    if normalized in {"dnp", "kicad_dnp"}:
+        return "DNP" if _is_dnp_marker(row.dnp) else ""
+    return ""
+
+
+def _write_extra_data_xml(
+    output_path: Path,
+    rows: Sequence[DatasheetRow],
+    extra_fields: Sequence[str],
+) -> None:
+    """Write iBOM-compatible XML extra-data with one ``comp`` per reference."""
+    root = ElementTree.Element("export")
+    components = ElementTree.SubElement(root, "components")
+
+    for row in rows:
+        reference = row.reference.strip()
+        if not reference:
+            continue
+
+        comp = ElementTree.SubElement(components, "comp", {"ref": reference})
+        if row.datasheet:
+            ElementTree.SubElement(comp, "datasheet").text = row.datasheet
+        if _is_dnp_marker(row.dnp):
+            ElementTree.SubElement(comp, "property", {"name": "dnp"})
+
+        for field_name in extra_fields:
+            if _normalize_field_name(field_name) == "datasheet":
+                # Prefer iBOM's dedicated <datasheet> tag over duplicate field.
+                continue
+            value = _resolve_extra_field_value(field_name, row)
+            if not value:
+                continue
+            ElementTree.SubElement(comp, "field", {"name": field_name}).text = value
+
+    ElementTree.ElementTree(root).write(output_path, encoding="utf-8", xml_declaration=True)

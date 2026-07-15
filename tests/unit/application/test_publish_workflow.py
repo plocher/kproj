@@ -17,7 +17,7 @@ from kproj.application import publish_workflow as workflow_module
 from kproj.application.publish_workflow import PublishWorkflow
 from kproj.common import github_link as github_link_module
 from kproj.common.kicad_install import KicadNotFoundError
-from kproj.config import GENERIC_SITE_PROFILE, KprojConfig
+from kproj.config import DEFAULT_IBOM_EXTRA_FIELDS, GENERIC_SITE_PROFILE, KprojConfig
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.publication import AssetRef
 from kproj.model.publish_request import PublishRequest
@@ -588,8 +588,11 @@ def test_drc_erc_mechanical_failure_does_not_open_journal(
         kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del inventory, ibom_extra_fields
         called["artifact_gen"] = True
         return (), (), ()
 
@@ -696,8 +699,11 @@ def _stub_artifact_generator(
         kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del inventory, ibom_extra_fields
         from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
 
         # Use the canonical project + board_rev from project_info per the
@@ -799,12 +805,16 @@ def _make_full_request(
     *,
     dry_run: bool = False,
     no_push: bool = True,
+    inventory: Path | None = None,
+    ibom_extra_fields: tuple[str, ...] = DEFAULT_IBOM_EXTRA_FIELDS,
 ) -> PublishRequest:
     config = KprojConfig(
         site_repo=site_repo,
         no_push=no_push,
         kicad_cli=kicad_cli,
         site_profile=GENERIC_SITE_PROFILE,
+        inventory=inventory,
+        ibom_extra_fields=ibom_extra_fields,
     )
     return PublishRequest(
         project_arg=project_arg,
@@ -1060,8 +1070,11 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del inventory, ibom_extra_fields
         captured["project"] = getattr(project_info, "project", None)
         captured["board_rev"] = getattr(project_info, "board_rev", None)
         # Emit asset refs in the same shape the workflow's preliminary
@@ -1089,6 +1102,88 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         f"artifact generator received board_rev={captured['board_rev']!r}; "
         "BLOCKER 1: must be the PCB-derived board_rev, not the project stem."
     )
+
+
+def test_artifact_generator_receives_inventory_and_ibom_extra_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kproj#48: workflow passes inventory + iBOM extra-field config to generators."""
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
+
+    captured: dict[str, object] = {}
+
+    def _recording_gen(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        kicad_python: Path,
+        _site_repo: Path,
+        _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del (
+            resolved,
+            project_info,
+            kicad_cli,
+            ibom_script,
+            kicad_python,
+            _site_repo,
+            _site_profile,
+        )
+        del journal
+        captured["inventory"] = inventory
+        captured["ibom_extra_fields"] = ibom_extra_fields
+        return (), (), ()
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
+        artifact_generator=_recording_gen,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    inventory_path = tmp_path / "inventory.csv"
+    inventory_path.write_text("IPN,Category,Value,Package\n", encoding="utf-8")
+    request = _make_full_request(
+        str(proj_dir),
+        fake_cli,
+        site,
+        inventory=inventory_path,
+        ibom_extra_fields=("Manufacturer", "MFGPN"),
+    )
+
+    with patch("kproj.services.site_publisher._git_run"):
+        workflow.run(request)
+
+    assert captured["inventory"] == inventory_path
+    assert captured["ibom_extra_fields"] == ("Manufacturer", "MFGPN")
 
 
 def test_schematic_export_error_converts_to_failed_outcome(
@@ -1136,8 +1231,11 @@ def test_schematic_export_error_converts_to_failed_outcome(
         kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del inventory, ibom_extra_fields
         # Simulate the schematic-export shape-mismatch path: register
         # one output then raise.  The workflow must convert this into
         # outcome=failed/exit 2 rather than letting it propagate.
@@ -1231,8 +1329,11 @@ def test_artifact_generator_diagnostics_flow_into_result(
         kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
+        del inventory, ibom_extra_fields
         # Return no asset refs; just surface a producer-stage diagnostic.
         return (), (), (producer_warning,)
 

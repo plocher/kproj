@@ -45,6 +45,7 @@ Environment variables:
   KPROJ_INVENTORY          overrides --inventory
   KPROJ_DATASHEET_LIBRARY  overrides --datasheet-library
   KPROJ_DATASHEET_REPO     overrides --datasheet-repo
+  KPROJ_IBOM_EXTRA_FIELDS  overrides --ibom-extra-fields
 
 ~/.kproj.yaml example:
   site_repo: /home/you/Dropbox/workspace/SPCoast.github.io
@@ -53,6 +54,7 @@ Environment variables:
   inventory: /home/you/Dropbox/KiCad/SPCoast-inventory/SPCoast-INVENTORY.csv
   datasheet_library: /home/you/Dropbox/KiCad/SPCoast-inventory
   datasheet_repo: plocher/SPCoast-inventory
+  ibom_extra_fields: MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description
 
 Without a ~/.kproj.yaml and no --inventory/KPROJ_INVENTORY, kproj publishes
 without datasheet deep-links (jbom is never invoked - see --inventory below).
@@ -126,6 +128,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ibom-extra-fields",
+        type=str,
+        default=None,
+        metavar="FIELDS",
+        help=(
+            "Comma-separated iBOM extra fields to surface (env: KPROJ_IBOM_EXTRA_FIELDS; "
+            "yaml: ibom_extra_fields:). Example: "
+            '"MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description".'
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -192,6 +205,7 @@ def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
             Path(namespace.datasheet_library) if namespace.datasheet_library else None
         ),
         datasheet_repo=namespace.datasheet_repo or None,
+        ibom_extra_fields=namespace.ibom_extra_fields or None,
     )
 
 

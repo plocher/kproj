@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from kproj.common import subprocess_runner
+from kproj.model.datasheet_row import DatasheetRow
 from kproj.model.export_result import ExportResult
 from kproj.services import ibom_generator as ibom_generator_module
 from kproj.services.change_journal import ChangeJournal
@@ -221,6 +222,110 @@ def test_generate_sets_interactive_html_bom_no_display_env(
         name_format="demo.ibom",
     )
     assert captured_env.get("INTERACTIVE_HTML_BOM_NO_DISPLAY") == "1"
+
+
+def test_generate_projects_inventory_rows_to_xml_extra_data(
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inventory rows are projected to a temporary XML file passed to iBOM."""
+    captured: dict[str, object] = {}
+
+    def _capture_run(command: Iterable[Any], **kwargs: Any) -> subprocess_runner.SubprocessResult:
+        argv = [str(a) for a in command]
+        captured["argv"] = argv
+        extra_data_idx = argv.index("--extra-data-file") + 1
+        extra_data_file = Path(argv[extra_data_idx])
+        captured["extra_data_file"] = extra_data_file
+        captured["extra_data_xml"] = extra_data_file.read_text(encoding="utf-8")
+        dest_idx = argv.index("--dest-dir") + 1
+        name_idx = argv.index("--name-format") + 1
+        dest_dir = Path(argv[dest_idx])
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        (dest_dir / f"{argv[name_idx]}.html").write_text("<html/>")
+        return subprocess_runner.SubprocessResult(
+            command=tuple(argv),
+            returncode=0,
+            stdout="",
+            stderr="",
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr(ibom_generator_module, "subprocess_run", _capture_run)
+
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "demo.ibom.html"
+    rows = (
+        DatasheetRow(
+            reference="Q8",
+            datasheet="https://example.com/bss138.pdf",
+            datasheet_name="MOSFET-BSS138",
+            manufacturer="ON Semi",
+            mfgpn="BSS138",
+            mpn="BSS138",
+            fabricator_part_number="LCSC999",
+            description="N-channel MOSFET",
+            dnp="DNP",
+        ),
+    )
+    IbomGenerator(
+        ibom_script=ibom_script,
+        python_exe=kicad_python,
+        extra_fields=(
+            "Manufacturer",
+            "MFGPN",
+            "Fabricator Part Number",
+            "Datasheet Name",
+            "Description",
+        ),
+    ).generate(
+        pcb_path=pcb,
+        output_file=output,
+        name_format="demo.ibom",
+        extra_data_rows=rows,
+    )
+
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert "--extra-fields" in argv
+    fields_idx = argv.index("--extra-fields") + 1
+    assert argv[fields_idx] == (
+        "Manufacturer,MFGPN,Fabricator Part Number,Datasheet Name,Description"
+    )
+    extra_data_file = captured["extra_data_file"]
+    assert isinstance(extra_data_file, Path)
+    assert extra_data_file != pcb
+    extra_data_xml = captured["extra_data_xml"]
+    assert isinstance(extra_data_xml, str)
+    assert '<comp ref="Q8">' in extra_data_xml
+    assert "<datasheet>https://example.com/bss138.pdf</datasheet>" in extra_data_xml
+    assert '<field name="Manufacturer">ON Semi</field>' in extra_data_xml
+    assert '<field name="MFGPN">BSS138</field>' in extra_data_xml
+    assert '<field name="Datasheet Name">MOSFET-BSS138</field>' in extra_data_xml
+    assert '<property name="dnp" />' in extra_data_xml
+
+
+def test_generate_omits_extra_fields_flag_when_configured_empty(
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty extra-field config omits ``--extra-fields`` from the argv."""
+    fake_run, captured = _make_fake_ibom_run()
+    monkeypatch.setattr(ibom_generator_module, "subprocess_run", fake_run)
+
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "demo.ibom.html"
+    IbomGenerator(
+        ibom_script=ibom_script,
+        python_exe=kicad_python,
+        extra_fields=(),
+    ).generate(
+        pcb_path=pcb,
+        output_file=output,
+        name_format="demo.ibom",
+    )
+    argv = captured[0]
+    assert "--extra-fields" not in argv
 
 
 def test_generate_propagates_subprocess_failure(
