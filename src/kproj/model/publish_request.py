@@ -25,6 +25,8 @@ class PublishRequest:
         config: Effective configuration after the precedence chain
             (``cli > env > yaml > default``).
         dry_run: ``True`` enables read-only mode (no writes, no git ops).
+        republish: ``True`` forces artifact regeneration even when
+            unchanged/staleness checks would otherwise skip producers.
         verbose_level: ``0`` = quiet, ``1`` = ``-v``, ``2`` = ``-v -d``.
         debug: ``True`` enables implementation-private debug output;
             independent of :attr:`verbose_level`.
@@ -33,5 +35,6 @@ class PublishRequest:
     project_arg: str
     config: KprojConfig
     dry_run: bool = False
+    republish: bool = False
     verbose_level: int = 0
     debug: bool = False

@@ -37,6 +37,7 @@ def test_parse_args_defaults_to_cwd_positional() -> None:
     assert parsed.datasheet_repo is None
     assert parsed.fabricator is None
     assert parsed.dry_run is False
+    assert parsed.republish is False
     assert parsed.no_push is False
     assert parsed.verbose == 0
     assert parsed.debug is False
@@ -58,6 +59,7 @@ def test_parse_args_supports_all_documented_flags() -> None:
             "--fabricator",
             "jlc",
             "--dry-run",
+            "--republish",
             "--no-push",
             "-v",
             "-d",
@@ -70,6 +72,7 @@ def test_parse_args_supports_all_documented_flags() -> None:
     assert parsed.datasheet_repo == "example/datasheets"
     assert parsed.fabricator == "jlc"
     assert parsed.dry_run is True
+    assert parsed.republish is True
     assert parsed.no_push is True
     assert parsed.verbose == 1
     assert parsed.debug is True
@@ -85,6 +88,12 @@ def test_parse_args_long_form_verbose() -> None:
     """``--verbose`` is the documented long form."""
     parsed = cli.parse_args(["--verbose"])
     assert parsed.verbose == 1
+
+
+def test_parse_args_force_alias_sets_republish() -> None:
+    """``--force`` aliases ``--republish``."""
+    parsed = cli.parse_args(["--force"])
+    assert parsed.republish is True
 
 
 # ----------------------------------------------------------------------
@@ -108,6 +117,7 @@ def test_build_request_propagates_cli_overrides(tmp_path: Path) -> None:
             "--fabricator",
             "pcbway",
             "--dry-run",
+            "--republish",
             "--no-push",
         ]
     )
@@ -115,6 +125,7 @@ def test_build_request_propagates_cli_overrides(tmp_path: Path) -> None:
     assert isinstance(request, PublishRequest)
     assert request.project_arg == "/tmp/proj"
     assert request.dry_run is True
+    assert request.republish is True
     assert request.config.site_repo == tmp_path
     assert request.config.no_push is True
     assert request.config.inventory == tmp_path / "inventory.csv"

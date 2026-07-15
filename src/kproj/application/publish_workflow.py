@@ -29,12 +29,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
 import yaml
 
+from .. import __version__ as KPROJ_VERSION
 from ..common.datasheet_library import (
     build_datasheet_link,
     check_datasheet_links,
@@ -217,6 +218,9 @@ __all__ = [
     "SitePublisherFactory",
 ]
 
+_PUBLISH_CONTEXT_SCHEMA: int = 1
+"""Schema version for ``kproj_publish_context`` front-matter metadata."""
+
 
 class PublishWorkflow:
     """Publish-pipeline orchestrator (11 steps end-to-end, kproj#4).
@@ -325,12 +329,13 @@ class PublishWorkflow:
                 ),
             )
 
-        print(
-            f"Info: Using kicad-cli {major}.{minor}.{patch} at {kicad_cli}",
-            file=sys.stderr,
-        )
-        if request.config.inventory is not None:
-            print(jbom_tool_report(), file=sys.stderr)
+        if request.verbose_level >= 1:
+            print(
+                f"Info: Using kicad-cli {major}.{minor}.{patch} at {kicad_cli}",
+                file=sys.stderr,
+            )
+            if request.config.inventory is not None:
+                print(jbom_tool_report(), file=sys.stderr)
 
         # ── Steps 2-3: Read + analyze ──
         project_info, read_findings = self._project_reader.read(resolved)
@@ -478,7 +483,27 @@ class PublishWorkflow:
         # missing.  There is NO kproj-internal content-comparison no-op:
         # git decides whether the publish commits anything (unchanged
         # sources -> byte-identical outputs -> empty ``git diff --cached``).
-        needs_regen = _needs_regeneration(
+        publish_context = _current_publish_context(
+            kicad_version=(major, minor, patch),
+            inventory_enabled=request.config.inventory is not None,
+            fabricator=request.config.fabricator,
+            ibom_extra_fields=request.config.ibom_extra_fields,
+        )
+        existing_publish_context = _existing_publish_context(version_file)
+        publish_context_drift = version_file.exists() and (
+            _normalize_publish_context(existing_publish_context)
+            != _normalize_publish_context(publish_context)
+        )
+        if publish_context_drift:
+            _log.info(
+                "publish context drift for %s-%s: existing=%s current=%s",
+                project_info.project,
+                project_info.board_rev,
+                existing_publish_context or {},
+                publish_context,
+            )
+
+        needs_regen_by_staleness = _needs_regeneration(
             images=images_refs,
             artifacts=artifact_refs,
             resolved=resolved,
@@ -486,6 +511,7 @@ class PublishWorkflow:
             site_profile=request.config.site_profile,
             version_file=version_file,
         )
+        needs_regen = request.republish or needs_regen_by_staleness or publish_context_drift
         existing_github_url = _existing_github_url(version_file)
         current_github_url = github_link_detection.url or ""
         github_url_drift = version_file.exists() and existing_github_url != current_github_url
@@ -497,7 +523,14 @@ class PublishWorkflow:
                 existing_github_url,
                 current_github_url,
             )
-        decision = "regenerate" if needs_regen else "skip (sources unchanged)"
+        if request.republish:
+            decision = "regenerate (forced by --republish/--force)"
+        elif needs_regen_by_staleness:
+            decision = "regenerate (sources/artifacts stale or missing)"
+        elif publish_context_drift:
+            decision = "regenerate (publish context changed)"
+        else:
+            decision = "skip (sources unchanged)"
         if not needs_regen and github_url_drift:
             decision = "skip (sources unchanged; metadata drift: github_url changed)"
         _log.info(
@@ -561,6 +594,7 @@ class PublishWorkflow:
                     published_at=published_at,
                     github_url=github_link_detection.url or "",
                     datasheets=datasheet_links,
+                    publish_context=publish_context,
                 )
 
                 # Step 10: SitePublisher.publish writes the markdown,
@@ -691,6 +725,7 @@ class PublishWorkflow:
         published_at: str = "",
         github_url: str | None = None,
         datasheets: tuple[DatasheetLink, ...] = (),
+        publish_context: Mapping[str, object] | None = None,
     ) -> Publication:
         """Build the site-emission-ready :class:`Publication` for a project.
 
@@ -731,6 +766,9 @@ class PublishWorkflow:
                 - mirrors the ``github_url`` single-evaluation pattern.
                 ``()`` (the default) is for direct callers (e.g. unit
                 tests) that don't have a precomputed lookup.
+            publish_context: Optional publish-provenance metadata emitted
+                as front-matter ``kproj_publish_context`` for future
+                regeneration decisions.
 
         Returns:
             A populated :class:`Publication`.
@@ -752,6 +790,7 @@ class PublishWorkflow:
             artifacts=artifacts,
             libraries=enumerate_libraries(resolved.project_dir),
             github_url=resolved_github_url,
+            publish_context=dict(publish_context or {}),
         )
 
 
@@ -790,23 +829,105 @@ def _existing_github_url(version_file: Path) -> str:
     A missing/invalid file (or missing key) is treated as no URL so the
     caller can compare it directly with the current detection result.
     """
-    if not version_file.exists():
-        return ""
-    try:
-        text = version_file.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    parts = text.split("---\n", 2)
-    if len(parts) < 3:
-        return ""
-    try:
-        front_matter = yaml.safe_load(parts[1])
-    except yaml.YAMLError:
-        return ""
-    if not isinstance(front_matter, dict):
+    front_matter = _front_matter_mapping(version_file)
+    if front_matter is None:
         return ""
     existing = front_matter.get("github_url")
     return str(existing).strip() if existing else ""
+
+
+def _existing_publish_context(version_file: Path) -> dict[str, object] | None:
+    """Return existing ``kproj_publish_context`` data from a version page.
+
+    Missing files, invalid front-matter, absent keys, or non-mapping
+    values all return ``None`` so callers can treat them as legacy pages
+    without stored publish context.
+    """
+    front_matter = _front_matter_mapping(version_file)
+    if front_matter is None:
+        return None
+    raw_context = front_matter.get("kproj_publish_context")
+    if not isinstance(raw_context, Mapping):
+        return None
+    return {str(key): value for key, value in raw_context.items()}
+
+
+def _front_matter_mapping(version_file: Path) -> dict[str, object] | None:
+    """Parse and return a version file's YAML front-matter mapping.
+
+    Returns ``None`` when the file is missing, unreadable, lacks fenced
+    front-matter, or parses to a non-mapping top-level shape.
+    """
+    if not version_file.exists():
+        return None
+    try:
+        text = version_file.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    parts = text.split("---\n", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        front_matter = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return None
+    if not isinstance(front_matter, Mapping):
+        return None
+    return {str(key): value for key, value in front_matter.items()}
+
+
+def _current_publish_context(
+    *,
+    kicad_version: tuple[int, int, int],
+    inventory_enabled: bool,
+    fabricator: str,
+    ibom_extra_fields: tuple[str, ...],
+) -> dict[str, object]:
+    """Return the current run's output-affecting publish context metadata."""
+    major, minor, patch = kicad_version
+    return {
+        "schema": _PUBLISH_CONTEXT_SCHEMA,
+        "kproj_version": KPROJ_VERSION,
+        "kicad_cli_version": f"{major}.{minor}.{patch}",
+        "inventory_enabled": inventory_enabled,
+        "fabricator": fabricator,
+        "ibom_extra_fields": list(ibom_extra_fields),
+    }
+
+
+def _normalize_publish_context(context: Mapping[str, object] | None) -> dict[str, object]:
+    """Normalize publish-context metadata for deterministic equality checks."""
+    if context is None:
+        return {
+            "schema": 0,
+            "kproj_version": "",
+            "kicad_cli_version": "",
+            "inventory_enabled": False,
+            "fabricator": "",
+            "ibom_extra_fields": (),
+        }
+    raw_schema = context.get("schema", 0)
+    try:
+        schema = int(str(raw_schema).strip())
+    except (TypeError, ValueError):
+        schema = 0
+
+    raw_fields = context.get("ibom_extra_fields", ())
+    if isinstance(raw_fields, str):
+        ibom_fields = tuple(field.strip() for field in raw_fields.split(",") if field.strip())
+    elif isinstance(raw_fields, Sequence):
+        ibom_fields = tuple(str(field).strip() for field in raw_fields if str(field).strip())
+    else:
+        ibom_fields = ()
+
+    return {
+        "schema": schema,
+        "kproj_version": str(context.get("kproj_version", "")).strip(),
+        "kicad_cli_version": str(context.get("kicad_cli_version", "")).strip(),
+        "inventory_enabled": bool(context.get("inventory_enabled", False)),
+        "fabricator": str(context.get("fabricator", "")).strip().lower(),
+        "ibom_extra_fields": ibom_fields,
+    }
 
 
 def _publish_timestamp() -> str:

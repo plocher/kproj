@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -201,7 +202,61 @@ def test_private_project_short_circuits_with_private_skip(
     assert result.exit_code in (0, 1)
     assert "status=private" in result.message
     err = capsys.readouterr().err
-    assert "kicad-cli 9.0.4" in err
+    assert "kicad-cli 9.0.4" not in err
+
+
+def test_verbose_mode_emits_toolchain_reports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Toolchain info lines are shown only when ``verbose_level >= 1``."""
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "private"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            company="ACME",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text("IPN,Category,Value,Package\n", encoding="utf-8")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+    monkeypatch.setattr(
+        workflow_module,
+        "jbom_tool_report",
+        lambda: "Info: Using jbom 7.8.1 at /tmp/jbom",
+    )
+
+    config = KprojConfig(
+        site_repo=tmp_path / "site",
+        no_push=False,
+        kicad_cli=fake_cli,
+        site_profile=GENERIC_SITE_PROFILE,
+        inventory=inventory,
+    )
+    request = replace(
+        PublishRequest(project_arg=str(proj_dir), config=config),
+        verbose_level=1,
+    )
+    workflow = _workflow(tmp_path)
+    result = workflow.run(request)
+    assert result.outcome == "private-skip"
+    err = capsys.readouterr().err
+    assert "Info: Using kicad-cli 9.0.4" in err
+    assert "Info: Using jbom 7.8.1 at /tmp/jbom" in err
 
 
 def test_run_surfaces_github_link_missing_finding_for_non_repo_project(
@@ -874,6 +929,203 @@ def test_active_project_publishes_successfully(
 
     assert result.outcome in ("published", "refreshed", "noop")
     assert result.exit_code in (0, 1)  # may have warnings
+
+
+def test_regenerates_when_existing_publish_lacks_publish_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy pages without publish context should trigger one regeneration."""
+    import subprocess
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    project = "demo"
+    board_rev = "1.0"
+    version_file = site / GENERIC_SITE_PROFILE.versions_dir / project / f"{board_rev}.md"
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(
+        "---\n"
+        "project: demo\n"
+        "title: 1.0\n"
+        "date: 2026-01-01T00:00:00+00:00\n"
+        "---\n"
+        "legacy\n",
+        encoding="utf-8",
+    )
+    project_index = GENERIC_SITE_PROFILE.project_index_path(site, project)
+    project_index.parent.mkdir(parents=True, exist_ok=True)
+    project_index.write_text("---\ntitle: demo\nproject: demo\n---\n", encoding="utf-8")
+    asset_dir = site / GENERIC_SITE_PROFILE.assets_dir / project / board_rev
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    for suffix in (
+        "top.png",
+        "bottom.png",
+        "sch.svg",
+        "sch.pdf",
+        "ibom.html",
+        "step",
+        "source.zip",
+    ):
+        (asset_dir / f"{project}-{board_rev}.{suffix}").write_bytes(b"legacy")
+
+    subprocess.run(["git", "add", "-A"], cwd=site, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "seed legacy publish"],
+        cwd=site,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
+    generator_calls: list[int] = []
+
+    def _recording_gen(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        kicad_python: Path,
+        _site_repo: Path,
+        _site_profile: object,
+        inventory: Path | None,
+        fabricator: str,
+        ibom_extra_fields: tuple[str, ...],
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del (
+            resolved,
+            project_info,
+            kicad_cli,
+            ibom_script,
+            kicad_python,
+            _site_repo,
+            _site_profile,
+            inventory,
+            fabricator,
+            ibom_extra_fields,
+            journal,
+        )
+        generator_calls.append(1)
+        return (), (), ()
+
+    workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
+        artifact_generator=_recording_gen,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    request = _make_full_request(str(proj_dir), fake_cli, site, no_push=True)
+    with patch("kproj.services.site_publisher._git_run"):
+        workflow.run(request)
+
+    assert len(generator_calls) == 1, (
+        "legacy version pages without kproj_publish_context should trigger a regeneration pass"
+    )
+
+
+def test_republish_request_forces_regeneration_even_when_sources_are_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``republish=True`` bypasses unchanged checks and reruns producers."""
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    seed_workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    seed_request = _make_full_request(str(proj_dir), fake_cli, site, no_push=True)
+    first = seed_workflow.run(seed_request)
+    assert first.outcome in {"published", "refreshed"}
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
+    generator_calls: list[int] = []
+
+    def _recording_gen(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        kicad_python: Path,
+        _site_repo: Path,
+        _site_profile: object,
+        inventory: Path | None,
+        fabricator: str,
+        ibom_extra_fields: tuple[str, ...],
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del (
+            resolved,
+            project_info,
+            kicad_cli,
+            ibom_script,
+            kicad_python,
+            _site_repo,
+            _site_profile,
+            inventory,
+            fabricator,
+            ibom_extra_fields,
+            journal,
+        )
+        generator_calls.append(1)
+        return (), (), ()
+
+    force_workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
+        artifact_generator=_recording_gen,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    force_request = replace(seed_request, republish=True)
+    with patch("kproj.services.site_publisher._git_run"):
+        force_workflow.run(force_request)
+
+    assert len(generator_calls) == 1, (
+        "--republish/--force should rerun artifact generation even when sources are unchanged"
+    )
 
 
 def test_full_publish_detects_github_link_once_and_shares_result(

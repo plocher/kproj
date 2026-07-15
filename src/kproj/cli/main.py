@@ -159,6 +159,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Read-only mode: surface findings without writing to the site repo.",
     )
     parser.add_argument(
+        "--republish",
+        "--force",
+        dest="republish",
+        action="store_true",
+        default=False,
+        help=(
+            "Force artifact regeneration and publish even when unchanged checks "
+            "would otherwise skip producers."
+        ),
+    )
+    parser.add_argument(
         "--no-push",
         action="store_true",
         default=False,
@@ -247,6 +258,7 @@ def build_request(
         project_arg=str(namespace.project),
         config=config,
         dry_run=bool(namespace.dry_run),
+        republish=bool(namespace.republish),
         verbose_level=verbose_level,
         debug=bool(namespace.debug),
     )

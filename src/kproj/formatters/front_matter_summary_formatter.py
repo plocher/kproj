@@ -140,6 +140,8 @@ class FrontMatterSummaryFormatter:
         # alongside the artifact downloads per docs/DESIGN.md.
         if publication.github_url:
             data["github_url"] = publication.github_url
+        if publication.publish_context:
+            data["kproj_publish_context"] = dict(publication.publish_context)
 
         # Audit / DRC / ERC count summaries.  Each block is counted
         # from its own Finding.source dimension (wave-3 M2 fix-up); a
