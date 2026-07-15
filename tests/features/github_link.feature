@@ -24,11 +24,14 @@ Feature: kproj publishes a "see/fork on GitHub" link (kproj#30)
 
   Scenario: a project that is not a git repo gets no GitHub link and a missing-backing advisory
     Given a populated KiCad project with status active
+    And no findings except the GitHub-link advisory
     And a clean site repo
     When I run kproj
     Then kproj reports outcome "published"
     And the version page front-matter has no GitHub link
     And the version page body has a github_link_missing advisory finding
+    And stderr shows the GitHub-link Note
+    And kproj exits with code 0
 
   Scenario: a project with a GitHub remote but no upstream tracking gets no GitHub link and an unpushed advisory
     Given a populated KiCad project with status active

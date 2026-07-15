@@ -135,7 +135,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-push",
         action="store_true",
         default=False,
-        help="Skip 'git push' after the site-repo commit (batch-friendly).",
+        help=(
+            "Skip 'git push' after the site-repo commit for batch runs; "
+            "a final plain run flushes pending site commits."
+        ),
     )
     parser.add_argument(
         "-v",
