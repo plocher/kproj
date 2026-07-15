@@ -38,6 +38,7 @@ from ..common.datasheet_library import (
     check_datasheet_links,
     jbom_tool_report,
     read_datasheet_names,
+    read_ibom_rows,
 )
 from ..common.github_link import derive_github_link, detect_github_link, finding_for_detection
 from ..common.kicad_install import (
@@ -60,6 +61,7 @@ from ..config import KprojConfig, SiteProfile
 from ..formatters.markdown_table_formatter import MarkdownTableFormatter
 from ..model.analysis_info import AnalysisInfo
 from ..model.datasheet_link import DatasheetLink
+from ..model.datasheet_row import DatasheetRow
 from ..model.finding import Finding
 from ..model.project_info import ProjectInfo, Status
 from ..model.publication import AssetRef, Publication
@@ -119,7 +121,18 @@ without a real KiCad install.
 """
 
 ArtifactGeneratorCallable = Callable[
-    ["ResolvedProject", "ProjectInfo", Path, Path, Path, Path, SiteProfile, "ChangeJournal"],
+    [
+        "ResolvedProject",
+        "ProjectInfo",
+        Path,
+        Path,
+        Path,
+        Path,
+        SiteProfile,
+        "Path | None",
+        tuple[str, ...],
+        "ChangeJournal",
+    ],
     tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple["Finding", ...]],
 ]
 """Callable that generates all release artifacts for a project.
@@ -134,6 +147,8 @@ Signature::
         kicad_python: Path,
         site_repo: Path,
         site_profile: SiteProfile,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[images_refs, artifact_refs, diagnostics]
 
@@ -145,6 +160,11 @@ so the iBOM script runs under the Python that has ``pcbnew``.
 asset files are written where the backend serves them (Hugo's
 ``static/versions/`` resolves at the public ``/versions/`` URL); the
 public AssetRef paths stay ``/versions/...`` regardless of backend.
+
+``inventory`` and ``ibom_extra_fields`` provide the iBOM enrichment
+inputs (kproj#48): when inventory is configured, the default generator
+queries jBOM for per-reference inventory fields and projects them to
+iBOM's extra-data XML format using the configured extra-field list.
 
 ``project_info`` carries the canonical ``board_rev`` (PCB-derived per
 ``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
@@ -482,6 +502,8 @@ class PublishWorkflow:
                             kicad_python,
                             site_repo,
                             request.config.site_profile,
+                            request.config.inventory,
+                            request.config.ibom_extra_fields,
                             journal,
                         )
                     )
@@ -932,6 +954,8 @@ def _default_artifact_generator(
     kicad_python: Path,
     site_repo: Path,
     site_profile: SiteProfile,
+    inventory: Path | None,
+    ibom_extra_fields: tuple[str, ...],
     journal: ChangeJournal,
 ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
     """Generate all release artifacts using real kicad-cli + iBOM.
@@ -966,6 +990,9 @@ def _default_artifact_generator(
             asset files are physically written (e.g. Hugo's
             ``static/versions/``), while the public AssetRef URLs stay
             ``/versions/...``.
+        inventory: Optional inventory CSV used to enrich iBOM extra-data
+            rows from a live ``jbom bom`` query.
+        ibom_extra_fields: Ordered iBOM extra fields to surface.
         journal: Open :class:`ChangeJournal` for rollback tracking.
 
     Returns:
@@ -976,7 +1003,7 @@ def _default_artifact_generator(
     """
     pcb_exporter = PcbExporter(kicad_cli)
     sch_exporter = SchematicExporter(kicad_cli)
-    ibom_gen = IbomGenerator(ibom_script, kicad_python)
+    ibom_gen = IbomGenerator(ibom_script, kicad_python, extra_fields=ibom_extra_fields)
     thumbnail_gen = ThumbnailGenerator()
     archiver = ZipArchiver()
     fab_packager = FabPackager(archiver)
@@ -993,6 +1020,14 @@ def _default_artifact_generator(
     base_site = f"/versions/{P}/{R}"
 
     diagnostics: list[Finding] = []
+    ibom_rows: tuple[DatasheetRow, ...] = ()
+    if inventory is not None:
+        ibom_rows, ibom_row_findings = read_ibom_rows(
+            resolved.project_dir,
+            inventory,
+            project=P,
+        )
+        diagnostics.extend(ibom_row_findings)
 
     # PCB renders
     top_path = asset_dir / f"{PR}.top.png"
@@ -1030,7 +1065,13 @@ def _default_artifact_generator(
     # iBOM (kproj#10: may fail; ChangeJournal rolls back on exception)
     ibom_path = asset_dir / f"{PR}.ibom.html"
     diagnostics.extend(
-        ibom_gen.generate(resolved.pcb_file, ibom_path, f"{PR}.ibom", journal=journal).diagnostics
+        ibom_gen.generate(
+            resolved.pcb_file,
+            ibom_path,
+            f"{PR}.ibom",
+            journal=journal,
+            extra_data_rows=ibom_rows if ibom_rows else None,
+        ).diagnostics
     )
 
     # Fab pack (optional — skipped when production/ is missing)

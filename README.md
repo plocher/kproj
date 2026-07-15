@@ -28,6 +28,7 @@ Run `kproj --help` for the authoritative, up-to-date flag list. As of this writi
 
 - `--site-repo PATH` — override the local site-repo checkout (highest precedence).
 - `--inventory PATH` — inventory CSV to enrich the BOM with curated datasheet names. Unset means kproj never invokes `jbom` and publishes without datasheet deep-links.
+- `--ibom-extra-fields FIELDS` — comma-separated iBOM table fields to surface from inventory-enriched data (for example `MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description`).
 - `--datasheet-library PATH` — local datasheet-library clone used by the advisory publish guard.
 - `--datasheet-repo OWNER/REPO` — public repo slug that published datasheet deep-links point at.
 - `--dry-run` — read-only mode: surface findings without writing to the site repo.
@@ -58,9 +59,11 @@ kicad_cli: /usr/local/bin/kicad-cli
 inventory: /path/to/your/SPCoast-inventory/SPCoast-INVENTORY.csv
 datasheet_library: /path/to/your/SPCoast-inventory
 datasheet_repo: plocher/SPCoast-inventory
+ibom_extra_fields: MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description
 ```
 
 Every key is optional; omit what you don't need to override. `site_repo` and `no_push` control where and how kproj publishes; `kicad_cli` pins a specific executable instead of relying on auto-discovery; `inventory` / `datasheet_library` / `datasheet_repo` configure the datasheet deep-link feature below.
+`ibom_extra_fields` controls which inventory-derived columns are surfaced in the generated iBOM table.
 
 ### Datasheet deep-links
 

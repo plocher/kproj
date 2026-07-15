@@ -17,12 +17,14 @@ import pytest
 
 from kproj.common.datasheet_library import (
     DATASHEET_BOM_FIELDS,
+    IBOM_BOM_FIELDS,
     _default_jbom_command,
     build_datasheet_link,
     check_datasheet_links,
     distinct_datasheet_names,
     read_datasheet_names,
     read_datasheet_rows,
+    read_ibom_rows,
 )
 from kproj.model.datasheet_link import DatasheetLink
 from kproj.model.datasheet_row import DatasheetRow
@@ -131,6 +133,33 @@ def test_read_datasheet_rows_returns_structured_per_reference_rows(tmp_path: Pat
     assert findings == ()
 
 
+def test_read_ibom_rows_expands_grouped_references_and_maps_inventory_fields(
+    tmp_path: Path,
+) -> None:
+    """Grouped BOM refs are exploded to per-reference rows for iBOM matching."""
+    stdout = (
+        "Reference,Datasheet,Datasheet Name,Manufacturer,MFGPN,Fabricator Part Number,Description,DNP\n"
+        "R8,https://example.com/r.pdf,res_doc,Yageo,RC0603-10K,LCSC123,10K resistor,\n"
+        "R9,https://example.com/r.pdf,res_doc,Yageo,RC0603-10K,LCSC123,10K resistor,\n"
+        '"Q8, Q9",https://example.com/mosfet.pdf,mos_doc,ON Semi,BSS138,LCSC999,MOSFET,DNP\n'
+    )
+    command = _fake_jbom_script(tmp_path, stdout=stdout)
+    rows, findings = read_ibom_rows(
+        tmp_path,
+        inventory=tmp_path / "inventory.csv",
+        jbom_command=command,
+    )
+    assert findings == ()
+    assert [row.reference for row in rows] == ["R8", "R9", "Q8", "Q9"]
+    assert rows[0].manufacturer == "Yageo"
+    assert rows[0].mfgpn == "RC0603-10K"
+    assert rows[0].mpn == "RC0603-10K"
+    assert rows[0].fabricator_part_number == "LCSC123"
+    assert rows[0].description == "10K resistor"
+    assert rows[2].dnp == "DNP"
+    assert rows[3].datasheet_name == "mos_doc"
+
+
 def test_read_datasheet_names_sorted_case_insensitively(tmp_path: Path) -> None:
     """Distinct names come back case-insensitively sorted."""
     stdout = "Reference,Datasheet Name\nR1,beta_doc\nR2,Alpha_doc\n"
@@ -227,6 +256,14 @@ def test_read_datasheet_names_default_command_includes_inventory_when_configured
         "-",
     ]
     assert command[0].endswith("jbom") or command[:3] == [sys.executable, "-m", "jbom"]
+
+
+def test_default_jbom_command_supports_ibom_field_token_set(tmp_path: Path) -> None:
+    """The command builder threads a custom field-token list unchanged."""
+    inventory = tmp_path / "inventory.csv"
+    command = _default_jbom_command(tmp_path, inventory, fields=IBOM_BOM_FIELDS)
+    assert command is not None
+    assert command[-3:] == [IBOM_BOM_FIELDS, "-o", "-"]
 
 
 def test_real_jbom_supports_datasheet_lookup_field_list(tmp_path: Path) -> None:

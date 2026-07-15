@@ -75,7 +75,7 @@ import io
 import logging
 import shutil
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from urllib.parse import quote as _urlquote
 
@@ -101,6 +101,25 @@ to this tuple; nothing else in this module hardcodes the field list.
 DATASHEET_BOM_FIELDS: str = ",".join(_DATASHEET_BOM_FIELD_TOKENS)
 """The ``jbom bom -f`` value: comma-separated, normalized field tokens
 (NOT display headers - see the kproj#36 bug this constant fixes)."""
+
+_IBOM_BOM_FIELD_TOKENS: tuple[str, ...] = (
+    "reference",
+    "datasheet",
+    "datasheet_name",
+    "manufacturer",
+    "mfgpn",
+    "fabricator_part_number",
+    "description",
+    "dnp",
+)
+"""Field-token tuple for inventory-enriched iBOM data extraction.
+
+The values are intentionally inventory-facing and map directly onto the
+iBOM interactive table fields we surface in kproj#48.
+"""
+
+IBOM_BOM_FIELDS: str = ",".join(_IBOM_BOM_FIELD_TOKENS)
+"""The ``jbom bom -f`` value used by :func:`read_ibom_rows`."""
 
 _GIT_INVOCATION_ERRORS: tuple[type[Exception], ...] = (SubprocessTimeoutError, OSError)
 """Mirrors ``common.github_link``'s collapsing of git failure modes: a slow
@@ -189,8 +208,13 @@ def jbom_tool_report() -> str:
     return f"Info: Using {version} at {location}{fallback}"
 
 
-def _default_jbom_command(project_dir: Path, inventory: Path | None) -> list[str] | None:
-    """Build the ``jbom -q bom ...`` argv for the datasheet-row lookup.
+def _default_jbom_command(
+    project_dir: Path,
+    inventory: Path | None,
+    *,
+    fields: str = DATASHEET_BOM_FIELDS,
+) -> list[str] | None:
+    """Build the ``jbom -q bom ...`` argv for a BOM-row lookup.
 
     Returns ``None`` when *inventory* is unconfigured: per the kproj#36
     owner ruling, the ``datasheet_name`` column only exists in the
@@ -216,7 +240,7 @@ def _default_jbom_command(project_dir: Path, inventory: Path | None) -> list[str
         "--inventory",
         str(inventory),
         "-f",
-        DATASHEET_BOM_FIELDS,
+        fields,
         "-o",
         "-",
     ]
@@ -234,6 +258,31 @@ def _display_header(field: str) -> str:
     the display header.
     """
     return field.replace("_", " ").title()
+
+
+def _normalize_csv_header(name: str) -> str:
+    """Normalize a CSV header label to a lookup token."""
+    return name.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _normalize_csv_row(row: Mapping[str, str | None]) -> dict[str, str]:
+    """Return a normalized-header mapping with stripped string values."""
+    return {
+        _normalize_csv_header(str(key)): (value or "").strip()
+        for key, value in row.items()
+        if key is not None
+    }
+
+
+def _expand_references(reference_cell: str) -> tuple[str, ...]:
+    """Expand jBOM's aggregated reference cell into per-reference tokens.
+
+    jBOM emits grouped references as comma-delimited strings
+    (e.g. ``\"R8, R9, R21, R22\"``). iBOM extra-data matching is
+    per-reference, so this splitter normalizes grouped cells into a
+    stable tuple.
+    """
+    return tuple(part.strip() for part in reference_cell.split(",") if part.strip())
 
 
 def read_datasheet_rows(
@@ -327,33 +376,80 @@ def read_datasheet_rows(
 
     reader = csv.DictReader(io.StringIO(result.stdout))
     fieldnames = reader.fieldnames or ()
-    name_header = _display_header("datasheet_name")
-    if name_header not in fieldnames:
+    normalized_fieldnames = {_normalize_csv_header(name) for name in fieldnames}
+    if "datasheet_name" not in normalized_fieldnames:
         return (), (
             Finding(
                 severity=Severity.WARNING,
                 field="datasheet_field_missing",
                 value=" ".join(command),
                 reason=(
-                    f"`jbom bom` output has no '{name_header}' column; "
+                    "`jbom bom` output has no 'Datasheet Name' column; "
                     "publishing without datasheet links. This jBOM version may "
                     "predate the Datasheet Name field (jBOM >= 7.4.0 required)."
                 ),
                 project=project,
             ),
         )
-
-    reference_header = _display_header("reference")
-    datasheet_header = _display_header("datasheet")
-    rows = tuple(
-        DatasheetRow(
-            reference=(row.get(reference_header) or "").strip(),
-            datasheet=(row.get(datasheet_header) or "").strip(),
-            datasheet_name=(row.get(name_header) or "").strip(),
+    rows: list[DatasheetRow] = []
+    for row in reader:
+        normalized_row = _normalize_csv_row(row)
+        references = _expand_references(normalized_row.get("reference", ""))
+        datasheet = normalized_row.get("datasheet", "")
+        datasheet_name = normalized_row.get("datasheet_name", "")
+        manufacturer = normalized_row.get("manufacturer", "")
+        mfgpn = normalized_row.get("mfgpn", "")
+        mpn = normalized_row.get("mpn", "") or mfgpn
+        fabricator_part_number = (
+            normalized_row.get("fabricator_part_number", "")
+            or normalized_row.get("supplier_part_number", "")
+            or normalized_row.get("lcsc", "")
         )
-        for row in reader
-    )
-    return rows, ()
+        description = normalized_row.get("description", "")
+        dnp = normalized_row.get("dnp", "")
+
+        if not references:
+            references = ("",)
+        for reference in references:
+            rows.append(
+                DatasheetRow(
+                    reference=reference,
+                    datasheet=datasheet,
+                    datasheet_name=datasheet_name,
+                    manufacturer=manufacturer,
+                    mfgpn=mfgpn,
+                    mpn=mpn,
+                    fabricator_part_number=fabricator_part_number,
+                    description=description,
+                    dnp=dnp,
+                )
+            )
+    return tuple(rows), ()
+
+
+def read_ibom_rows(
+    project_dir: Path,
+    inventory: Path | None = None,
+    *,
+    project: str = "",
+    jbom_command: Sequence[str] | None = None,
+) -> tuple[tuple[DatasheetRow, ...], tuple[Finding, ...]]:
+    """Return per-reference rows with inventory fields for iBOM enrichment.
+
+    This is the kproj#48 companion to :func:`read_datasheet_rows`: it
+    uses an expanded ``-f`` list (see :data:`IBOM_BOM_FIELDS`) that
+    includes supply-chain columns needed by iBOM. Grouped references in
+    jBOM BOM output are expanded into one :class:`DatasheetRow` per
+    reference, preserving iBOM's per-reference lookup contract.
+    """
+    if jbom_command is not None:
+        command = list(jbom_command)
+    else:
+        built = _default_jbom_command(project_dir, inventory, fields=IBOM_BOM_FIELDS)
+        if built is None:
+            return (), ()
+        command = built
+    return read_datasheet_rows(project_dir, inventory, project=project, jbom_command=command)
 
 
 def distinct_datasheet_names(rows: Sequence[DatasheetRow]) -> tuple[str, ...]:

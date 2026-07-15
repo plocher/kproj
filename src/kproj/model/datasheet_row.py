@@ -25,8 +25,22 @@ class DatasheetRow:
         datasheet_name: The curated ``Datasheet Name`` value (per the
             SPCoast-inventory document library's Never-Rename
             invariant). Empty for an uncurated reference.
+        manufacturer: Inventory-resolved manufacturer name.
+        mfgpn: Inventory-resolved manufacturer part number.
+        mpn: Alias of :attr:`mfgpn` for downstream consumers that expect
+            an ``MPN`` column label.
+        fabricator_part_number: Inventory-resolved supplier/fabricator
+            part number.
+        description: Inventory-resolved component description.
+        dnp: DNP marker value (typically ``"DNP"`` or empty string).
     """
 
     reference: str
     datasheet: str
     datasheet_name: str
+    manufacturer: str = ""
+    mfgpn: str = ""
+    mpn: str = ""
+    fabricator_part_number: str = ""
+    description: str = ""
+    dnp: str = ""

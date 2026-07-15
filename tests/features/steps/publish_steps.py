@@ -33,6 +33,7 @@ from kproj.application.publish_workflow import PublishWorkflow  # noqa: E402
 from kproj.config import (  # noqa: E402
     DEFAULT_DATASHEET_LIBRARY,
     DEFAULT_DATASHEET_REPO,
+    DEFAULT_IBOM_EXTRA_FIELDS,
     GENERIC_SITE_PROFILE,
     KprojConfig,
 )
@@ -89,7 +90,8 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
 
     Honours the artifact-generator signature
     ``(resolved, project_info, kicad_cli, ibom_script, kicad_python,
-    site_repo, journal)`` and returns the 3-tuple
+    site_repo, site_profile, inventory, ibom_extra_fields, journal)``
+    and returns the 3-tuple
     ``(images, artifacts, diagnostics)``.  Derives ``basename`` /
     ``board_rev`` from ``project_info`` so path layout matches
     BLOCKER 1's canonical shape.
@@ -103,8 +105,11 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
         _kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del inventory, ibom_extra_fields
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
         R = getattr(project_info, "board_rev", None) or "1.0"
         PR = f"{basename}-{R}"
@@ -224,6 +229,7 @@ def _build_request(context: Any, *, dry_run: bool = False) -> PublishRequest:
             inventory=getattr(context, "inventory", None),
             datasheet_library=getattr(context, "datasheet_library", DEFAULT_DATASHEET_LIBRARY),
             datasheet_repo=getattr(context, "datasheet_repo", DEFAULT_DATASHEET_REPO),
+            ibom_extra_fields=getattr(context, "ibom_extra_fields", DEFAULT_IBOM_EXTRA_FIELDS),
         ),
         dry_run=dry_run,
     )
@@ -418,8 +424,11 @@ def step_given_failing_producer(context: Any) -> None:
         _kicad_python: Path,
         _site_repo: Path,
         _site_profile: object,
+        inventory: Path | None,
+        ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del inventory, ibom_extra_fields
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
         R = getattr(project_info, "board_rev", None) or "1.0"
         # Simulate one producer writing an asset before a later one fails.

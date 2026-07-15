@@ -14,6 +14,7 @@ import pytest
 from kproj.config import (
     DEFAULT_DATASHEET_LIBRARY,
     DEFAULT_DATASHEET_REPO,
+    DEFAULT_IBOM_EXTRA_FIELDS,
     DEFAULT_NO_PUSH,
     DEFAULT_SITE_REPO,
     GENERIC_SITE_PROFILE,
@@ -48,6 +49,7 @@ def test_load_config_falls_back_to_defaults(tmp_path: Path) -> None:
     assert config.inventory is None
     assert config.datasheet_library == DEFAULT_DATASHEET_LIBRARY
     assert config.datasheet_repo == DEFAULT_DATASHEET_REPO
+    assert config.ibom_extra_fields == DEFAULT_IBOM_EXTRA_FIELDS
 
 
 def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
@@ -58,6 +60,7 @@ def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
         "inventory: /opt/inventory.csv\n"
         "datasheet_library: /opt/datasheets\n"
         "datasheet_repo: example/datasheets\n"
+        "ibom_extra_fields: MPN,Manufacturer,Datasheet\n"
     )
     config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
     assert config.site_repo == Path("/opt/site")
@@ -66,6 +69,7 @@ def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
     assert config.inventory == Path("/opt/inventory.csv")
     assert config.datasheet_library == Path("/opt/datasheets")
     assert config.datasheet_repo == "example/datasheets"
+    assert config.ibom_extra_fields == ("MPN", "Manufacturer", "Datasheet")
 
 
 def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
@@ -77,6 +81,7 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
         "inventory: /from/yaml.csv\n"
         "datasheet_library: /from/yaml-lib\n"
         "datasheet_repo: yaml/repo\n"
+        "ibom_extra_fields: Datasheet,Datasheet Name\n"
     )
     config = load_config(
         ConfigOverrides(),
@@ -87,6 +92,7 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
             "KPROJ_INVENTORY": "/from/env.csv",
             "KPROJ_DATASHEET_LIBRARY": "/from/env-lib",
             "KPROJ_DATASHEET_REPO": "env/repo",
+            "KPROJ_IBOM_EXTRA_FIELDS": "MPN,Manufacturer",
         },
         yaml_path=yaml_path,
     )
@@ -96,6 +102,7 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
     assert config.inventory == Path("/from/env.csv")
     assert config.datasheet_library == Path("/from/env-lib")
     assert config.datasheet_repo == "env/repo"
+    assert config.ibom_extra_fields == ("MPN", "Manufacturer")
 
 
 def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
@@ -109,6 +116,7 @@ def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
         inventory=Path("/from/cli.csv"),
         datasheet_library=Path("/from/cli-lib"),
         datasheet_repo="cli/repo",
+        ibom_extra_fields=("Datasheet", "Datasheet Name"),
     )
     config = load_config(
         overrides,
@@ -125,6 +133,7 @@ def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
     assert config.inventory == Path("/from/cli.csv")
     assert config.datasheet_library == Path("/from/cli-lib")
     assert config.datasheet_repo == "cli/repo"
+    assert config.ibom_extra_fields == ("Datasheet", "Datasheet Name")
 
 
 class TestDatasheetLibraryPrecedence:
@@ -234,6 +243,42 @@ class TestInventoryPrecedence:
             yaml_path=yaml_path,
         )
         assert config.inventory == Path("/from/cli.csv")
+
+
+class TestIbomExtraFieldsPrecedence:
+    """Per-tier tests for configurable iBOM extra fields (kproj#48)."""
+
+    def test_defaults_to_locked_field_set(self, tmp_path: Path) -> None:
+        config = load_config(ConfigOverrides(), env={}, yaml_path=tmp_path / "missing.yaml")
+        assert config.ibom_extra_fields == DEFAULT_IBOM_EXTRA_FIELDS
+
+    def test_yaml_list_shape_is_supported(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text(
+            "ibom_extra_fields:\n  - Manufacturer\n  - MFGPN\n  - Datasheet Name\n"
+        )
+        config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
+        assert config.ibom_extra_fields == ("Manufacturer", "MFGPN", "Datasheet Name")
+
+    def test_env_beats_yaml_and_dedupes_case_insensitively(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("ibom_extra_fields: Datasheet,Description\n")
+        config = load_config(
+            ConfigOverrides(),
+            env={"KPROJ_IBOM_EXTRA_FIELDS": " MPN , Manufacturer , mpn "},
+            yaml_path=yaml_path,
+        )
+        assert config.ibom_extra_fields == ("MPN", "Manufacturer")
+
+    def test_cli_override_beats_env_and_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("ibom_extra_fields: Datasheet,Description\n")
+        config = load_config(
+            ConfigOverrides(ibom_extra_fields=("Fabricator Part Number", "Datasheet Name")),
+            env={"KPROJ_IBOM_EXTRA_FIELDS": "MPN,Manufacturer"},
+            yaml_path=yaml_path,
+        )
+        assert config.ibom_extra_fields == ("Fabricator Part Number", "Datasheet Name")
 
 
 @pytest.mark.parametrize(

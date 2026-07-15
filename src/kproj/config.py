@@ -6,11 +6,13 @@ Implements the four-tier precedence from ``docs/DESIGN.md`` §
 1.  :class:`ConfigOverrides` field (set by a CLI flag)
 2. Environment variable (``KPROJ_SITE_REPO`` / ``KPROJ_NO_PUSH`` /
    ``KPROJ_KICAD_CLI`` / ``KPROJ_INVENTORY`` / ``KPROJ_DATASHEET_LIBRARY`` /
-   ``KPROJ_DATASHEET_REPO``)
+   ``KPROJ_DATASHEET_REPO`` / ``KPROJ_IBOM_EXTRA_FIELDS``)
 3. ``~/.kproj.yaml`` key (``site_repo`` / ``no_push`` / ``kicad_cli`` /
-   ``inventory`` / ``datasheet_library`` / ``datasheet_repo``)
+   ``inventory`` / ``datasheet_library`` / ``datasheet_repo`` /
+   ``ibom_extra_fields``)
 4. Hardcoded fallback (:data:`DEFAULT_SITE_REPO`, ``False``, ``None``,
-   ``None``, :data:`DEFAULT_DATASHEET_LIBRARY`, :data:`DEFAULT_DATASHEET_REPO`)
+   ``None``, :data:`DEFAULT_DATASHEET_LIBRARY`, :data:`DEFAULT_DATASHEET_REPO`,
+   :data:`DEFAULT_IBOM_EXTRA_FIELDS`)
 
 ``inventory`` (kproj#29) intentionally has **no** hardcoded-path
 fallback, unlike ``site_repo``: per the datasheet document library's
@@ -52,7 +54,7 @@ no-flag test fallback; named profiles fill in backend-specific values.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -81,6 +83,20 @@ DEFAULT_DATASHEET_REPO: str = "plocher/SPCoast-inventory"
 """The public datasheet-library repo's ``<owner>/<repo>`` slug that
 published deep-links point at (:func:`kproj.common.datasheet_library.build_datasheet_link`).
 Hardcoded fallback (ADR 0007 unchanged conventions)."""
+
+DEFAULT_IBOM_EXTRA_FIELDS: tuple[str, ...] = (
+    "MPN",
+    "Manufacturer",
+    "Fabricator Part Number",
+    "Datasheet",
+    "Datasheet Name",
+    "Description",
+)
+"""Default iBOM extra fields surfaced by kproj (kproj#48).
+
+Ordered for assembly use: supply-chain identifiers first, then
+datasheet/documentation and descriptive context.
+"""
 
 
 # ---- SiteProfile abstraction (mirrors jBOM's ADR 0008 GENERIC pattern) ----
@@ -241,6 +257,43 @@ def _parse_bool(value: str) -> bool:
     return value.strip().lower() in _TRUE_TOKENS
 
 
+def _normalize_ibom_extra_fields(value: str | Sequence[str]) -> tuple[str, ...]:
+    """Normalize iBOM extra-field configuration input to an ordered tuple.
+
+    Args:
+        value: Either a comma-separated string (CLI/env style) or a
+            sequence of field labels (yaml list style).
+
+    Returns:
+        A de-duplicated tuple preserving first-seen order.
+
+    Raises:
+        ValueError: If *value* is not a supported shape.
+    """
+    raw_fields: list[str]
+    if isinstance(value, str):
+        raw_fields = value.split(",")
+    elif isinstance(value, Sequence):
+        raw_fields = [str(item) for item in value]
+    else:
+        raise ValueError(
+            "ibom_extra_fields must be a comma-separated string or a sequence of strings"
+        )
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw_field in raw_fields:
+        field = raw_field.strip()
+        if not field:
+            continue
+        folded = field.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        ordered.append(field)
+    return tuple(ordered)
+
+
 @dataclass(frozen=True)
 class ConfigOverrides:
     """CLI-derived overrides built inside :mod:`kproj.cli`.
@@ -264,6 +317,9 @@ class ConfigOverrides:
             advisory publish guard.
         datasheet_repo: ``--datasheet-repo`` override (kproj#37): the
             public ``<owner>/<repo>`` slug published deep-links point at.
+        ibom_extra_fields: ``--ibom-extra-fields`` override (kproj#48).
+            Accepts either a comma-separated string or a sequence of
+            field labels.
     """
 
     site_repo: Path | None = None
@@ -272,6 +328,7 @@ class ConfigOverrides:
     inventory: Path | None = None
     datasheet_library: Path | None = None
     datasheet_repo: str | None = None
+    ibom_extra_fields: str | Sequence[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -298,6 +355,9 @@ class KprojConfig:
             deep-links point at (kproj#37). Defaults to
             :data:`DEFAULT_DATASHEET_REPO` (SPCoast convention,
             unchanged) when unset at every tier.
+        ibom_extra_fields: Ordered iBOM extra fields surfaced during
+            publish (kproj#48). Resolved from CLI/env/yaml precedence,
+            defaults to :data:`DEFAULT_IBOM_EXTRA_FIELDS`.
     """
 
     site_repo: Path
@@ -307,6 +367,7 @@ class KprojConfig:
     inventory: Path | None = None
     datasheet_library: Path = DEFAULT_DATASHEET_LIBRARY
     datasheet_repo: str = DEFAULT_DATASHEET_REPO
+    ibom_extra_fields: tuple[str, ...] = DEFAULT_IBOM_EXTRA_FIELDS
 
 
 def _load_yaml_mapping(yaml_path: Path) -> Mapping[str, Any]:
@@ -415,6 +476,19 @@ def _resolve_datasheet_repo(
     return DEFAULT_DATASHEET_REPO
 
 
+def _resolve_ibom_extra_fields(
+    overrides: ConfigOverrides, env: Mapping[str, str], yaml_data: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """Resolve iBOM extra fields from precedence tiers (kproj#48)."""
+    if overrides.ibom_extra_fields is not None:
+        return _normalize_ibom_extra_fields(overrides.ibom_extra_fields)
+    if "KPROJ_IBOM_EXTRA_FIELDS" in env:
+        return _normalize_ibom_extra_fields(env["KPROJ_IBOM_EXTRA_FIELDS"])
+    if "ibom_extra_fields" in yaml_data:
+        return _normalize_ibom_extra_fields(yaml_data["ibom_extra_fields"])
+    return DEFAULT_IBOM_EXTRA_FIELDS
+
+
 def load_config(
     overrides: ConfigOverrides,
     env: Mapping[str, str],
@@ -445,6 +519,7 @@ def load_config(
         inventory=_resolve_inventory(overrides, env, yaml_data),
         datasheet_library=_resolve_datasheet_library(overrides, env, yaml_data),
         datasheet_repo=_resolve_datasheet_repo(overrides, env, yaml_data),
+        ibom_extra_fields=_resolve_ibom_extra_fields(overrides, env, yaml_data),
     )
 
 
