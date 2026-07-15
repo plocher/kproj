@@ -967,6 +967,7 @@ def test_full_publish_detects_github_link_once_and_shares_result(
         f"expected github_url in front-matter:\n{content[:800]}"
     )
 
+
 def test_second_publish_refreshes_metadata_when_project_becomes_pushed_github_repo(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1047,6 +1048,7 @@ def test_second_publish_refreshes_metadata_when_project_becomes_pushed_github_re
         "skip (sources unchanged; metadata drift: github_url changed)" in record.message
         for record in caplog.records
     ), "expected regeneration decision log to include metadata-drift reason"
+
 
 def test_transition_from_parent_repo_to_project_repo_refreshes_github_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

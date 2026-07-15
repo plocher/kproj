@@ -167,7 +167,7 @@ def test_read_ibom_rows_supports_jlc_header_aliases_and_grouped_designators(
     """JLC header aliases map to canonical row fields for iBOM enrichment."""
     stdout = (
         "Designator,Datasheet,Datasheet Name,Manufacturer,MFGPN,LCSC Part #,Comment,DNP\n"
-        "\"Q8, Q9\",https://example.com/mosfet.pdf,mos_doc,ON Semi,BSS138,LCSC999,MOSFET,DNP\n"
+        '"Q8, Q9",https://example.com/mosfet.pdf,mos_doc,ON Semi,BSS138,LCSC999,MOSFET,DNP\n'
     )
     command = _fake_jbom_script(tmp_path, stdout=stdout)
     rows, findings = read_ibom_rows(
