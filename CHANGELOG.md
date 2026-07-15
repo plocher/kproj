@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-07-15)
+
+### Features
+
+* feat: humanize console output and flush no-push site commits (#43, #44) ([`4acb4b8`](https://github.com/plocher/kproj/commit/4acb4b8c2e8986ed95bc541cc0a116d8e296740a))
+
+
 ## v0.3.2 (2026-07-14)
 
 ### Bug Fixes
