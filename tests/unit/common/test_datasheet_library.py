@@ -9,6 +9,7 @@ test seam so no real jBOM subprocess or network access is required.
 
 from __future__ import annotations
 
+import csv
 import subprocess
 import sys
 from pathlib import Path
@@ -160,6 +161,27 @@ def test_read_ibom_rows_expands_grouped_references_and_maps_inventory_fields(
     assert rows[3].datasheet_name == "mos_doc"
 
 
+def test_read_ibom_rows_supports_jlc_header_aliases_and_grouped_designators(
+    tmp_path: Path,
+) -> None:
+    """JLC header aliases map to canonical row fields for iBOM enrichment."""
+    stdout = (
+        "Designator,Datasheet,Datasheet Name,Manufacturer,MFGPN,LCSC Part #,Comment,DNP\n"
+        "\"Q8, Q9\",https://example.com/mosfet.pdf,mos_doc,ON Semi,BSS138,LCSC999,MOSFET,DNP\n"
+    )
+    command = _fake_jbom_script(tmp_path, stdout=stdout)
+    rows, findings = read_ibom_rows(
+        tmp_path,
+        inventory=tmp_path / "inventory.csv",
+        jbom_command=command,
+    )
+    assert findings == ()
+    assert [row.reference for row in rows] == ["Q8", "Q9"]
+    assert rows[0].description == "MOSFET"
+    assert rows[0].fabricator_part_number == "LCSC999"
+    assert rows[0].datasheet_name == "mos_doc"
+
+
 def test_read_datasheet_names_sorted_case_insensitively(tmp_path: Path) -> None:
     """Distinct names come back case-insensitively sorted."""
     stdout = "Reference,Datasheet Name\nR1,beta_doc\nR2,Alpha_doc\n"
@@ -244,12 +266,14 @@ def test_read_datasheet_names_default_command_includes_inventory_when_configured
     assert command is not None
     # -q is jBOM's *global* quiet flag (kproj#41): it must precede the
     # bom subcommand, not follow it.
-    assert command[-9:] == [
+    assert command[-11:] == [
         "-q",
         "bom",
         str(tmp_path),
         "--inventory",
         str(inventory),
+        "--fabricator",
+        "jlc",
         "-f",
         DATASHEET_BOM_FIELDS,
         "-o",
@@ -263,7 +287,18 @@ def test_default_jbom_command_supports_ibom_field_token_set(tmp_path: Path) -> N
     inventory = tmp_path / "inventory.csv"
     command = _default_jbom_command(tmp_path, inventory, fields=IBOM_BOM_FIELDS)
     assert command is not None
+    assert "--fabricator" in command
+    assert command[command.index("--fabricator") + 1] == "jlc"
     assert command[-3:] == [IBOM_BOM_FIELDS, "-o", "-"]
+
+
+def test_default_jbom_command_supports_custom_fabricator(tmp_path: Path) -> None:
+    """A non-default fabricator is threaded into the generated argv."""
+    inventory = tmp_path / "inventory.csv"
+    command = _default_jbom_command(tmp_path, inventory, fabricator="pcbway")
+    assert command is not None
+    assert "--fabricator" in command
+    assert command[command.index("--fabricator") + 1] == "pcbway"
 
 
 def test_real_jbom_supports_datasheet_lookup_field_list(tmp_path: Path) -> None:
@@ -280,8 +315,8 @@ def test_real_jbom_supports_datasheet_lookup_field_list(tmp_path: Path) -> None:
     assert command is not None
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
-    header = completed.stdout.splitlines()[0]
-    assert "Reference" in header
+    header = next(csv.reader([completed.stdout.splitlines()[0]]))
+    assert any(column in {"Reference", "Designator"} for column in header)
     assert "Datasheet" in header
     assert "Datasheet Name" in header
 

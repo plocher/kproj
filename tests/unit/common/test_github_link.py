@@ -103,6 +103,20 @@ def test_derive_github_link_returns_none_for_non_repo(tmp_path: Path) -> None:
     assert derive_github_link(project_dir) is None
 
 
+def test_derive_github_link_returns_none_when_only_parent_directory_is_repo(
+    tmp_path: Path,
+) -> None:
+    """A nested directory under a parent repo is not a project-local git repo."""
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _git("remote", "add", "origin", "git@github.com:plocher/kproj.git", cwd=workspace)
+    _seed_pushed_upstream(workspace)
+
+    project_dir = workspace / "project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    assert derive_github_link(project_dir) is None
+
+
 def test_derive_github_link_returns_none_without_origin_remote(tmp_path: Path) -> None:
     """A git repo with no ``origin`` remote yields ``None``."""
     project_dir = tmp_path / "repo-no-remote"
