@@ -962,12 +962,7 @@ def test_regenerates_when_existing_publish_lacks_publish_context(
     version_file = site / GENERIC_SITE_PROFILE.versions_dir / project / f"{board_rev}.md"
     version_file.parent.mkdir(parents=True, exist_ok=True)
     version_file.write_text(
-        "---\n"
-        "project: demo\n"
-        "title: 1.0\n"
-        "date: 2026-01-01T00:00:00+00:00\n"
-        "---\n"
-        "legacy\n",
+        "---\nproject: demo\ntitle: 1.0\ndate: 2026-01-01T00:00:00+00:00\n---\nlegacy\n",
         encoding="utf-8",
     )
     project_index = GENERIC_SITE_PROFILE.project_index_path(site, project)
