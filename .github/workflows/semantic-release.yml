@@ -55,6 +55,26 @@ jobs:
             echo "No new release; skipping publish and asset attach steps."
           fi
 
+      - name: Prepare sibling jBOM checkout for uv lock refresh
+        if: steps.release.outputs.released == 'true'
+        run: |
+          if [ ! -d ../jBOM/.git ]; then
+            git clone --depth 1 https://github.com/plocher/jBOM.git ../jBOM
+          fi
+
+      - name: Refresh uv.lock for released version
+        if: steps.release.outputs.released == 'true'
+        run: |
+          python -m pip install uv
+          uv lock --project .
+          if ! git diff --quiet -- uv.lock; then
+            git add uv.lock
+            git commit -m "chore(lock): refresh uv.lock for v${{ steps.release.outputs.version }}"
+            git push
+          else
+            echo "uv.lock already up-to-date for v${{ steps.release.outputs.version }}."
+          fi
+
       - name: Publish to PyPI
         if: steps.release.outputs.released == 'true'
         env:

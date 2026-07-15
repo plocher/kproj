@@ -83,6 +83,7 @@ kproj is one tool in a small ecosystem. The release-lifecycle workflow composes 
 ## Development
 
 - Python ≥3.10; [`uv`](https://docs.astral.sh/uv/) for environment + dependency management (`uv sync`, `uv run`).
+- `uv.lock` is committed and authoritative for the development environment. Keep it fresh with `uv lock` whenever dependency inputs change (including local `../jBOM` version shifts). CI validates lock freshness on PRs, and release automation refreshes `uv.lock` after semantic version bumps.
 - `pytest` + `behave` for testing; `ruff` + `mypy` for lint/type-checking; `pre-commit` hooks configured.
 - `docs/DESIGN.md` has the implementation specs; `docs/adr/` has the Architecture Decision Records; `CONTEXT.md` has the canonical project vocabulary.
 - `docs/history.md` has the retired v1-development phase tracker, for archival reference.
