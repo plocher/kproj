@@ -21,6 +21,9 @@ Locked decisions for the open design points in kproj#30 (see
   the pushed remote actually contains a GitHub repo at all in that case
   (a repo-root link could be issued for a same-named-but-unrelated
   GitHub repo if ``origin`` were merely configured but never pushed to).
+- The project directory must itself be the git repository toplevel.
+  Being merely nested under an ancestor repository does not count as
+  "project is a git repo" for publishing metadata.
 
 This module never raises for a non-repo / non-GitHub / unpushed project
 directory - every failure mode returns ``None`` (or, for
@@ -174,6 +177,8 @@ def detect_github_link(project_dir: Path) -> GithubLinkDetection:
 
     if not _is_git_work_tree(project_dir):
         return GithubLinkDetection(status="not_a_repo")
+    if not _is_project_repo_root(project_dir):
+        return GithubLinkDetection(status="not_a_repo")
 
     remote_url = _git_output(project_dir, ["remote", "get-url", "origin"])
     if remote_url is None:
@@ -305,6 +310,23 @@ def _is_git_work_tree(project_dir: Path) -> bool:
     except _GIT_INVOCATION_ERRORS:
         return False
     return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _is_project_repo_root(project_dir: Path) -> bool:
+    """Return whether *project_dir* is the git repository toplevel.
+
+    ``git rev-parse --is-inside-work-tree`` is true for directories
+    nested under a parent repository; this helper enforces the stricter
+    project-level requirement that the repository root equals
+    ``project_dir``.
+    """
+    toplevel = _git_output(project_dir, ["rev-parse", "--show-toplevel"])
+    if toplevel is None:
+        return False
+    try:
+        return Path(toplevel).resolve() == project_dir.resolve()
+    except OSError:
+        return False
 
 
 def _head_is_pushed(project_dir: Path) -> bool:

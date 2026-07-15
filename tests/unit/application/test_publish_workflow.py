@@ -7,6 +7,7 @@ read, analyze, status detection) plus the exit-code population from the
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -17,7 +18,12 @@ from kproj.application import publish_workflow as workflow_module
 from kproj.application.publish_workflow import PublishWorkflow
 from kproj.common import github_link as github_link_module
 from kproj.common.kicad_install import KicadNotFoundError
-from kproj.config import DEFAULT_IBOM_EXTRA_FIELDS, GENERIC_SITE_PROFILE, KprojConfig
+from kproj.config import (
+    DEFAULT_FABRICATOR,
+    DEFAULT_IBOM_EXTRA_FIELDS,
+    GENERIC_SITE_PROFILE,
+    KprojConfig,
+)
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.publication import AssetRef
 from kproj.model.publish_request import PublishRequest
@@ -333,7 +339,11 @@ def test_raising_datasheet_lookup_cannot_fail_a_publish(
     fake_cli.write_text("")
     _stub_kicad_version(monkeypatch, (9, 0, 4))
 
-    def _raising_lookup(_project_dir: Path, _inventory: Path | None) -> object:
+    def _raising_lookup(
+        _project_dir: Path,
+        _inventory: Path | None,
+        _fabricator: str,
+    ) -> object:
         raise RuntimeError("simulated unexpected failure inside the datasheet guard")
 
     workflow = PublishWorkflow(
@@ -589,10 +599,11 @@ def test_drc_erc_mechanical_failure_does_not_open_journal(
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         called["artifact_gen"] = True
         return (), (), ()
 
@@ -700,10 +711,11 @@ def _stub_artifact_generator(
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         from kproj.services.kicad_project_reader import KicadProjectReader  # noqa: F401
 
         # Use the canonical project + board_rev from project_info per the
@@ -806,6 +818,7 @@ def _make_full_request(
     dry_run: bool = False,
     no_push: bool = True,
     inventory: Path | None = None,
+    fabricator: str = DEFAULT_FABRICATOR,
     ibom_extra_fields: tuple[str, ...] = DEFAULT_IBOM_EXTRA_FIELDS,
 ) -> PublishRequest:
     config = KprojConfig(
@@ -814,6 +827,7 @@ def _make_full_request(
         kicad_cli=kicad_cli,
         site_profile=GENERIC_SITE_PROFILE,
         inventory=inventory,
+        fabricator=fabricator,
         ibom_extra_fields=ibom_extra_fields,
     )
     return PublishRequest(
@@ -953,6 +967,159 @@ def test_full_publish_detects_github_link_once_and_shares_result(
         f"expected github_url in front-matter:\n{content[:800]}"
     )
 
+def test_second_publish_refreshes_metadata_when_project_becomes_pushed_github_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """kproj#49: second run refreshes metadata after non-repo → pushed-repo transition."""
+    import subprocess
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            company="MRCS",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site, no_push=True)
+    caplog.set_level(logging.INFO, logger="kproj.application.publish_workflow")
+
+    # Initial publish while the project directory is NOT a git repo.
+    first = workflow.run(request)
+    assert first.outcome in {"published", "refreshed"}
+
+    def _git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=proj_dir, check=True, capture_output=True, text=True)
+
+    # Convert the project into a pushed GitHub repo using local-only
+    # metadata seeding (no network).
+    _git("init", "-q")
+    _git("config", "user.email", "test@test.com")
+    _git("config", "user.name", "Test")
+    _git("add", "-A")
+    _git("commit", "-q", "-m", "initial")
+    _git("branch", "-M", "main")
+    _git("remote", "add", "origin", "git@github.com:plocher/demo.git")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=proj_dir, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    _git("update-ref", "refs/remotes/origin/main", head)
+    _git("config", "branch.main.remote", "origin")
+    _git("config", "branch.main.merge", "refs/heads/main")
+
+    second = workflow.run(request)
+    assert second.outcome == "refreshed", (
+        "expected metadata-only refresh after project git metadata changes "
+        "from non-repo to pushed GitHub repo"
+    )
+    assert "Refreshed demo-1.0" in second.message
+
+    version_file = site / GENERIC_SITE_PROFILE.versions_dir / "demo" / "1.0.md"
+    content = version_file.read_text(encoding="utf-8")
+    assert "github_url: https://github.com/plocher/demo" in content, (
+        f"expected github_url in refreshed front-matter:\n{content[:800]}"
+    )
+    assert "github_link_missing" not in content
+    assert "github_link_unpushed" not in content
+    assert any(
+        "metadata drift for demo-1.0: github_url changed" in record.message
+        for record in caplog.records
+    ), "expected explicit metadata-drift log line"
+    assert any(
+        "artifact regeneration decision for demo-1.0: "
+        "skip (sources unchanged; metadata drift: github_url changed)" in record.message
+        for record in caplog.records
+    ), "expected regeneration decision log to include metadata-drift reason"
+
+def test_transition_from_parent_repo_to_project_repo_refreshes_github_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kproj#49: ignore parent repos until the project directory is git-init'd."""
+    import subprocess
+
+    def _git(cwd: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+    def _seed_pushed_origin(cwd: Path, remote_url: str) -> None:
+        _git(cwd, "config", "user.email", "test@test.com")
+        _git(cwd, "config", "user.name", "Test")
+        _git(cwd, "add", "-A")
+        _git(cwd, "commit", "-q", "-m", "initial")
+        _git(cwd, "branch", "-M", "main")
+        _git(cwd, "remote", "add", "origin", remote_url)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        _git(cwd, "update-ref", "refs/remotes/origin/main", head)
+        _git(cwd, "config", "branch.main.remote", "origin")
+        _git(cwd, "config", "branch.main.merge", "refs/heads/main")
+
+    site = _make_site_repo(tmp_path)
+    workspace_root = tmp_path / "workspace"
+    proj_dir = make_minimal_project(
+        workspace_root / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            company="MRCS",
+            date="2026.04",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+
+    # Parent repo exists, but the project directory itself is not a repo yet.
+    _git(workspace_root, "init", "-q")
+    _seed_pushed_origin(workspace_root, "git@github.com:plocher/demo.git")
+
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site, no_push=True)
+
+    first = workflow.run(request)
+    assert first.outcome in {"published", "refreshed"}
+    version_file = site / GENERIC_SITE_PROFILE.versions_dir / "demo" / "1.0.md"
+    first_content = version_file.read_text(encoding="utf-8")
+    assert "github_url:" not in first_content, (
+        "project nested under a parent repo must be treated as not-a-repo "
+        "until the project directory itself is git-init'd"
+    )
+
+    # Now convert the project directory into its own pushed repo.
+    _git(proj_dir, "init", "-q")
+    _seed_pushed_origin(proj_dir, "git@github.com:plocher/demo.git")
+
+    second = workflow.run(request)
+    assert second.outcome == "refreshed"
+    second_content = version_file.read_text(encoding="utf-8")
+    assert "github_url: https://github.com/plocher/demo" in second_content
+
 
 def test_dry_run_does_not_write_site_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """dry_run=True skips artifact generation and site writes."""
@@ -1071,10 +1238,11 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         captured["project"] = getattr(project_info, "project", None)
         captured["board_rev"] = getattr(project_info, "board_rev", None)
         # Emit asset refs in the same shape the workflow's preliminary
@@ -1104,10 +1272,10 @@ def test_artifact_generator_receives_project_info_with_canonical_board_rev(
     )
 
 
-def test_artifact_generator_receives_inventory_and_ibom_extra_fields(
+def test_artifact_generator_receives_inventory_and_fabricator_and_ibom_extra_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """kproj#48: workflow passes inventory + iBOM extra-field config to generators."""
+    """kproj#48: workflow passes inventory/fabricator/iBOM field config to generators."""
     site = _make_site_repo(tmp_path)
     proj_dir = make_minimal_project(
         tmp_path / "demo",
@@ -1144,6 +1312,7 @@ def test_artifact_generator_receives_inventory_and_ibom_extra_fields(
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
@@ -1158,6 +1327,7 @@ def test_artifact_generator_receives_inventory_and_ibom_extra_fields(
         )
         del journal
         captured["inventory"] = inventory
+        captured["fabricator"] = fabricator
         captured["ibom_extra_fields"] = ibom_extra_fields
         return (), (), ()
 
@@ -1176,6 +1346,7 @@ def test_artifact_generator_receives_inventory_and_ibom_extra_fields(
         fake_cli,
         site,
         inventory=inventory_path,
+        fabricator="pcbway",
         ibom_extra_fields=("Manufacturer", "MFGPN"),
     )
 
@@ -1183,6 +1354,7 @@ def test_artifact_generator_receives_inventory_and_ibom_extra_fields(
         workflow.run(request)
 
     assert captured["inventory"] == inventory_path
+    assert captured["fabricator"] == "pcbway"
     assert captured["ibom_extra_fields"] == ("Manufacturer", "MFGPN")
 
 
@@ -1232,10 +1404,11 @@ def test_schematic_export_error_converts_to_failed_outcome(
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         # Simulate the schematic-export shape-mismatch path: register
         # one output then raise.  The workflow must convert this into
         # outcome=failed/exit 2 rather than letting it propagate.
@@ -1330,10 +1503,11 @@ def test_artifact_generator_diagnostics_flow_into_result(
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         # Return no asset refs; just surface a producer-stage diagnostic.
         return (), (), (producer_warning,)
 

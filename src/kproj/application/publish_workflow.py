@@ -33,6 +33,8 @@ from collections.abc import Callable
 from datetime import datetime, timezone  # 3.10-compat; py3.11+ can use `datetime.UTC`
 from pathlib import Path
 
+import yaml
+
 from ..common.datasheet_library import (
     build_datasheet_link,
     check_datasheet_links,
@@ -130,6 +132,7 @@ ArtifactGeneratorCallable = Callable[
         Path,
         SiteProfile,
         "Path | None",
+        str,
         tuple[str, ...],
         "ChangeJournal",
     ],
@@ -148,6 +151,7 @@ Signature::
         site_repo: Path,
         site_profile: SiteProfile,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[images_refs, artifact_refs, diagnostics]
@@ -161,10 +165,11 @@ asset files are written where the backend serves them (Hugo's
 ``static/versions/`` resolves at the public ``/versions/`` URL); the
 public AssetRef paths stay ``/versions/...`` regardless of backend.
 
-``inventory`` and ``ibom_extra_fields`` provide the iBOM enrichment
-inputs (kproj#48): when inventory is configured, the default generator
-queries jBOM for per-reference inventory fields and projects them to
-iBOM's extra-data XML format using the configured extra-field list.
+``inventory``, ``fabricator``, and ``ibom_extra_fields`` provide the
+iBOM enrichment inputs (kproj#48): when inventory is configured, the
+default generator queries jBOM for per-reference inventory fields with
+the selected fabricator profile and projects them to iBOM's extra-data
+XML format using the configured extra-field list.
 
 ``project_info`` carries the canonical ``board_rev`` (PCB-derived per
 ``docs/DESIGN.md`` § *Metadata precedence*) which the generator MUST
@@ -188,16 +193,16 @@ SitePublisherFactory = Callable[["ChangeJournal"], SitePublisher]
 """Callable that constructs a :class:`SitePublisher` given an open journal."""
 
 DatasheetNameLookup = Callable[
-    [Path, "Path | None"],
+    [Path, "Path | None", str],
     tuple[tuple[str, ...], tuple[Finding, ...]],
 ]
 """Callable that looks up distinct curated ``Datasheet Name`` values for a
 project (kproj#29).
 
-Signature: ``(project_dir, inventory) -> (names, diagnostics)``. Defaults
-to :func:`kproj.common.datasheet_library.read_datasheet_names`, which
-invokes ``jbom bom`` live at publish time (ADR 0010). Tests inject a
-fake returning canned names/findings so no real jBOM subprocess runs.
+Signature: ``(project_dir, inventory, fabricator) -> (names, diagnostics)``.
+Defaults to :func:`kproj.common.datasheet_library.read_datasheet_names`,
+which invokes ``jbom bom`` live at publish time (ADR 0010). Tests inject
+a fake returning canned names/findings so no real jBOM subprocess runs.
 """
 
 __all__ = [
@@ -255,8 +260,9 @@ class PublishWorkflow:
                 :class:`SitePublisher`.
             datasheet_name_lookup: Optional :data:`DatasheetNameLookup`
                 (kproj#29).  Defaults to
+                :func:`_default_datasheet_name_lookup`, an adapter around
                 :func:`~kproj.common.datasheet_library.read_datasheet_names`
-                (live ``jbom bom`` invocation).  Tests inject a fake to
+                (live ``jbom bom`` invocation). Tests inject a fake to
                 avoid a real jBOM subprocess.
             library_repo: Optional local datasheet-library clone path
                 override for the advisory publish guard (kproj#29), for
@@ -276,7 +282,7 @@ class PublishWorkflow:
         )
         self._site_publisher_factory: SitePublisherFactory = site_publisher_factory or SitePublisher
         self._datasheet_name_lookup: DatasheetNameLookup = (
-            datasheet_name_lookup or read_datasheet_names
+            datasheet_name_lookup or _default_datasheet_name_lookup
         )
         self._library_repo_override: Path | None = library_repo
 
@@ -389,6 +395,7 @@ class PublishWorkflow:
             resolved.project_dir,
             request.config.inventory,
             project_info.project,
+            fabricator=request.config.fabricator,
             library_repo=library_repo,
             datasheet_repo=request.config.datasheet_repo,
         )
@@ -479,11 +486,25 @@ class PublishWorkflow:
             site_profile=request.config.site_profile,
             version_file=version_file,
         )
+        existing_github_url = _existing_github_url(version_file)
+        current_github_url = github_link_detection.url or ""
+        github_url_drift = version_file.exists() and existing_github_url != current_github_url
+        if github_url_drift:
+            _log.info(
+                "metadata drift for %s-%s: github_url changed from %r to %r",
+                project_info.project,
+                project_info.board_rev,
+                existing_github_url,
+                current_github_url,
+            )
+        decision = "regenerate" if needs_regen else "skip (sources unchanged)"
+        if not needs_regen and github_url_drift:
+            decision = "skip (sources unchanged; metadata drift: github_url changed)"
         _log.info(
             "artifact regeneration decision for %s-%s: %s",
             project_info.project,
             project_info.board_rev,
-            "regenerate" if needs_regen else "skip (sources unchanged)",
+            decision,
         )
 
         # ── Steps 7-11: Open journal, generate artifacts, publish ──
@@ -503,6 +524,7 @@ class PublishWorkflow:
                             site_repo,
                             request.config.site_profile,
                             request.config.inventory,
+                            request.config.fabricator,
                             request.config.ibom_extra_fields,
                             journal,
                         )
@@ -591,6 +613,7 @@ class PublishWorkflow:
         inventory: Path | None,
         project: str,
         *,
+        fabricator: str,
         library_repo: Path,
         datasheet_repo: str,
     ) -> tuple[tuple[DatasheetLink, ...], tuple[Finding, ...]]:
@@ -610,6 +633,7 @@ class PublishWorkflow:
             project_dir: The resolved KiCad project directory.
             inventory: Optional inventory CSV path (``KprojConfig.inventory``).
             project: Project basename, threaded onto any emitted ``Finding``.
+            fabricator: jBOM fabricator profile (``KprojConfig.fabricator``).
             library_repo: Resolved local datasheet-library clone path
                 (``KprojConfig.datasheet_library``, kproj#37).
             datasheet_repo: Resolved public ``<owner>/<repo>`` slug
@@ -620,7 +644,11 @@ class PublishWorkflow:
             on the (never-raising) failure path.
         """
         try:
-            names, lookup_findings = self._datasheet_name_lookup(project_dir, inventory)
+            names, lookup_findings = self._datasheet_name_lookup(
+                project_dir,
+                inventory,
+                fabricator,
+            )
             links = tuple(build_datasheet_link(name, owner_repo=datasheet_repo) for name in names)
             guard_findings = check_datasheet_links(names, library_repo, project=project)
             return links, (*lookup_findings, *guard_findings)
@@ -730,12 +758,55 @@ class PublishWorkflow:
 # ──────────────────────────── module-level helpers ────────────────────────────
 
 
+def _default_datasheet_name_lookup(
+    project_dir: Path,
+    inventory: Path | None,
+    fabricator: str,
+) -> tuple[tuple[str, ...], tuple[Finding, ...]]:
+    """Default :data:`DatasheetNameLookup` adapter over ``read_datasheet_names``.
+
+    ``read_datasheet_names`` takes ``fabricator`` as a keyword-only
+    argument; this adapter preserves the simpler injected callable shape
+    used by :class:`PublishWorkflow`.
+    """
+    return read_datasheet_names(
+        project_dir,
+        inventory,
+        fabricator=fabricator,
+    )
+
+
 def _read_readme(project_dir: Path) -> str:
     """Read and return the project's README.md content, or empty string."""
     readme = project_dir / "README.md"
     if readme.is_file():
         return readme.read_text(encoding="utf-8")
     return ""
+
+
+def _existing_github_url(version_file: Path) -> str:
+    """Return the existing ``github_url`` front-matter value, or ``\"\"``.
+
+    A missing/invalid file (or missing key) is treated as no URL so the
+    caller can compare it directly with the current detection result.
+    """
+    if not version_file.exists():
+        return ""
+    try:
+        text = version_file.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    parts = text.split("---\n", 2)
+    if len(parts) < 3:
+        return ""
+    try:
+        front_matter = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return ""
+    if not isinstance(front_matter, dict):
+        return ""
+    existing = front_matter.get("github_url")
+    return str(existing).strip() if existing else ""
 
 
 def _publish_timestamp() -> str:
@@ -955,6 +1026,7 @@ def _default_artifact_generator(
     site_repo: Path,
     site_profile: SiteProfile,
     inventory: Path | None,
+    fabricator: str,
     ibom_extra_fields: tuple[str, ...],
     journal: ChangeJournal,
 ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[Finding, ...]]:
@@ -992,6 +1064,8 @@ def _default_artifact_generator(
             ``/versions/...``.
         inventory: Optional inventory CSV used to enrich iBOM extra-data
             rows from a live ``jbom bom`` query.
+        fabricator: jBOM fabricator profile passed to lookup commands
+            to normalize item/header shape (for example ``jlc``).
         ibom_extra_fields: Ordered iBOM extra fields to surface.
         journal: Open :class:`ChangeJournal` for rollback tracking.
 
@@ -1026,6 +1100,7 @@ def _default_artifact_generator(
             resolved.project_dir,
             inventory,
             project=P,
+            fabricator=fabricator,
         )
         diagnostics.extend(ibom_row_findings)
 
