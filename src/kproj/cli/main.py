@@ -46,6 +46,7 @@ Environment variables:
   KPROJ_DATASHEET_LIBRARY  overrides --datasheet-library
   KPROJ_DATASHEET_REPO     overrides --datasheet-repo
   KPROJ_IBOM_EXTRA_FIELDS  overrides --ibom-extra-fields
+  KPROJ_FABRICATOR         overrides --fabricator (generic/jlc/pcbway/seeed)
 
 ~/.kproj.yaml example:
   site_repo: /home/you/Dropbox/workspace/SPCoast.github.io
@@ -55,6 +56,7 @@ Environment variables:
   datasheet_library: /home/you/Dropbox/KiCad/SPCoast-inventory
   datasheet_repo: plocher/SPCoast-inventory
   ibom_extra_fields: MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description
+  fabricator: jlc
 
 Without a ~/.kproj.yaml and no --inventory/KPROJ_INVENTORY, kproj publishes
 without datasheet deep-links (jbom is never invoked - see --inventory below).
@@ -139,6 +141,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--fabricator",
+        type=str,
+        choices=["generic", "jlc", "pcbway", "seeed"],
+        default=None,
+        metavar="FAB",
+        help=(
+            "Fabricator profile used for `jbom bom` lookup output "
+            "(env: KPROJ_FABRICATOR; yaml: fabricator:). "
+            "Default: jlc."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
@@ -206,6 +220,7 @@ def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
         ),
         datasheet_repo=namespace.datasheet_repo or None,
         ibom_extra_fields=namespace.ibom_extra_fields or None,
+        fabricator=namespace.fabricator or None,
     )
 
 

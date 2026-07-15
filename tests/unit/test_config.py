@@ -14,6 +14,7 @@ import pytest
 from kproj.config import (
     DEFAULT_DATASHEET_LIBRARY,
     DEFAULT_DATASHEET_REPO,
+    DEFAULT_FABRICATOR,
     DEFAULT_IBOM_EXTRA_FIELDS,
     DEFAULT_NO_PUSH,
     DEFAULT_SITE_REPO,
@@ -50,6 +51,7 @@ def test_load_config_falls_back_to_defaults(tmp_path: Path) -> None:
     assert config.datasheet_library == DEFAULT_DATASHEET_LIBRARY
     assert config.datasheet_repo == DEFAULT_DATASHEET_REPO
     assert config.ibom_extra_fields == DEFAULT_IBOM_EXTRA_FIELDS
+    assert config.fabricator == DEFAULT_FABRICATOR
 
 
 def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
@@ -61,6 +63,7 @@ def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
         "datasheet_library: /opt/datasheets\n"
         "datasheet_repo: example/datasheets\n"
         "ibom_extra_fields: MPN,Manufacturer,Datasheet\n"
+        "fabricator: pcbway\n"
     )
     config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
     assert config.site_repo == Path("/opt/site")
@@ -70,6 +73,7 @@ def test_load_config_reads_yaml_when_present(tmp_path: Path) -> None:
     assert config.datasheet_library == Path("/opt/datasheets")
     assert config.datasheet_repo == "example/datasheets"
     assert config.ibom_extra_fields == ("MPN", "Manufacturer", "Datasheet")
+    assert config.fabricator == "pcbway"
 
 
 def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
@@ -82,6 +86,7 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
         "datasheet_library: /from/yaml-lib\n"
         "datasheet_repo: yaml/repo\n"
         "ibom_extra_fields: Datasheet,Datasheet Name\n"
+        "fabricator: generic\n"
     )
     config = load_config(
         ConfigOverrides(),
@@ -93,6 +98,7 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
             "KPROJ_DATASHEET_LIBRARY": "/from/env-lib",
             "KPROJ_DATASHEET_REPO": "env/repo",
             "KPROJ_IBOM_EXTRA_FIELDS": "MPN,Manufacturer",
+            "KPROJ_FABRICATOR": "seeed",
         },
         yaml_path=yaml_path,
     )
@@ -103,6 +109,7 @@ def test_load_config_env_beats_yaml(tmp_path: Path) -> None:
     assert config.datasheet_library == Path("/from/env-lib")
     assert config.datasheet_repo == "env/repo"
     assert config.ibom_extra_fields == ("MPN", "Manufacturer")
+    assert config.fabricator == "seeed"
 
 
 def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
@@ -117,6 +124,7 @@ def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
         datasheet_library=Path("/from/cli-lib"),
         datasheet_repo="cli/repo",
         ibom_extra_fields=("Datasheet", "Datasheet Name"),
+        fabricator="pcbway",
     )
     config = load_config(
         overrides,
@@ -134,6 +142,7 @@ def test_load_config_cli_override_beats_env_and_yaml(tmp_path: Path) -> None:
     assert config.datasheet_library == Path("/from/cli-lib")
     assert config.datasheet_repo == "cli/repo"
     assert config.ibom_extra_fields == ("Datasheet", "Datasheet Name")
+    assert config.fabricator == "pcbway"
 
 
 class TestDatasheetLibraryPrecedence:
@@ -279,6 +288,48 @@ class TestIbomExtraFieldsPrecedence:
             yaml_path=yaml_path,
         )
         assert config.ibom_extra_fields == ("Fabricator Part Number", "Datasheet Name")
+
+
+class TestFabricatorPrecedence:
+    """Per-tier tests for jBOM ``--fabricator`` selection."""
+
+    def test_defaults_to_jlc(self, tmp_path: Path) -> None:
+        config = load_config(ConfigOverrides(), env={}, yaml_path=tmp_path / "missing.yaml")
+        assert config.fabricator == DEFAULT_FABRICATOR
+
+    def test_yaml_overrides_default(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("fabricator: pcbway\n")
+        config = load_config(ConfigOverrides(), env={}, yaml_path=yaml_path)
+        assert config.fabricator == "pcbway"
+
+    def test_env_beats_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("fabricator: generic\n")
+        config = load_config(
+            ConfigOverrides(),
+            env={"KPROJ_FABRICATOR": "seeed"},
+            yaml_path=yaml_path,
+        )
+        assert config.fabricator == "seeed"
+
+    def test_cli_override_beats_env_and_yaml(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "kproj.yaml"
+        yaml_path.write_text("fabricator: generic\n")
+        config = load_config(
+            ConfigOverrides(fabricator="pcbway"),
+            env={"KPROJ_FABRICATOR": "seeed"},
+            yaml_path=yaml_path,
+        )
+        assert config.fabricator == "pcbway"
+
+    def test_invalid_value_raises_value_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="fabricator must be one of"):
+            load_config(
+                ConfigOverrides(),
+                env={"KPROJ_FABRICATOR": "invalid-fab"},
+                yaml_path=tmp_path / "missing.yaml",
+            )
 
 
 @pytest.mark.parametrize(

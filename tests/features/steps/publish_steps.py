@@ -33,6 +33,7 @@ from kproj.application.publish_workflow import PublishWorkflow  # noqa: E402
 from kproj.config import (  # noqa: E402
     DEFAULT_DATASHEET_LIBRARY,
     DEFAULT_DATASHEET_REPO,
+    DEFAULT_FABRICATOR,
     DEFAULT_IBOM_EXTRA_FIELDS,
     GENERIC_SITE_PROFILE,
     KprojConfig,
@@ -90,7 +91,7 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
 
     Honours the artifact-generator signature
     ``(resolved, project_info, kicad_cli, ibom_script, kicad_python,
-    site_repo, site_profile, inventory, ibom_extra_fields, journal)``
+    site_repo, site_profile, inventory, fabricator, ibom_extra_fields, journal)``
     and returns the 3-tuple
     ``(images, artifacts, diagnostics)``.  Derives ``basename`` /
     ``board_rev`` from ``project_info`` so path layout matches
@@ -106,10 +107,11 @@ def _stub_artifact_generator(site_repo: Path) -> Any:
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
         R = getattr(project_info, "board_rev", None) or "1.0"
         PR = f"{basename}-{R}"
@@ -162,11 +164,12 @@ def _default_fake_datasheet_lookup(context: Any) -> Any:
     Behave scenarios never exec a real ``jbom`` subprocess: this fake
     returns whatever ``context.datasheet_names`` /
     ``context.datasheet_lookup_findings`` a Given-step has pre-loaded
-    (empty by default), regardless of the ``(project_dir, inventory)``
+    (empty by default), regardless of the
+    ``(project_dir, inventory, fabricator)``
     arguments it's called with.
     """
 
-    def _lookup(_project_dir: Path, _inventory: Path | None) -> Any:
+    def _lookup(_project_dir: Path, _inventory: Path | None, _fabricator: str) -> Any:
         names = tuple(getattr(context, "datasheet_names", ()))
         findings = tuple(getattr(context, "datasheet_lookup_findings", ()))
         return names, findings
@@ -230,6 +233,7 @@ def _build_request(context: Any, *, dry_run: bool = False) -> PublishRequest:
             datasheet_library=getattr(context, "datasheet_library", DEFAULT_DATASHEET_LIBRARY),
             datasheet_repo=getattr(context, "datasheet_repo", DEFAULT_DATASHEET_REPO),
             ibom_extra_fields=getattr(context, "ibom_extra_fields", DEFAULT_IBOM_EXTRA_FIELDS),
+            fabricator=getattr(context, "fabricator", DEFAULT_FABRICATOR),
         ),
         dry_run=dry_run,
     )
@@ -425,10 +429,11 @@ def step_given_failing_producer(context: Any) -> None:
         _site_repo: Path,
         _site_profile: object,
         inventory: Path | None,
+        fabricator: str,
         ibom_extra_fields: tuple[str, ...],
         journal: ChangeJournal,
     ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
-        del inventory, ibom_extra_fields
+        del inventory, fabricator, ibom_extra_fields
         basename = getattr(project_info, "project", None) or getattr(resolved, "basename", "demo")
         R = getattr(project_info, "board_rev", None) or "1.0"
         # Simulate one producer writing an asset before a later one fails.

@@ -6,13 +6,14 @@ Implements the four-tier precedence from ``docs/DESIGN.md`` §
 1.  :class:`ConfigOverrides` field (set by a CLI flag)
 2. Environment variable (``KPROJ_SITE_REPO`` / ``KPROJ_NO_PUSH`` /
    ``KPROJ_KICAD_CLI`` / ``KPROJ_INVENTORY`` / ``KPROJ_DATASHEET_LIBRARY`` /
-   ``KPROJ_DATASHEET_REPO`` / ``KPROJ_IBOM_EXTRA_FIELDS``)
+   ``KPROJ_DATASHEET_REPO`` / ``KPROJ_IBOM_EXTRA_FIELDS`` /
+   ``KPROJ_FABRICATOR``)
 3. ``~/.kproj.yaml`` key (``site_repo`` / ``no_push`` / ``kicad_cli`` /
    ``inventory`` / ``datasheet_library`` / ``datasheet_repo`` /
-   ``ibom_extra_fields``)
+   ``ibom_extra_fields`` / ``fabricator``)
 4. Hardcoded fallback (:data:`DEFAULT_SITE_REPO`, ``False``, ``None``,
    ``None``, :data:`DEFAULT_DATASHEET_LIBRARY`, :data:`DEFAULT_DATASHEET_REPO`,
-   :data:`DEFAULT_IBOM_EXTRA_FIELDS`)
+   :data:`DEFAULT_IBOM_EXTRA_FIELDS`, :data:`DEFAULT_FABRICATOR`)
 
 ``inventory`` (kproj#29) intentionally has **no** hardcoded-path
 fallback, unlike ``site_repo``: per the datasheet document library's
@@ -97,6 +98,12 @@ DEFAULT_IBOM_EXTRA_FIELDS: tuple[str, ...] = (
 Ordered for assembly use: supply-chain identifiers first, then
 datasheet/documentation and descriptive context.
 """
+
+DEFAULT_FABRICATOR: str = "jlc"
+"""Default jBOM fabricator mode for inventory lookup normalization."""
+
+_SUPPORTED_FABRICATORS: frozenset[str] = frozenset({"generic", "jlc", "pcbway", "seeed"})
+"""Fabricator values accepted by jBOM's ``--fabricator`` option."""
 
 
 # ---- SiteProfile abstraction (mirrors jBOM's ADR 0008 GENERIC pattern) ----
@@ -294,6 +301,15 @@ def _normalize_ibom_extra_fields(value: str | Sequence[str]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
+def _normalize_fabricator(value: str) -> str:
+    """Normalize and validate a configured jBOM fabricator mode."""
+    normalized = value.strip().lower()
+    if normalized not in _SUPPORTED_FABRICATORS:
+        allowed = ", ".join(sorted(_SUPPORTED_FABRICATORS))
+        raise ValueError(f"fabricator must be one of: {allowed}")
+    return normalized
+
+
 @dataclass(frozen=True)
 class ConfigOverrides:
     """CLI-derived overrides built inside :mod:`kproj.cli`.
@@ -320,6 +336,8 @@ class ConfigOverrides:
         ibom_extra_fields: ``--ibom-extra-fields`` override (kproj#48).
             Accepts either a comma-separated string or a sequence of
             field labels.
+        fabricator: ``--fabricator`` override selecting which jBOM
+            fabricator profile to use for lookup output.
     """
 
     site_repo: Path | None = None
@@ -329,6 +347,7 @@ class ConfigOverrides:
     datasheet_library: Path | None = None
     datasheet_repo: str | None = None
     ibom_extra_fields: str | Sequence[str] | None = None
+    fabricator: str | None = None
 
 
 @dataclass(frozen=True)
@@ -358,6 +377,9 @@ class KprojConfig:
         ibom_extra_fields: Ordered iBOM extra fields surfaced during
             publish (kproj#48). Resolved from CLI/env/yaml precedence,
             defaults to :data:`DEFAULT_IBOM_EXTRA_FIELDS`.
+        fabricator: Resolved jBOM fabricator mode forwarded to lookup
+            invocations as ``--fabricator``. Defaults to
+            :data:`DEFAULT_FABRICATOR`.
     """
 
     site_repo: Path
@@ -368,6 +390,7 @@ class KprojConfig:
     datasheet_library: Path = DEFAULT_DATASHEET_LIBRARY
     datasheet_repo: str = DEFAULT_DATASHEET_REPO
     ibom_extra_fields: tuple[str, ...] = DEFAULT_IBOM_EXTRA_FIELDS
+    fabricator: str = DEFAULT_FABRICATOR
 
 
 def _load_yaml_mapping(yaml_path: Path) -> Mapping[str, Any]:
@@ -489,6 +512,19 @@ def _resolve_ibom_extra_fields(
     return DEFAULT_IBOM_EXTRA_FIELDS
 
 
+def _resolve_fabricator(
+    overrides: ConfigOverrides, env: Mapping[str, str], yaml_data: Mapping[str, Any]
+) -> str:
+    """Resolve the effective jBOM ``--fabricator`` value."""
+    if overrides.fabricator is not None:
+        return _normalize_fabricator(overrides.fabricator)
+    if "KPROJ_FABRICATOR" in env:
+        return _normalize_fabricator(env["KPROJ_FABRICATOR"])
+    if "fabricator" in yaml_data:
+        return _normalize_fabricator(str(yaml_data["fabricator"]))
+    return DEFAULT_FABRICATOR
+
+
 def load_config(
     overrides: ConfigOverrides,
     env: Mapping[str, str],
@@ -520,6 +556,7 @@ def load_config(
         datasheet_library=_resolve_datasheet_library(overrides, env, yaml_data),
         datasheet_repo=_resolve_datasheet_repo(overrides, env, yaml_data),
         ibom_extra_fields=_resolve_ibom_extra_fields(overrides, env, yaml_data),
+        fabricator=_resolve_fabricator(overrides, env, yaml_data),
     )
 
 
