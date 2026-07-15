@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-07-15)
+
+### Bug Fixes
+
+* fix: refresh github metadata when project repo state changes ([`c0727cd`](https://github.com/plocher/kproj/commit/c0727cd3e286f31b33e79eb81e579978e4f303bf))
+
+### Features
+
+* feat(config): add fabricator profile override for jbom lookups ([`f091cf8`](https://github.com/plocher/kproj/commit/f091cf801dc4f46393de18e2cb05e9350d7657ef))
+
+* feat(ibom): enrich iBOM with inventory-derived fields (#48) ([`2811c1a`](https://github.com/plocher/kproj/commit/2811c1aa15002a1d20cde05dbc8dd803754aa200))
+
+
 ## v0.4.0 (2026-07-15)
 
 ### Features
