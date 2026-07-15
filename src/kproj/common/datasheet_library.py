@@ -7,7 +7,8 @@ follow-up ruling that fixed the broken invocation and multi-field shape
 (see ``docs/adr/0010-live-jbom-bom-invocation-for-datasheet-names.md``):
 
 1. **Resolution path**: kproj invokes ``jbom -q bom <project_dir>
-   --inventory <path> -f "reference,datasheet,datasheet_name" -o -``
+   --inventory <path> --fabricator <profile>
+   -f "reference,datasheet,datasheet_name" -o -``
    at publish time and parses the CSV from stdout
    (:func:`read_datasheet_rows`) into structured, **per-reference**
    rows. This is a deliberate, narrowly-scoped exception to ADR 0003's
@@ -73,13 +74,14 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from urllib.parse import quote as _urlquote
 
-from ..config import DEFAULT_DATASHEET_REPO
+from ..config import DEFAULT_DATASHEET_REPO, DEFAULT_FABRICATOR
 from ..model.datasheet_link import DatasheetLink
 from ..model.datasheet_row import DatasheetRow
 from ..model.finding import Finding
@@ -120,6 +122,8 @@ iBOM interactive table fields we surface in kproj#48.
 
 IBOM_BOM_FIELDS: str = ",".join(_IBOM_BOM_FIELD_TOKENS)
 """The ``jbom bom -f`` value used by :func:`read_ibom_rows`."""
+DEFAULT_JBOM_FABRICATOR: str = DEFAULT_FABRICATOR
+"""Default jBOM fabricator mode for lookup command generation."""
 
 _GIT_INVOCATION_ERRORS: tuple[type[Exception], ...] = (SubprocessTimeoutError, OSError)
 """Mirrors ``common.github_link``'s collapsing of git failure modes: a slow
@@ -212,6 +216,7 @@ def _default_jbom_command(
     project_dir: Path,
     inventory: Path | None,
     *,
+    fabricator: str = DEFAULT_JBOM_FABRICATOR,
     fields: str = DATASHEET_BOM_FIELDS,
 ) -> list[str] | None:
     """Build the ``jbom -q bom ...`` argv for a BOM-row lookup.
@@ -239,6 +244,8 @@ def _default_jbom_command(
         str(project_dir),
         "--inventory",
         str(inventory),
+        "--fabricator",
+        fabricator,
         "-f",
         fields,
         "-o",
@@ -262,7 +269,8 @@ def _display_header(field: str) -> str:
 
 def _normalize_csv_header(name: str) -> str:
     """Normalize a CSV header label to a lookup token."""
-    return name.strip().lower().replace("-", "_").replace(" ", "_")
+    collapsed = re.sub(r"[^a-z0-9]+", "_", name.strip().lower())
+    return collapsed.strip("_")
 
 
 def _normalize_csv_row(row: Mapping[str, str | None]) -> dict[str, str]:
@@ -272,6 +280,15 @@ def _normalize_csv_row(row: Mapping[str, str | None]) -> dict[str, str]:
         for key, value in row.items()
         if key is not None
     }
+
+
+def _first_present(normalized_row: Mapping[str, str], *aliases: str) -> str:
+    """Return the first non-empty value among normalized-header aliases."""
+    for alias in aliases:
+        value = normalized_row.get(alias, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _expand_references(reference_cell: str) -> tuple[str, ...]:
@@ -290,11 +307,13 @@ def read_datasheet_rows(
     inventory: Path | None = None,
     *,
     project: str = "",
+    fabricator: str = DEFAULT_JBOM_FABRICATOR,
     jbom_command: Sequence[str] | None = None,
 ) -> tuple[tuple[DatasheetRow, ...], tuple[Finding, ...]]:
     """Return structured per-reference BOM rows via a live ``jbom bom`` query.
 
-    Invokes ``jbom -q bom <project_dir> --inventory <path> -f
+    Invokes ``jbom -q bom <project_dir> --inventory <path>
+    --fabricator <profile> -f
     "reference,datasheet,datasheet_name" -o -`` (the PATH executable;
     see :func:`_resolve_jbom_executable`) and parses the CSV from
     stdout. This queries jBOM's *current* view of the inventory at
@@ -319,6 +338,8 @@ def read_datasheet_rows(
             basename; kproj always passes the resolved directory).
         inventory: Optional inventory CSV path forwarded as ``jbom bom
             --inventory``. ``None`` skips the invocation entirely.
+        fabricator: jBOM fabricator profile forwarded as
+            ``jbom bom --fabricator``.
         project: Project basename, threaded onto any emitted
             :class:`Finding`.
         jbom_command: Test-only seam: an explicit argv to run instead of
@@ -339,7 +360,7 @@ def read_datasheet_rows(
     if jbom_command is not None:
         command = list(jbom_command)
     else:
-        built = _default_jbom_command(project_dir, inventory)
+        built = _default_jbom_command(project_dir, inventory, fabricator=fabricator)
         if built is None:
             return (), ()
         command = built
@@ -394,18 +415,21 @@ def read_datasheet_rows(
     rows: list[DatasheetRow] = []
     for row in reader:
         normalized_row = _normalize_csv_row(row)
-        references = _expand_references(normalized_row.get("reference", ""))
+        references = _expand_references(_first_present(normalized_row, "reference", "designator"))
         datasheet = normalized_row.get("datasheet", "")
         datasheet_name = normalized_row.get("datasheet_name", "")
         manufacturer = normalized_row.get("manufacturer", "")
         mfgpn = normalized_row.get("mfgpn", "")
         mpn = normalized_row.get("mpn", "") or mfgpn
-        fabricator_part_number = (
-            normalized_row.get("fabricator_part_number", "")
-            or normalized_row.get("supplier_part_number", "")
-            or normalized_row.get("lcsc", "")
+        fabricator_part_number = _first_present(
+            normalized_row,
+            "fabricator_part_number",
+            "supplier_part_number",
+            "lcsc_part_number",
+            "lcsc_part",
+            "lcsc",
         )
-        description = normalized_row.get("description", "")
+        description = _first_present(normalized_row, "description", "comment")
         dnp = normalized_row.get("dnp", "")
 
         if not references:
@@ -432,6 +456,7 @@ def read_ibom_rows(
     inventory: Path | None = None,
     *,
     project: str = "",
+    fabricator: str = DEFAULT_JBOM_FABRICATOR,
     jbom_command: Sequence[str] | None = None,
 ) -> tuple[tuple[DatasheetRow, ...], tuple[Finding, ...]]:
     """Return per-reference rows with inventory fields for iBOM enrichment.
@@ -445,11 +470,22 @@ def read_ibom_rows(
     if jbom_command is not None:
         command = list(jbom_command)
     else:
-        built = _default_jbom_command(project_dir, inventory, fields=IBOM_BOM_FIELDS)
+        built = _default_jbom_command(
+            project_dir,
+            inventory,
+            fabricator=fabricator,
+            fields=IBOM_BOM_FIELDS,
+        )
         if built is None:
             return (), ()
         command = built
-    return read_datasheet_rows(project_dir, inventory, project=project, jbom_command=command)
+    return read_datasheet_rows(
+        project_dir,
+        inventory,
+        project=project,
+        fabricator=fabricator,
+        jbom_command=command,
+    )
 
 
 def distinct_datasheet_names(rows: Sequence[DatasheetRow]) -> tuple[str, ...]:
@@ -488,6 +524,7 @@ def read_datasheet_names(
     inventory: Path | None = None,
     *,
     project: str = "",
+    fabricator: str = DEFAULT_JBOM_FABRICATOR,
     jbom_command: Sequence[str] | None = None,
 ) -> tuple[tuple[str, ...], tuple[Finding, ...]]:
     """Return the distinct curated ``Datasheet Name`` values via ``jbom bom``.
@@ -504,7 +541,11 @@ def read_datasheet_names(
         (empty in the happy path; one warning ``Finding`` on failure).
     """
     rows, findings = read_datasheet_rows(
-        project_dir, inventory, project=project, jbom_command=jbom_command
+        project_dir,
+        inventory,
+        project=project,
+        fabricator=fabricator,
+        jbom_command=jbom_command,
     )
     return distinct_datasheet_names(rows), findings
 

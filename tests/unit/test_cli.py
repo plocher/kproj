@@ -35,6 +35,7 @@ def test_parse_args_defaults_to_cwd_positional() -> None:
     assert parsed.inventory is None
     assert parsed.datasheet_library is None
     assert parsed.datasheet_repo is None
+    assert parsed.fabricator is None
     assert parsed.dry_run is False
     assert parsed.no_push is False
     assert parsed.verbose == 0
@@ -54,6 +55,8 @@ def test_parse_args_supports_all_documented_flags() -> None:
             "/tmp/datasheets",
             "--datasheet-repo",
             "example/datasheets",
+            "--fabricator",
+            "jlc",
             "--dry-run",
             "--no-push",
             "-v",
@@ -65,6 +68,7 @@ def test_parse_args_supports_all_documented_flags() -> None:
     assert parsed.inventory == "/tmp/inventory.csv"
     assert parsed.datasheet_library == "/tmp/datasheets"
     assert parsed.datasheet_repo == "example/datasheets"
+    assert parsed.fabricator == "jlc"
     assert parsed.dry_run is True
     assert parsed.no_push is True
     assert parsed.verbose == 1
@@ -101,6 +105,8 @@ def test_build_request_propagates_cli_overrides(tmp_path: Path) -> None:
             str(tmp_path / "datasheets"),
             "--datasheet-repo",
             "example/datasheets",
+            "--fabricator",
+            "pcbway",
             "--dry-run",
             "--no-push",
         ]
@@ -114,6 +120,7 @@ def test_build_request_propagates_cli_overrides(tmp_path: Path) -> None:
     assert request.config.inventory == tmp_path / "inventory.csv"
     assert request.config.datasheet_library == tmp_path / "datasheets"
     assert request.config.datasheet_repo == "example/datasheets"
+    assert request.config.fabricator == "pcbway"
 
 
 def test_help_documents_config_precedence_and_yaml_example(
@@ -128,9 +135,11 @@ def test_help_documents_config_precedence_and_yaml_example(
     assert "KPROJ_INVENTORY" in help_text
     assert "KPROJ_DATASHEET_LIBRARY" in help_text
     assert "KPROJ_DATASHEET_REPO" in help_text
+    assert "KPROJ_FABRICATOR" in help_text
     assert "site_repo:" in help_text
     assert "datasheet_library:" in help_text
     assert "datasheet_repo:" in help_text
+    assert "fabricator:" in help_text
 
 
 def test_help_explains_no_push_batch_flush(capsys: pytest.CaptureFixture[str]) -> None:
