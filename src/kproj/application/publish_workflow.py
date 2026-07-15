@@ -36,6 +36,7 @@ from pathlib import Path
 from ..common.datasheet_library import (
     build_datasheet_link,
     check_datasheet_links,
+    jbom_tool_report,
     read_datasheet_names,
 )
 from ..common.github_link import derive_github_link, detect_github_link, finding_for_detection
@@ -276,7 +277,7 @@ class PublishWorkflow:
         except ProjectResolutionError as exc:
             return PublishResult.build(
                 "failed",
-                message=f"kproj: project resolution failed: {exc}",
+                message=f"Error: project resolution failed: {exc}",
             )
 
         try:
@@ -285,7 +286,7 @@ class PublishWorkflow:
         except KicadNotFoundError as exc:
             return PublishResult.build(
                 "failed",
-                message=f"kproj: {exc}",
+                message=f"Error: {exc}",
             )
 
         if major not in SUPPORTED_KICAD_MAJORS:
@@ -293,15 +294,17 @@ class PublishWorkflow:
             return PublishResult.build(
                 "failed",
                 message=(
-                    f"kproj: unsupported kicad-cli version {major}.{minor}.{patch} "
+                    f"Error: unsupported kicad-cli version {major}.{minor}.{patch} "
                     f"at {kicad_cli} (kproj v1 supports {allowed})."
                 ),
             )
 
         print(
-            f"kproj: kicad-cli {major}.{minor}.{patch} at {kicad_cli}",
+            f"Info: Using kicad-cli {major}.{minor}.{patch} at {kicad_cli}",
             file=sys.stderr,
         )
+        if request.config.inventory is not None:
+            print(jbom_tool_report(), file=sys.stderr)
 
         # ── Steps 2-3: Read + analyze ──
         project_info, read_findings = self._project_reader.read(resolved)
@@ -317,7 +320,7 @@ class PublishWorkflow:
             # with a stderr-ready message and skip everything downstream.
             return PublishResult.build(
                 "failed",
-                message=f"kproj: design analysis failed ({exc.origin}): {exc}",
+                message=f"Error: Design analysis failed ({exc.origin}): {exc}",
             )
         analysis = AnalysisInfo(
             findings=tuple(read_findings) + metadata_analysis.findings + design_analysis.findings
@@ -377,7 +380,7 @@ class PublishWorkflow:
             return PublishResult.build(
                 "private-skip",
                 message=(
-                    f"kproj: {resolved.basename!r} is status=private; "
+                    f"Note: {resolved.basename!r} is status=private; "
                     "audit + DRC/ERC ran for stderr only, no site writes."
                 ),
                 findings=analysis.findings,
@@ -394,7 +397,7 @@ class PublishWorkflow:
         except KicadNotFoundError as exc:
             return PublishResult.build(
                 "failed",
-                message=f"kproj: {exc}",
+                message=f"Error: {exc}",
                 findings=analysis.findings,
             )
 
@@ -410,7 +413,7 @@ class PublishWorkflow:
                     return PublishResult.build(
                         "failed",
                         message=(
-                            f"kproj: site repo {site_repo} has uncommitted changes. "
+                            f"Error: Site repo {site_repo} has uncommitted changes. "
                             "Commit, stash, or clean before publishing."
                         ),
                         findings=analysis.findings,
@@ -418,7 +421,7 @@ class PublishWorkflow:
             except (SubprocessFailedError, SubprocessTimeoutError) as exc:
                 return PublishResult.build(
                     "failed",
-                    message=f"kproj: could not check site-repo cleanliness: {exc}",
+                    message=f"Error: Could not check site-repo cleanliness: {exc}",
                     findings=analysis.findings,
                 )
 
@@ -540,7 +543,7 @@ class PublishWorkflow:
             # outcome=failed/exit 2 with a stderr-ready message.
             return PublishResult.build(
                 "failed",
-                message=f"kproj: schematic export failed: {exc}",
+                message=f"Error: Schematic export failed: {exc}",
                 findings=analysis.findings,
             )
         except FileNotFoundError as exc:
@@ -550,13 +553,13 @@ class PublishWorkflow:
             # tidy stderr message rather than a traceback.
             return PublishResult.build(
                 "failed",
-                message=f"kproj: artifact generation failed: {exc}",
+                message=f"Error: Artifact generation failed: {exc}",
                 findings=analysis.findings,
             )
         except (SubprocessFailedError, SubprocessTimeoutError, OSError) as exc:
             return PublishResult.build(
                 "failed",
-                message=f"kproj: pipeline failed: {exc}",
+                message=f"Error: Pipeline failed: {exc}",
                 findings=analysis.findings,
             )
 

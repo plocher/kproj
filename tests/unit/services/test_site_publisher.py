@@ -23,6 +23,7 @@ from unittest.mock import patch
 import yaml
 
 from kproj.common.datasheet_library import build_datasheet_link
+from kproj.common.subprocess_runner import SubprocessResult
 from kproj.config import GENERIC_SITE_PROFILE
 from kproj.model.analysis_info import AnalysisInfo
 from kproj.model.finding import Finding
@@ -31,7 +32,12 @@ from kproj.model.publication import Publication
 from kproj.model.publish_result import PublishResult
 from kproj.model.severity import Severity
 from kproj.services.change_journal import ChangeJournal
-from kproj.services.site_publisher import SitePublisher, _build_project_index_content
+from kproj.services.site_publisher import (
+    SitePublisher,
+    _build_project_index_content,
+    _git_pending_push_count,
+    public_version_destination,
+)
 
 # Tests reference GENERIC_SITE_PROFILE's directory constants rather than
 # string literals so they exercise the abstraction contract ("the version
@@ -92,6 +98,18 @@ def _write_pages_file(site_repo: Path, P: str, content: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def test_public_version_destination_degrades_to_site_relative_path(tmp_path: Path) -> None:
+    """Missing or malformed Hugo config still yields a useful destination."""
+    assert public_version_destination(tmp_path, "Demo", "1.0B") == "/versions/demo/#v-10b"
+
+
+def test_pending_push_probe_degrades_when_no_upstream(tmp_path: Path) -> None:
+    """A missing upstream yields an advisory ``None`` rather than failure."""
+    result = SubprocessResult((), 128, "", "no upstream", 0.0)
+    with patch("kproj.services.site_publisher.subprocess_run", return_value=result):
+        assert _git_pending_push_count(tmp_path) is None
 
 
 # ──────────────────────────── publish ────────────────────────────────────────
@@ -186,6 +204,19 @@ class TestPublish:
         version_file = site / GENERIC_SITE_PROFILE.versions_dir / "Demo" / "1.0B.md"
         assert not version_file.exists()
 
+    def test_dry_run_reports_absolute_destination_from_hugo_config(self, tmp_path: Path) -> None:
+        """The dry-run summary identifies the public page it would publish."""
+        site = tmp_path / "site"
+        site.mkdir()
+        (site / "hugo.toml").write_text('baseURL = "https://example.test/"\n', encoding="utf-8")
+        result = SitePublisher(_open_journal(site, dry_run=True)).publish(
+            _pub(), site, no_push=True, dry_run=True, site_profile=GENERIC_SITE_PROFILE
+        )
+        assert result.message == (
+            "Note: --dry-run only. Would have published to "
+            "https://example.test/versions/demo/#v-10b"
+        )
+
     def test_no_push_skips_git_push(self, tmp_path: Path) -> None:
         """no_push=True must not invoke git push."""
         site = tmp_path / "site"
@@ -200,6 +231,50 @@ class TestPublish:
 
         push_calls = [c for c in mock_git.call_args_list if "push" in (c.args[0] if c.args else [])]
         assert not push_calls
+
+    def test_noop_flushes_pending_site_commits(self, tmp_path: Path) -> None:
+        """An unchanged plain publish flushes commits left by ``--no-push``."""
+        site = tmp_path / "site"
+        site.mkdir()
+        with (
+            patch("kproj.services.site_publisher._git_run") as git_run,
+            patch("kproj.services.site_publisher._git_staged_names", return_value=[]),
+            patch("kproj.services.site_publisher._git_pending_push_count", return_value=2),
+        ):
+            result = SitePublisher(_open_journal(site, dry_run=True)).publish(
+                _pub(), site, no_push=False, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
+        assert result.message == "Info: Demo-1.0B unchanged; pushed 2 pending site commit(s)."
+        assert any(call.args[0] == ["push"] for call in git_run.call_args_list)
+
+    def test_no_push_keeps_pending_site_commits_and_reports_debt(self, tmp_path: Path) -> None:
+        """A batch run never pushes, even when the site repository is ahead."""
+        site = tmp_path / "site"
+        site.mkdir()
+        with (
+            patch("kproj.services.site_publisher._git_run") as git_run,
+            patch("kproj.services.site_publisher._git_staged_names", return_value=[]),
+            patch("kproj.services.site_publisher._git_pending_push_count", return_value=2),
+        ):
+            result = SitePublisher(_open_journal(site, dry_run=True)).publish(
+                _pub(), site, no_push=True, dry_run=False, site_profile=GENERIC_SITE_PROFILE
+            )
+        assert "Note: site repo has 2 unpushed commit(s) (--no-push)." in result.message
+        assert not any(call.args[0] == ["push"] for call in git_run.call_args_list)
+
+    def test_dry_run_reports_pending_debt_without_push(self, tmp_path: Path) -> None:
+        """Read-only previews report a queued site push without performing it."""
+        site = tmp_path / "site"
+        site.mkdir()
+        with (
+            patch("kproj.services.site_publisher._git_run") as git_run,
+            patch("kproj.services.site_publisher._git_pending_push_count", return_value=3),
+        ):
+            result = SitePublisher(_open_journal(site, dry_run=True)).publish(
+                _pub(), site, no_push=False, dry_run=True, site_profile=GENERIC_SITE_PROFILE
+            )
+        assert "Note: site repo has 3 unpushed commit(s) (dry-run)." in result.message
+        assert not git_run.called
 
     def test_publish_stages_every_journaled_path(self, tmp_path: Path) -> None:
         """``git add`` must cover ALL journal paths (ADR 0005 / BLOCKER 2).

@@ -174,6 +174,21 @@ def _resolve_jbom_executable() -> tuple[str, ...]:
     return (sys.executable, "-m", "jbom")
 
 
+def jbom_tool_report() -> str:
+    """Return a human-readable report for the jBOM command kproj will use."""
+    command = _resolve_jbom_executable()
+    location = " ".join(command)
+    fallback = " (Python module fallback)" if len(command) > 1 else ""
+    try:
+        result = subprocess_run([*command, "--version"], check=False)
+    except (SubprocessTimeoutError, OSError):
+        return f"Info: Using jbom (version unknown) at {location}{fallback}"
+    version = (
+        result.stdout.strip().splitlines()[0] if result.stdout.strip() else "jbom (version unknown)"
+    )
+    return f"Info: Using {version} at {location}{fallback}"
+
+
 def _default_jbom_command(project_dir: Path, inventory: Path | None) -> list[str] | None:
     """Build the ``jbom -q bom ...`` argv for the datasheet-row lookup.
 

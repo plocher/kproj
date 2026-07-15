@@ -345,10 +345,10 @@ def test_main_prints_findings_to_stderr(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "comment9_missing" in captured.err, (
-        f"BLOCKER 4: audit finding missing from stderr; got: {captured.err!r}"
+    assert "Warning: COMMENT9 absent" in captured.err, (
+        f"issue #43: human finding message missing from stderr; got: {captured.err!r}"
     )
-    assert "drc_violation" in captured.err
+    assert "Error: silk overlap" in captured.err
     assert "silk overlap" in captured.err
 
 

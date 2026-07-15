@@ -51,23 +51,24 @@ def test_single_warning_appears_on_one_line() -> None:
     assert len(lines) == 1
 
 
-def test_severity_label_present_warning() -> None:
-    """WARNING severity label appears in the output."""
+def test_default_mode_uses_human_warning_prefix() -> None:
+    """Default stderr is human-oriented and omits machine finding fields."""
     fmt = StderrFormatter()
     result = fmt.format_findings([_f(severity=Severity.WARNING, reason="warn")])
-    assert "warning" in result.lower()
+    assert result == "Warning: warn"
+    assert "test_rule" not in result
 
 
-def test_severity_label_present_error() -> None:
-    """ERROR severity label appears in the output."""
+def test_default_mode_uses_human_error_prefix() -> None:
+    """Errors use the standard console prefix."""
     fmt = StderrFormatter()
     result = fmt.format_findings([_f(severity=Severity.ERROR, reason="err")])
-    assert "error" in result.lower()
+    assert result == "Error: err"
 
 
-def test_field_name_included() -> None:
-    """The rule/field name appears in the output."""
-    fmt = StderrFormatter()
+def test_verbose_mode_retains_machine_finding_context() -> None:
+    """Finding codes and values remain available under ``-v``."""
+    fmt = StderrFormatter(verbose_level=1)
     result = fmt.format_findings([_f(field="comment9_missing", reason="r")])
     assert "comment9_missing" in result
 
@@ -79,11 +80,11 @@ def test_reason_included() -> None:
     assert "COMMENT9 is absent" in result
 
 
-def test_value_included_when_non_empty() -> None:
-    """A non-empty value appears in the output."""
+def test_default_mode_omits_value_and_project_context() -> None:
+    """The normal human view does not repeat raw diagnostic metadata."""
     fmt = StderrFormatter()
-    result = fmt.format_findings([_f(value="BAD_VALUE", reason="r")])
-    assert "BAD_VALUE" in result
+    result = fmt.format_findings([_f(value="BAD_VALUE", project="Demo", reason="r")])
+    assert result == "Warning: r"
 
 
 def test_value_omitted_when_empty() -> None:
@@ -93,11 +94,11 @@ def test_value_omitted_when_empty() -> None:
     assert "(value:" not in result
 
 
-def test_project_included_when_non_empty() -> None:
-    """A non-empty project name appears in the output."""
+def test_project_omitted_in_default_human_mode() -> None:
+    """Default stderr does not repeat the known current project path."""
     fmt = StderrFormatter()
     result = fmt.format_findings([_f(project="MyProject", reason="r")])
-    assert "MyProject" in result
+    assert result == "Warning: r"
 
 
 def test_multiple_findings_one_per_line() -> None:
@@ -117,7 +118,14 @@ def test_multiple_findings_one_per_line() -> None:
 
 
 def test_exclusion_severity_renders() -> None:
-    """EXCLUSION severity produces a line (not omitted)."""
+    """EXCLUSION severity is a note in the human view."""
     fmt = StderrFormatter()
     result = fmt.format_findings([_f(severity=Severity.EXCLUSION, reason="exc")])
-    assert result.strip()
+    assert result == "Note: exc"
+
+
+def test_info_severity_renders_as_note() -> None:
+    """Environment diagnostics use a non-escalating ``Note:`` prefix."""
+    fmt = StderrFormatter()
+    result = fmt.format_findings([_f(severity=Severity.INFO, reason="info")])
+    assert result == "Note: info"
