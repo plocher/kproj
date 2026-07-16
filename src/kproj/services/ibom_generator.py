@@ -216,6 +216,7 @@ def _is_dnp_marker(value: str) -> bool:
     """Return whether *value* should be interpreted as DNP."""
     return value.strip().lower() in _TRUE_DNP_MARKERS
 
+
 def _datasheet_url_from_row(row: DatasheetRow) -> str:
     """Return the curated datasheet URL for *row*, or an empty string."""
     datasheet_name = row.datasheet_name.strip()
@@ -227,11 +228,8 @@ def _datasheet_url_from_row(row: DatasheetRow) -> str:
 def _render_datasheet_anchor(url: str) -> str:
     """Render a compact HTML anchor for the Datasheet field."""
     safe_url = html.escape(url, quote=True)
-    return (
-        f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">'
-        "Datasheet"
-        "</a>"
-    )
+    return f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">Datasheet</a>'
+
 
 def _render_details_field(row: DatasheetRow) -> str:
     """Render the compact multi-line Details field HTML for one component."""
