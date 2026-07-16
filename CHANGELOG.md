@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.6.0 (2026-07-16)
+
+### Features
+
+* feat: add compact iBOM Details default field ([`8f30b4b`](https://github.com/plocher/kproj/commit/8f30b4be1b88134f447fb73011939e238ecdb132))
+
+
 ## v0.5.2 (2026-07-16)
 
 ### Bug Fixes
