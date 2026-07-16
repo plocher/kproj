@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.5.2 (2026-07-16)
+
+### Bug Fixes
+
+* fix: use curated datasheet links for ibom datasheet field ([`6eede0d`](https://github.com/plocher/kproj/commit/6eede0de6fb114a9f8c277f5b6f6d3d2a93ded3f))
+
+
 ## v0.5.1 (2026-07-15)
 
 ### Bug Fixes
