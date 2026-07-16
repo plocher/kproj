@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import tempfile
 import time
 import xml.etree.ElementTree as ElementTree
@@ -229,9 +230,11 @@ def _customize_ibom_html_defaults(output_path: Path) -> None:
         f'"{_IBOM_RENAME_REFERENCES_LABEL}"',
         f'"{_IBOM_REFERENCE_LABEL}"',
     )
-    updated = updated.replace(
-        f">{_IBOM_RENAME_REFERENCES_LABEL}",
-        f">{_IBOM_REFERENCE_LABEL}",
+    updated = re.sub(
+        r'(id="referencesCheckbox"[^>]*>\s*)References(\s*</label>)',
+        rf"\1{_IBOM_REFERENCE_LABEL}\2",
+        updated,
+        count=1,
     )
     updated = updated.replace(
         "if (hcols === null) {\n    hcols = [];\n  }",
