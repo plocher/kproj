@@ -43,6 +43,7 @@ import xml.etree.ElementTree as ElementTree
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..common.datasheet_library import build_datasheet_link
 from ..common.subprocess_runner import DEFAULT_KICAD_TIMEOUT
 from ..common.subprocess_runner import run as subprocess_run
 from ..model.datasheet_row import DatasheetRow
@@ -235,7 +236,10 @@ def _resolve_extra_field_value(field_name: str, row: DatasheetRow) -> str:
     if normalized == "description":
         return row.description
     if normalized == "datasheet":
-        return row.datasheet
+        datasheet_name = row.datasheet_name.strip()
+        if not datasheet_name:
+            return ""
+        return build_datasheet_link(datasheet_name).view_url
     if normalized in {"dnp", "kicad_dnp"}:
         return "DNP" if _is_dnp_marker(row.dnp) else ""
     return ""
@@ -256,8 +260,9 @@ def _write_extra_data_xml(
             continue
 
         comp = ElementTree.SubElement(components, "comp", {"ref": reference})
-        if row.datasheet:
-            ElementTree.SubElement(comp, "datasheet").text = row.datasheet
+        datasheet_url = _resolve_extra_field_value("datasheet", row)
+        if datasheet_url:
+            ElementTree.SubElement(comp, "datasheet").text = datasheet_url
         if _is_dnp_marker(row.dnp):
             ElementTree.SubElement(comp, "property", {"name": "dnp"})
 

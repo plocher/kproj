@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from kproj.common import subprocess_runner
+from kproj.common.datasheet_library import build_datasheet_link
 from kproj.model.datasheet_row import DatasheetRow
 from kproj.model.export_result import ExportResult
 from kproj.services import ibom_generator as ibom_generator_module
@@ -297,8 +298,10 @@ def test_generate_projects_inventory_rows_to_xml_extra_data(
     assert extra_data_file != pcb
     extra_data_xml = captured["extra_data_xml"]
     assert isinstance(extra_data_xml, str)
+    expected_datasheet = build_datasheet_link("MOSFET-BSS138").view_url
     assert '<comp ref="Q8">' in extra_data_xml
-    assert "<datasheet>https://example.com/bss138.pdf</datasheet>" in extra_data_xml
+    assert f"<datasheet>{expected_datasheet}</datasheet>" in extra_data_xml
+    assert "https://example.com/bss138.pdf" not in extra_data_xml
     assert '<field name="Manufacturer">ON Semi</field>' in extra_data_xml
     assert '<field name="MFGPN">BSS138</field>' in extra_data_xml
     assert '<field name="Datasheet Name">MOSFET-BSS138</field>' in extra_data_xml

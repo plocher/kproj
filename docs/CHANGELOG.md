@@ -8,6 +8,7 @@
 - Added configurable `ibom_extra_fields` with full precedence support (CLI `--ibom-extra-fields`, env `KPROJ_IBOM_EXTRA_FIELDS`, yaml `ibom_extra_fields`, default value).
 - Added configurable jBOM fabricator selection with full precedence support (CLI `--fabricator`, env `KPROJ_FABRICATOR`, yaml `fabricator`, default `jlc`).
 - Added CSV header alias normalization for generic/JLC lookup output (`Reference`/`Designator`, `Description`/`Comment`, `Lcsc`/`LCSC Part #`) so enrichment remains reference-correct under JLC defaults.
+- Switched iBOM `Datasheet` enrichment links to use curated `Datasheet Name` deep-links into `SPCoast-inventory` (GitHub blob URLs) instead of supplier-provided datasheet URLs.
 - Preserved fallback behavior when inventory is not configured (legacy PCB-backed iBOM extra-data path remains valid).
 ## 0.4.0
 - Humanized console output with `Info:`, `Note:`, `Warning:`, and `Error:` prefixes; GitHub-link environment diagnostics are now INFO and no longer change a successful exit code.
