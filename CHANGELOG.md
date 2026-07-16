@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-07-16)
+
+### Features
+
+* feat(cli): refactor verbs and add list --all ([`ba9e683`](https://github.com/plocher/kproj/commit/ba9e683b8dddd1aa0f935ddf1cdb39ab6e8b187e))
+
+
 ## v0.9.0 (2026-07-16)
 
 ### Features
