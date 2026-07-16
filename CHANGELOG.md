@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.7.0 (2026-07-16)
+
+### Features
+
+* feat: tune ibom default columns and view ([`92a154c`](https://github.com/plocher/kproj/commit/92a154cbfadbf20864274f560d7d0197792a2a97))
+
+
 ## v0.6.0 (2026-07-16)
 
 ### Features
