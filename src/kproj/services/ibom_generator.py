@@ -36,6 +36,7 @@ release-asset filename is independent of the iBOM staging directory.
 
 from __future__ import annotations
 
+import html
 import os
 import tempfile
 import time
@@ -215,10 +216,47 @@ def _is_dnp_marker(value: str) -> bool:
     """Return whether *value* should be interpreted as DNP."""
     return value.strip().lower() in _TRUE_DNP_MARKERS
 
+def _datasheet_url_from_row(row: DatasheetRow) -> str:
+    """Return the curated datasheet URL for *row*, or an empty string."""
+    datasheet_name = row.datasheet_name.strip()
+    if not datasheet_name:
+        return ""
+    return build_datasheet_link(datasheet_name).view_url
+
+
+def _render_datasheet_anchor(url: str) -> str:
+    """Render a compact HTML anchor for the Datasheet field."""
+    safe_url = html.escape(url, quote=True)
+    return (
+        f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">'
+        "Datasheet"
+        "</a>"
+    )
+
+def _render_details_field(row: DatasheetRow) -> str:
+    """Render the compact multi-line Details field HTML for one component."""
+    details: list[str] = []
+
+    manufacturer = row.manufacturer.strip()
+    if manufacturer:
+        details.append(html.escape(manufacturer))
+
+    mpn = (row.mpn or row.mfgpn).strip()
+    if mpn:
+        details.append(html.escape(mpn))
+
+    datasheet_url = _datasheet_url_from_row(row)
+    if datasheet_url:
+        details.append(_render_datasheet_anchor(datasheet_url))
+
+    return "<br>".join(details)
+
 
 def _resolve_extra_field_value(field_name: str, row: DatasheetRow) -> str:
     """Resolve one requested iBOM field value from a :class:`DatasheetRow`."""
     normalized = _normalize_field_name(field_name)
+    if normalized == "details":
+        return _render_details_field(row)
     if normalized == "datasheet_name":
         return row.datasheet_name
     if normalized in {"manufacturer"}:
@@ -236,10 +274,10 @@ def _resolve_extra_field_value(field_name: str, row: DatasheetRow) -> str:
     if normalized == "description":
         return row.description
     if normalized == "datasheet":
-        datasheet_name = row.datasheet_name.strip()
-        if not datasheet_name:
+        datasheet_url = _datasheet_url_from_row(row)
+        if not datasheet_url:
             return ""
-        return build_datasheet_link(datasheet_name).view_url
+        return _render_datasheet_anchor(datasheet_url)
     if normalized in {"dnp", "kicad_dnp"}:
         return "DNP" if _is_dnp_marker(row.dnp) else ""
     return ""

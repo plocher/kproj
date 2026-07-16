@@ -55,7 +55,7 @@ Environment variables:
   inventory: /home/you/Dropbox/KiCad/SPCoast-inventory/SPCoast-INVENTORY.csv
   datasheet_library: /home/you/Dropbox/KiCad/SPCoast-inventory
   datasheet_repo: plocher/SPCoast-inventory
-  ibom_extra_fields: MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description
+  ibom_extra_fields: Details,Description
   fabricator: jlc
 
 Without a ~/.kproj.yaml and no --inventory/KPROJ_INVENTORY, kproj publishes
@@ -137,7 +137,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated iBOM extra fields to surface (env: KPROJ_IBOM_EXTRA_FIELDS; "
             "yaml: ibom_extra_fields:). Example: "
-            '"MPN,Manufacturer,Fabricator Part Number,Datasheet,Datasheet Name,Description".'
+            '"Details,Description".'
         ),
     )
     parser.add_argument(

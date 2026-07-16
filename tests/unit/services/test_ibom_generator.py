@@ -18,6 +18,7 @@ Validates the contract per ADR 0008 + ``docs/DESIGN.md`` §
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ElementTree
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -261,9 +262,9 @@ def test_generate_projects_inventory_rows_to_xml_extra_data(
             reference="Q8",
             datasheet="https://example.com/bss138.pdf",
             datasheet_name="MOSFET-BSS138",
-            manufacturer="ON Semi",
-            mfgpn="BSS138",
-            mpn="BSS138",
+            manufacturer="ON & Semi",
+            mfgpn="BSS138 <ALT>",
+            mpn="",
             fabricator_part_number="LCSC999",
             description="N-channel MOSFET",
             dnp="DNP",
@@ -273,10 +274,7 @@ def test_generate_projects_inventory_rows_to_xml_extra_data(
         ibom_script=ibom_script,
         python_exe=kicad_python,
         extra_fields=(
-            "Manufacturer",
-            "MFGPN",
-            "Fabricator Part Number",
-            "Datasheet Name",
+            "Details",
             "Description",
         ),
     ).generate(
@@ -290,21 +288,29 @@ def test_generate_projects_inventory_rows_to_xml_extra_data(
     assert isinstance(argv, list)
     assert "--extra-fields" in argv
     fields_idx = argv.index("--extra-fields") + 1
-    assert argv[fields_idx] == (
-        "Manufacturer,MFGPN,Fabricator Part Number,Datasheet Name,Description"
-    )
+    assert argv[fields_idx] == "Details,Description"
     extra_data_file = captured["extra_data_file"]
     assert isinstance(extra_data_file, Path)
     assert extra_data_file != pcb
     extra_data_xml = captured["extra_data_xml"]
     assert isinstance(extra_data_xml, str)
-    expected_datasheet = build_datasheet_link("MOSFET-BSS138").view_url
+    expected_datasheet_url = build_datasheet_link("MOSFET-BSS138").view_url
+    expected_datasheet_anchor = (
+        f'<a href="{expected_datasheet_url}" target="_blank" rel="noopener noreferrer">'
+        "Datasheet"
+        "</a>"
+    )
+    xml_root = ElementTree.fromstring(extra_data_xml)
+    comp = xml_root.find("./components/comp[@ref='Q8']")
+    assert comp is not None
     assert '<comp ref="Q8">' in extra_data_xml
-    assert f"<datasheet>{expected_datasheet}</datasheet>" in extra_data_xml
+    assert comp.findtext("datasheet") == expected_datasheet_anchor
+    assert (
+        comp.findtext("./field[@name='Details']")
+        == "ON &amp; Semi<br>BSS138 &lt;ALT&gt;<br>" + expected_datasheet_anchor
+    )
+    assert comp.findtext("./field[@name='Description']") == "N-channel MOSFET"
     assert "https://example.com/bss138.pdf" not in extra_data_xml
-    assert '<field name="Manufacturer">ON Semi</field>' in extra_data_xml
-    assert '<field name="MFGPN">BSS138</field>' in extra_data_xml
-    assert '<field name="Datasheet Name">MOSFET-BSS138</field>' in extra_data_xml
     assert '<property name="dnp" />' in extra_data_xml
 
 

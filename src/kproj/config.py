@@ -86,16 +86,11 @@ published deep-links point at (:func:`kproj.common.datasheet_library.build_datas
 Hardcoded fallback (ADR 0007 unchanged conventions)."""
 
 DEFAULT_IBOM_EXTRA_FIELDS: tuple[str, ...] = (
-    "MPN",
-    "Manufacturer",
-    "Fabricator Part Number",
-    "Datasheet",
-    "Datasheet Name",
+    "Details",
     "Description",
 )
 """Default iBOM extra fields surfaced by kproj (kproj#48).
-
-Ordered for assembly use: supply-chain identifiers first, then
+Ordered for assembly use: compact supply-chain identity first, then
 datasheet/documentation and descriptive context.
 """
 
