@@ -16,6 +16,7 @@ The argv, fixed by ADR 0008:
         --name-format <P>-<R>.ibom
         --extra-data-file <pcb|inventory-xml>
         --dnp-field kicad_dnp
+        --layer-view F
         --extra-fields <configured-extra-fields>
         --include-tracks
         <pcb>
@@ -65,6 +66,16 @@ _DEFAULT_EXTRA_FIELDS: tuple[str, ...] = ("MPN", "Manufacturer")
 
 _TRUE_DNP_MARKERS: frozenset[str] = frozenset({"1", "true", "yes", "y", "dnp"})
 """Truthy string markers treated as DNP during XML projection."""
+_IBOM_DEFAULT_LAYER_VIEW = "F"
+"""Preferred initial PCB layer view for generated iBOM pages."""
+
+_IBOM_DEFAULT_HIDDEN_COLUMNS = (
+    'if (hcols === null) {\n    hcols = ["checkboxes", "Footprint"];\n  }'
+)
+"""JS snippet used to hide checkboxes + footprint columns by default."""
+
+_IBOM_RENAME_REFERENCES_LABEL = "References"
+_IBOM_REFERENCE_LABEL = "Ref"
 
 
 class IbomGenerator:
@@ -173,6 +184,8 @@ class IbomGenerator:
                 str(extra_data_file),
                 "--dnp-field",
                 "kicad_dnp",
+                "--layer-view",
+                _IBOM_DEFAULT_LAYER_VIEW,
             ]
             if self._extra_fields:
                 argv.extend(["--extra-fields", ",".join(self._extra_fields)])
@@ -198,6 +211,7 @@ class IbomGenerator:
                     f"iBOM exited 0 but produced no HTML at {produced}; "
                     f"check the iBOM script ({self._ibom_script}) is the one shipped by PCM."
                 )
+            _customize_ibom_html_defaults(produced)
             os.replace(produced, output_file)
 
         return ExportResult(
@@ -205,6 +219,29 @@ class IbomGenerator:
             command=result.command,
             elapsed_seconds=elapsed,
         )
+
+
+def _customize_ibom_html_defaults(output_path: Path) -> None:
+    """Apply SPCoast iBOM UI defaults in the generated HTML payload."""
+    text = output_path.read_text(encoding="utf-8")
+
+    updated = text.replace(
+        f'"{_IBOM_RENAME_REFERENCES_LABEL}"',
+        f'"{_IBOM_REFERENCE_LABEL}"',
+    )
+    updated = updated.replace(
+        f">{_IBOM_RENAME_REFERENCES_LABEL}",
+        f">{_IBOM_REFERENCE_LABEL}",
+    )
+    updated = updated.replace(
+        "if (hcols === null) {\n    hcols = [];\n  }",
+        _IBOM_DEFAULT_HIDDEN_COLUMNS,
+        1,
+    )
+
+    if updated == text:
+        return
+    output_path.write_text(updated, encoding="utf-8")
 
 
 def _normalize_field_name(field: str) -> str:

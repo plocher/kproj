@@ -7,6 +7,7 @@ Validates the contract per ADR 0008 + ``docs/DESIGN.md`` §
   ``<python> <ibom_script> --no-browser --no-compression
   --dest-dir <staging> --name-format <P>-<R>.ibom
   --extra-data-file <pcb> --dnp-field kicad_dnp
+  --layer-view F
   --extra-fields MPN,Manufacturer --include-tracks <pcb>``.
 - The Python interpreter is the injected KiCad-bundled Python
   (``python_exe``), NOT :data:`sys.executable` (ADR 0008 amendment /
@@ -115,6 +116,9 @@ def test_generate_emits_canonical_argv(
     assert "--dnp-field" in argv
     dnp_idx = argv.index("--dnp-field") + 1
     assert argv[dnp_idx] == "kicad_dnp"
+    assert "--layer-view" in argv
+    layer_view_idx = argv.index("--layer-view") + 1
+    assert argv[layer_view_idx] == "F"
     assert "--extra-fields" in argv
     fields_idx = argv.index("--extra-fields") + 1
     assert argv[fields_idx] == "MPN,Manufacturer"
@@ -335,6 +339,31 @@ def test_generate_omits_extra_fields_flag_when_configured_empty(
     )
     argv = captured[0]
     assert "--extra-fields" not in argv
+
+
+def test_customize_ibom_html_defaults_relabels_references_and_hides_columns(tmp_path: Path) -> None:
+    """Generated iBOM HTML should apply SPCoast's default UI tweaks."""
+    html_file = tmp_path / "demo.ibom.html"
+    html_file.write_text(
+        "\n".join(
+            (
+                'var fields = ["checkboxes", "References"].concat(config.fields).concat(["Quantity"]);',
+                "if (hcols === null) {",
+                "    hcols = [];",
+                "  }",
+                '<label class="menu-label">References',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    ibom_generator_module._customize_ibom_html_defaults(html_file)
+
+    updated = html_file.read_text(encoding="utf-8")
+    assert '"References"' not in updated
+    assert '"Ref"' in updated
+    assert 'hcols = ["checkboxes", "Footprint"];' in updated
+    assert ">Ref" in updated
 
 
 def test_generate_propagates_subprocess_failure(

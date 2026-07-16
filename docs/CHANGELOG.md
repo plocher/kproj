@@ -10,6 +10,7 @@
 - Added CSV header alias normalization for generic/JLC lookup output (`Reference`/`Designator`, `Description`/`Comment`, `Lcsc`/`LCSC Part #`) so enrichment remains reference-correct under JLC defaults.
 - Switched iBOM `Datasheet` enrichment links to use curated `Datasheet Name` deep-links into `SPCoast-inventory` (GitHub blob URLs) instead of supplier-provided datasheet URLs.
 - Updated default iBOM extra columns to `Details,Description`; `Details` now composes `Manufacturer`, `MPN`, and a compact `Datasheet` link (`<br>` separated), replacing separate `Manufacturer`, `MPN`, `Fabricator Part Number`, `Datasheet`, and `Datasheet Name` default columns.
+- Updated generated iBOM UI defaults to start on the front side (`layer_view=F`) and hide `checkboxes` + `Footprint` columns by default while relabeling `References` to `Ref`.
 - Preserved fallback behavior when inventory is not configured (legacy PCB-backed iBOM extra-data path remains valid).
 ## 0.4.0
 - Humanized console output with `Info:`, `Note:`, `Warning:`, and `Error:` prefixes; GitHub-link environment diagnostics are now INFO and no longer change a successful exit code.
