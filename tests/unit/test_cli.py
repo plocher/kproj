@@ -19,6 +19,7 @@ from kproj import cli
 from kproj.application.publish_workflow import PublishRequest, PublishResult
 from kproj.model.finding import Finding
 from kproj.model.severity import Severity
+from kproj.model.site_management import DeleteResult, ProjectListResult
 
 cli_main = importlib.import_module("kproj.cli.main")
 
@@ -94,6 +95,32 @@ def test_parse_args_force_alias_sets_republish() -> None:
     """``--force`` aliases ``--republish``."""
     parsed = cli.parse_args(["--force"])
     assert parsed.republish is True
+
+
+def test_parse_args_project_list_command() -> None:
+    """The project list command parses as a non-publish command."""
+    parsed = cli.parse_args(["project", "--list"])
+    assert parsed.command == "project"
+    assert parsed.list_projects is True
+    assert parsed.site_repo is None
+
+
+def test_parse_args_delete_version_command() -> None:
+    """Version-scoped delete command parses project + version + force flags."""
+    parsed = cli.parse_args(["delete", "Demo", "--version", "1.0", "--force"])
+    assert parsed.command == "delete"
+    assert parsed.project == "Demo"
+    assert parsed.version == "1.0"
+    assert parsed.force is True
+
+
+def test_parse_args_delete_project_preview_command() -> None:
+    """Bare delete parses as preview-mode input (no version, no force)."""
+    parsed = cli.parse_args(["delete", "Demo"])
+    assert parsed.command == "delete"
+    assert parsed.project == "Demo"
+    assert parsed.version is None
+    assert parsed.force is False
 
 
 # ----------------------------------------------------------------------
@@ -311,6 +338,56 @@ def test_main_exit_code_zero_on_clean_run(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
     assert cli.main(["/tmp/proj"]) == 0
+
+
+def test_main_dispatches_project_list_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """`kproj project --list` dispatches to the site-management workflow."""
+
+    class _StubSiteWorkflow:
+        def list_projects(self, _config: object) -> ProjectListResult:
+            return ProjectListResult(exit_code=0, message="Project: Demo\nVersions: 1.0, 1.1")
+
+        def delete(self, _request: object) -> DeleteResult:
+            return DeleteResult(outcome="failed", exit_code=2, message="unexpected delete")
+
+    monkeypatch.setattr(cli_main, "SiteManagementWorkflow", _StubSiteWorkflow)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    exit_code = cli.main(["project", "--list"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Project: Demo" in captured.err
+
+
+def test_main_dispatches_delete_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """`kproj delete ...` dispatches to the site-management delete path."""
+
+    class _StubSiteWorkflow:
+        def list_projects(self, _config: object) -> ProjectListResult:
+            return ProjectListResult(exit_code=2, message="unexpected list")
+
+        def delete(self, _request: object) -> DeleteResult:
+            return DeleteResult(
+                outcome="deleted-version", exit_code=0, message="Info: Deleted version Demo-1.0."
+            )
+
+    monkeypatch.setattr(cli_main, "SiteManagementWorkflow", _StubSiteWorkflow)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    exit_code = cli.main(["delete", "Demo", "--version", "1.0"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Deleted version" in captured.err
 
 
 # ----------------------------------------------------------------------

@@ -13,10 +13,12 @@ from .publish_workflow import (
     PublishResult,
     PublishWorkflow,
 )
+from .site_management_workflow import SiteManagementWorkflow
 
 __all__ = [
     "Outcome",
     "PublishRequest",
     "PublishResult",
     "PublishWorkflow",
+    "SiteManagementWorkflow",
 ]

@@ -19,19 +19,31 @@ from .publish_result import Outcome, PublishResult, compute_exit_code
 from .raw_title_block import RawTitleBlock
 from .resolved_project import ResolvedProject
 from .severity import Severity
+from .site_management import (
+    DeleteOutcome,
+    DeleteRequest,
+    DeleteResult,
+    ProjectListResult,
+    PublishedProject,
+)
 
 __all__ = [
     "AnalysisInfo",
     "AssetRef",
+    "DeleteOutcome",
+    "DeleteRequest",
+    "DeleteResult",
     "ExportResult",
     "Finding",
     "LibraryRef",
     "LibrarySource",
     "Outcome",
     "ProjectInfo",
+    "ProjectListResult",
     "Publication",
     "PublishRequest",
     "PublishResult",
+    "PublishedProject",
     "RawTitleBlock",
     "ResolvedProject",
     "Severity",

@@ -2,17 +2,14 @@
 Loosely-held future ideas and requests that are not yet fleshed out enough to
 be GitHub issues. Promote an entry to a `plocher/kproj` issue once it is
 concrete enough to act on. Append new ideas at the bottom.
-## Clean project/version deletion (unpublish / prune)
-kproj is add/update-only: it regenerates and republishes, but never removes
-site content when its source goes away. There is no clean way to unpublish a
-whole project or a single version, and the Make-style "regenerate only what is
-stale" rule is add-only, so a stale copy is never pruned when its source
-disappears (e.g. a datasheet PDF removed from the project still leaves any
-site-side copy behind).
-Wants: an "audit and fix" mode that reconciles the site against the current
-project state (remove orphaned versions / assets / datasheets), plus explicit
-"delete one version" vs "delete the whole project" semantics. Generalises the
-PRD out-of-scope note on retroactive unpublishing (Story 7).
+## Site reconciliation audit-and-fix mode
+Core delete semantics are now implemented (`kproj project --list`, `kproj delete
+<project> --version <rev>`, and `kproj delete <project> --force`), but kproj
+still does not run a full reconciliation pass that detects and prunes all
+orphaned site content automatically.
+Future want: an "audit and fix" mode that compares current project/source state
+to published site state and proposes/removes drifted artifacts in bulk (for
+example orphaned assets no longer referenced by any published version).
 ## iBOM datasheet column (per-RefDes PDF links)
 jBOM can emit a BOM.csv carrying RefDes + datasheet links, and iBOM renders an
 annotated BOM, so it should be possible to add a datasheet column to the iBOM
