@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-07-16)
+
+### Features
+
+* feat: tune ibom column width defaults for description emphasis ([`69cd33c`](https://github.com/plocher/kproj/commit/69cd33c8bfcdb7c63bec65f520dfdbc533150047))
+
+
 ## v0.7.1 (2026-07-16)
 
 ### Bug Fixes
