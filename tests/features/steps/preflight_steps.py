@@ -32,7 +32,7 @@ def step_run_kproj(context: Any) -> None:
     original_stderr = sys.stderr
     sys.stderr = err_buffer
     try:
-        context.exit_code = cli.main([str(context.project_path)])
+        context.exit_code = cli.main(["publish", str(context.project_path)])
     finally:
         sys.stderr = original_stderr
     context.stderr = err_buffer.getvalue()

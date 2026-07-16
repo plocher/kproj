@@ -23,6 +23,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from .. import __version__
 from ..application.publish_workflow import PublishWorkflow
 from ..application.site_management_workflow import SiteManagementWorkflow
 from ..common.logging_setup import configure as configure_logging
@@ -31,6 +32,7 @@ from ..formatters.stderr_formatter import StderrFormatter
 from ..model.publish_request import PublishRequest
 from ..model.publish_result import PublishResult, compute_exit_code
 from ..model.site_management import DeleteRequest
+from ..services.kicad_project_reader import KicadProjectReader, ProjectResolutionError
 
 _log = logging.getLogger(__name__)
 
@@ -63,27 +65,25 @@ Environment variables:
 Without a ~/.kproj.yaml and no --inventory/KPROJ_INVENTORY, kproj publishes
 without datasheet deep-links (jbom is never invoked - see --inventory below).
 
-Additional commands:
-  kproj project --list
-  kproj delete <project> [--version <board_rev>] [--force] [--dry-run] [--no-push]
+Commands:
+  kproj publish [project]
+  kproj list [project]
+  kproj list --all
+  kproj delete [project] [--version <board_rev>] [--force] [--dry-run] [--no-push]
 """
 
 
-def _build_publish_parser() -> argparse.ArgumentParser:
-    """Construct the publish parser for the default kproj CLI surface.
-
-    Returns:
-        A configured :class:`argparse.ArgumentParser`. Building the
-        parser is factored out so unit tests can introspect the flag
-        surface without invoking the workflow.
-    """
-    parser = argparse.ArgumentParser(
-        prog="kproj",
+def _build_publish_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    """Construct the ``kproj publish`` parser."""
+    parser = subparsers.add_parser(
+        "publish",
+        help="Publish a project snapshot into the site repo.",
+        prog="kproj publish",
         description=(
             "Publish a point-in-time snapshot of a KiCad project to the SPCoast Hugo site."
         ),
-        epilog=_CONFIG_EPILOG,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "project",
@@ -202,16 +202,59 @@ def _build_publish_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_delete_parser() -> argparse.ArgumentParser:
+def _build_list_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    """Construct the parser for ``kproj list``."""
+    parser = subparsers.add_parser(
+        "list",
+        help="List published versions for a project.",
+        prog="kproj list",
+        description="List published versions for a project in the site repo.",
+    )
+    parser.add_argument(
+        "project",
+        nargs="?",
+        default=".",
+        help=(
+            "Project to inspect. Accepts the same input forms as publish and defaults to '.' (cwd)."
+        ),
+    )
+    parser.add_argument(
+        "--all",
+        dest="all_projects",
+        action="store_true",
+        default=False,
+        help="List every published project in one-line-per-project format.",
+    )
+    parser.add_argument(
+        "--site-repo",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Override the local SPCoast site-repo checkout (highest precedence).",
+    )
+    parser.set_defaults(command="list")
+    return parser
+
+
+def _build_delete_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
     """Construct the parser for ``kproj delete``."""
-    parser = argparse.ArgumentParser(
+    parser = subparsers.add_parser(
+        "delete",
+        help="Delete published site content for a project/version.",
         prog="kproj delete",
         description="Delete published site content for a project.",
     )
     parser.add_argument(
         "project",
-        type=str,
-        help="Published project identifier to delete from the site repo.",
+        nargs="?",
+        default=".",
+        help=(
+            "Project to delete. Accepts the same input forms as publish and defaults to '.' (cwd)."
+        ),
     )
     parser.add_argument(
         "--version",
@@ -252,27 +295,30 @@ def _build_delete_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_project_parser() -> argparse.ArgumentParser:
-    """Construct the parser for ``kproj project`` commands."""
+def _build_parser() -> argparse.ArgumentParser:
+    """Construct the root parser for the kproj CLI surface."""
     parser = argparse.ArgumentParser(
-        prog="kproj project",
-        description="Inspect published project state in the site repo.",
+        prog="kproj",
+        description=(
+            "Publish, list, and delete point-in-time KiCad project snapshots on the SPCoast Hugo site."
+        ),
+        epilog=_CONFIG_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--list",
-        dest="list_projects",
-        action="store_true",
-        default=False,
-        help="List published projects and their versions.",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
-    parser.add_argument(
-        "--site-repo",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="Override the local SPCoast site-repo checkout (highest precedence).",
+    subparsers = parser.add_subparsers(
+        title="commands",
+        dest="command",
+        metavar="{publish,list,delete}",
+        required=True,
     )
-    parser.set_defaults(command="project")
+    _build_publish_parser(subparsers)
+    _build_list_parser(subparsers)
+    _build_delete_parser(subparsers)
     return parser
 
 
@@ -285,18 +331,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     Returns:
         The :class:`argparse.Namespace` produced by the parser.
     """
-    args = list(argv)
-    if args and args[0] == "delete":
-        parser = _build_delete_parser()
-        return parser.parse_args(args[1:])
-    if args and args[0] == "project":
-        parser = _build_project_parser()
-        namespace = parser.parse_args(args[1:])
-        if not namespace.list_projects:
-            parser.error("project command requires --list")
-        return namespace
-    parser = _build_publish_parser()
-    return parser.parse_args(args)
+    parser = _build_parser()
+    return parser.parse_args(list(argv))
 
 
 def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
@@ -363,11 +399,13 @@ def build_delete_request(
     namespace: argparse.Namespace,
     env: Mapping[str, str],
     yaml_path: Path,
+    *,
+    project: str | None = None,
 ) -> DeleteRequest:
     """Build a :class:`DeleteRequest` from a parsed delete namespace + env."""
     config = _load_runtime_config(namespace, env=env, yaml_path=yaml_path)
     return DeleteRequest(
-        project=str(namespace.project),
+        project=str(project if project is not None else namespace.project),
         version=str(namespace.version) if namespace.version else None,
         force=bool(namespace.force),
         dry_run=bool(namespace.dry_run),
@@ -430,6 +468,20 @@ def _emit_first_run_hint(*, yaml_path: Path, inventory: Path | None) -> None:
         )
 
 
+def _resolve_site_project_identifier(project_arg: str) -> str:
+    """Resolve a publish-style project argument into a site project identifier.
+
+    ``list`` and ``delete`` accept the same project input forms as ``publish``.
+    When local KiCad resolution succeeds, this returns the canonical basename.
+    If local resolution fails, fall back to the raw token so direct site-project
+    identifiers continue to work.
+    """
+    try:
+        return KicadProjectReader().resolve(project_arg).basename
+    except ProjectResolutionError:
+        return project_arg
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """kproj CLI entry point.
 
@@ -443,18 +495,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:]) if argv is None else list(argv)
     namespace = parse_args(args)
     yaml_path = _default_yaml_path()
-    command = str(getattr(namespace, "command", "publish"))
+    command = str(getattr(namespace, "command", ""))
 
-    if command == "project":
+    if command == "list":
         config = _load_runtime_config(namespace, env=os.environ, yaml_path=yaml_path)
+        project: str | None
+        if bool(getattr(namespace, "all_projects", False)):
+            project = None
+        else:
+            project = _resolve_site_project_identifier(str(namespace.project))
         project_workflow = SiteManagementWorkflow()
-        project_result = project_workflow.list_projects(config)
+        project_result = project_workflow.list_projects(config, project=project)
         if project_result.message:
             print(project_result.message, file=sys.stderr)
         return project_result.exit_code
 
     if command == "delete":
-        delete_request = build_delete_request(namespace, env=os.environ, yaml_path=yaml_path)
+        project = _resolve_site_project_identifier(str(namespace.project))
+        delete_request = build_delete_request(
+            namespace,
+            env=os.environ,
+            yaml_path=yaml_path,
+            project=project,
+        )
         delete_workflow = SiteManagementWorkflow()
         delete_result = delete_workflow.delete(delete_request)
         if delete_result.message:

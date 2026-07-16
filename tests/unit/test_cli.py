@@ -28,9 +28,17 @@ cli_main = importlib.import_module("kproj.cli.main")
 # ----------------------------------------------------------------------
 
 
-def test_parse_args_defaults_to_cwd_positional() -> None:
-    """No positional argument → project_arg defaults to ``"."``."""
-    parsed = cli.parse_args([])
+def test_parse_args_requires_command() -> None:
+    """Top-level command verb is required."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli.parse_args([])
+    assert exc_info.value.code == 2
+
+
+def test_parse_args_publish_defaults_to_cwd_positional() -> None:
+    """No publish positional argument → project_arg defaults to ``"."``."""
+    parsed = cli.parse_args(["publish"])
+    assert parsed.command == "publish"
     assert parsed.project == "."
     assert parsed.site_repo is None
     assert parsed.inventory is None
@@ -48,6 +56,7 @@ def test_parse_args_supports_all_documented_flags() -> None:
     """Every flag in DESIGN § CLI surface mechanics is wired up."""
     parsed = cli.parse_args(
         [
+            "publish",
             "/tmp/proj",
             "--site-repo",
             "/tmp/site",
@@ -81,28 +90,37 @@ def test_parse_args_supports_all_documented_flags() -> None:
 
 def test_parse_args_verbose_is_a_count_flag() -> None:
     """``-vv`` stacks the verbose count to 2."""
-    parsed = cli.parse_args(["-vv"])
+    parsed = cli.parse_args(["publish", "-vv"])
     assert parsed.verbose == 2
 
 
 def test_parse_args_long_form_verbose() -> None:
     """``--verbose`` is the documented long form."""
-    parsed = cli.parse_args(["--verbose"])
+    parsed = cli.parse_args(["publish", "--verbose"])
     assert parsed.verbose == 1
 
 
 def test_parse_args_force_alias_sets_republish() -> None:
     """``--force`` aliases ``--republish``."""
-    parsed = cli.parse_args(["--force"])
+    parsed = cli.parse_args(["publish", "--force"])
     assert parsed.republish is True
 
 
-def test_parse_args_project_list_command() -> None:
-    """The project list command parses as a non-publish command."""
-    parsed = cli.parse_args(["project", "--list"])
-    assert parsed.command == "project"
-    assert parsed.list_projects is True
+def test_parse_args_list_command_defaults_to_cwd_project() -> None:
+    """List command defaults to CWD-style project input."""
+    parsed = cli.parse_args(["list"])
+    assert parsed.command == "list"
+    assert parsed.project == "."
+    assert parsed.all_projects is False
     assert parsed.site_repo is None
+
+
+def test_parse_args_list_command_supports_all_flag() -> None:
+    """`list --all` parses as all-project scope."""
+    parsed = cli.parse_args(["list", "--all"])
+    assert parsed.command == "list"
+    assert parsed.all_projects is True
+    assert parsed.project == "."
 
 
 def test_parse_args_delete_version_command() -> None:
@@ -116,11 +134,19 @@ def test_parse_args_delete_version_command() -> None:
 
 def test_parse_args_delete_project_preview_command() -> None:
     """Bare delete parses as preview-mode input (no version, no force)."""
-    parsed = cli.parse_args(["delete", "Demo"])
+    parsed = cli.parse_args(["delete"])
     assert parsed.command == "delete"
-    assert parsed.project == "Demo"
+    assert parsed.project == "."
     assert parsed.version is None
     assert parsed.force is False
+
+
+def test_parse_args_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """Global ``--version`` is available at the CLI root."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli.parse_args(["--version"])
+    assert exc_info.value.code == 0
+    assert "kproj " in capsys.readouterr().out
 
 
 # ----------------------------------------------------------------------
@@ -132,6 +158,7 @@ def test_build_request_propagates_cli_overrides(tmp_path: Path) -> None:
     """CLI flags surface as :class:`ConfigOverrides` non-None fields."""
     parsed = cli.parse_args(
         [
+            "publish",
             "/tmp/proj",
             "--site-repo",
             str(tmp_path),
@@ -183,7 +210,7 @@ def test_help_documents_config_precedence_and_yaml_example(
 def test_help_explains_no_push_batch_flush(capsys: pytest.CaptureFixture[str]) -> None:
     """``--no-push`` help tells users how a final plain run flushes batches."""
     with pytest.raises(SystemExit):
-        cli.parse_args(["--help"])
+        cli.parse_args(["publish", "--help"])
     assert "final plain run flushes pending site commits" in capsys.readouterr().out
 
 
@@ -230,7 +257,7 @@ def test_build_request_omits_no_push_override_when_flag_not_given(
     tmp_path: Path,
 ) -> None:
     """Without ``--no-push``, the override is ``None`` (fall through to env)."""
-    parsed = cli.parse_args(["/tmp/proj"])
+    parsed = cli.parse_args(["publish", "/tmp/proj"])
     request = cli.build_request(
         parsed,
         env={"KPROJ_NO_PUSH": "1"},
@@ -316,7 +343,7 @@ def test_main_delegates_to_publish_workflow(
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
-    exit_code = cli.main(["/tmp/proj", "--dry-run"])
+    exit_code = cli.main(["publish", "/tmp/proj", "--dry-run"])
     assert exit_code == 2
     request = captured_request["request"]
     assert request.project_arg == "/tmp/proj"
@@ -337,17 +364,51 @@ def test_main_exit_code_zero_on_clean_run(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
-    assert cli.main(["/tmp/proj"]) == 0
+    assert cli.main(["publish", "/tmp/proj"]) == 0
 
 
-def test_main_dispatches_project_list_command(
+def test_main_dispatches_list_command(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """`kproj project --list` dispatches to the site-management workflow."""
+    """`kproj list ...` dispatches to the site-management workflow."""
+    captured_project: dict[str, str | None] = {}
 
     class _StubSiteWorkflow:
-        def list_projects(self, _config: object) -> ProjectListResult:
-            return ProjectListResult(exit_code=0, message="Project: Demo\nVersions: 1.0, 1.1")
+        def list_projects(
+            self, _config: object, *, project: str | None = None
+        ) -> ProjectListResult:
+            captured_project["project"] = project
+            return ProjectListResult(exit_code=0, message="Demo [1.0, 1.1]")
+
+        def delete(self, _request: object) -> DeleteResult:
+            return DeleteResult(outcome="failed", exit_code=2, message="unexpected delete")
+
+    monkeypatch.setattr(cli_main, "SiteManagementWorkflow", _StubSiteWorkflow)
+    monkeypatch.setattr(cli_main, "_resolve_site_project_identifier", lambda value: value)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    exit_code = cli.main(["list", "Demo"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured_project["project"] == "Demo"
+    assert "Demo [1.0, 1.1]" in captured.err
+
+
+def test_main_dispatches_list_all_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """`kproj list --all` dispatches list scope with no project filter."""
+    captured_project: dict[str, str | None] = {}
+
+    class _StubSiteWorkflow:
+        def list_projects(
+            self, _config: object, *, project: str | None = None
+        ) -> ProjectListResult:
+            captured_project["project"] = project
+            return ProjectListResult(exit_code=0, message="Alpha [1.0]\nDemo [1.0, 1.1]")
 
         def delete(self, _request: object) -> DeleteResult:
             return DeleteResult(outcome="failed", exit_code=2, message="unexpected delete")
@@ -358,10 +419,11 @@ def test_main_dispatches_project_list_command(
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
 
-    exit_code = cli.main(["project", "--list"])
+    exit_code = cli.main(["list", "--all"])
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Project: Demo" in captured.err
+    assert captured_project["project"] is None
+    assert "Alpha [1.0]" in captured.err
 
 
 def test_main_dispatches_delete_command(
@@ -370,7 +432,9 @@ def test_main_dispatches_delete_command(
     """`kproj delete ...` dispatches to the site-management delete path."""
 
     class _StubSiteWorkflow:
-        def list_projects(self, _config: object) -> ProjectListResult:
+        def list_projects(
+            self, _config: object, *, project: str | None = None
+        ) -> ProjectListResult:
             return ProjectListResult(exit_code=2, message="unexpected list")
 
         def delete(self, _request: object) -> DeleteResult:
@@ -379,6 +443,7 @@ def test_main_dispatches_delete_command(
             )
 
     monkeypatch.setattr(cli_main, "SiteManagementWorkflow", _StubSiteWorkflow)
+    monkeypatch.setattr(cli_main, "_resolve_site_project_identifier", lambda value: value)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
@@ -445,7 +510,7 @@ def test_main_prints_findings_to_stderr(
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
 
-    exit_code = cli.main(["/tmp/proj"])
+    exit_code = cli.main(["publish", "/tmp/proj"])
     captured = capsys.readouterr()
 
     assert exit_code == 1
@@ -474,7 +539,7 @@ def test_main_emits_nothing_extra_when_findings_empty(
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
 
-    cli.main(["/tmp/proj"])
+    cli.main(["publish", "/tmp/proj"])
     captured = capsys.readouterr()
 
     # The only stderr content should be the result message itself.

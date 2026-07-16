@@ -831,12 +831,15 @@ journal.mark_pushed()
 ```
 
 Commit messages per pattern in *Per-service contracts › SitePublisher*. Push eligibility depends on the repository being ahead of upstream, not solely on this invocation making a commit: a final ordinary run flushes commits accumulated by `--no-push`; a `--no-push` or `--dry-run` run reports the debt without pushing. Missing upstream/detached HEAD is an advisory INFO finding. Push target is whatever branch is checked out (user keeps the site repo on the deployment branch; kproj does not `git checkout`).
-## Site-management commands (`project --list`, `delete`)
+
+## Site-management commands (`list`, `delete`)
 These commands operate on published site-repo state (not KiCad source resolution), and are intentionally generic so they can scale beyond KiCad-specific workflows while reusing kproj's project/version directory conventions.
-- `kproj project --list` scans `<versions_dir>/*/` (plus `<assets_dir>/*/` for orphan detection) and reports each project with discovered versions (`*.md` excluding `_index.md`).
-- `kproj delete <project> --version <board_rev>` deletes one version page plus its per-version asset subtree.
-- `kproj delete <project>` is preview-only: it emits deletion targets and exits non-zero.
-- `kproj delete <project> --force` deletes the full project subtree from both `<versions_dir>/<Project>/` and `<assets_dir>/<Project>/`.
+- `kproj list [project]` reports discovered versions (`*.md` excluding `_index.md`) for a resolved project identifier. When `[project]` is omitted, it defaults to `.` and resolves from CWD using publish-style project resolution.
+- `kproj list --all` lists every discovered published project/version shape.
+- List output is one line per project in the format: `<project> [<natural-ordered versions>]`.
+- `kproj delete [project] --version <board_rev>` deletes one version page plus its per-version asset subtree.
+- `kproj delete [project]` is preview-only: it emits deletion targets and exits non-zero.
+- `kproj delete [project] --force` deletes the full project subtree from both `<versions_dir>/<Project>/` and `<assets_dir>/<Project>/`.
 Delete safety semantics:
 - No interactive reconfirmation prompt (operator-driven workflow).
 - Version delete fails on the last published version unless `--force` is provided.

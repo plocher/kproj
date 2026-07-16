@@ -15,20 +15,25 @@ Requires Python ≥3.10. `kproj` needs a local `kicad-cli` install (KiCad 9.x or
 ## Usage
 
 ```sh
-kproj [<project-or-dir-or-file>] [options]
+kproj --version
+kproj publish [<project-or-dir-or-file>] [options]
+kproj list [<project-or-dir-or-file>] [--all] [--site-repo PATH]
+kproj delete [<project-or-dir-or-file>] [--version <board_rev>] [--force] [--dry-run] [--no-push] [--site-repo PATH]
 ```
 
-Run from inside a KiCad project directory, or pass a path to a `.kicad_pro` / `.kicad_sch` / `.kicad_pcb` file, a project directory, or a basename resolved under the KiCad projects root. Defaults to `.` (the current directory).
+For `publish`, `list`, and `delete`, run from inside a KiCad project directory, or pass a path to a `.kicad_pro` / `.kicad_sch` / `.kicad_pcb` file, a project directory, or a basename resolved under the KiCad projects root. The project argument defaults to `.` (the current directory).
 
 Pipeline: **render → ibom → fab → publish**. Each release generates board renders, schematic SVG/PDF, the interactive HTML BOM, packages fabrication artifacts, and commits (+ pushes) a version page and its assets into the configured site repo.
+
 ### Project/site management commands
 
-- `kproj project --list` — list published projects and their published versions from the configured site repo.
-- `kproj delete <project> --version <board_rev>` — delete one published version.
+- `kproj list [project]` — list published versions for one project in the configured site repo as a one-liner: `project_name [versions...]`. When omitted, the project defaults to `.` and resolves from CWD.
+- `kproj list --all` — list all published projects, one line per project, using the same one-line format.
+- `kproj delete [project] --version <board_rev>` — delete one published version.
   - If this is the last published version, the command fails unless `--force` is provided.
   - With `--force` in that last-version case, behavior escalates to full-project delete.
-- `kproj delete <project>` — non-destructive preview: prints what full-project deletion would remove, then exits non-zero.
-- `kproj delete <project> --force` — delete all published versions and project content for that project.
+- `kproj delete [project]` — non-destructive preview: prints what full-project deletion would remove, then exits non-zero.
+- `kproj delete [project] --force` — delete all published versions and project content for that project.
 - `--dry-run` works for destructive delete paths and reports what would be removed without writing.
 - `--no-push` keeps the delete commit local (batch-friendly), matching publish behavior.
 
@@ -42,8 +47,9 @@ Run `kproj --help` for the authoritative, up-to-date flag list. As of this writi
 - `--ibom-extra-fields FIELDS` — comma-separated iBOM table fields to surface from inventory-enriched data (for example `Details,Description`).
 - `--datasheet-library PATH` — local datasheet-library clone used by the advisory publish guard.
 - `--datasheet-repo OWNER/REPO` — public repo slug that published datasheet deep-links point at.
+- `--version` — print the installed kproj version.
 - `--dry-run` — read-only mode: surface findings without writing to the site repo.
-- `--republish` / `--force` — force artifact regeneration and publish even when unchanged checks would otherwise skip producers.
+- `--republish` / `--force` (publish command) — force artifact regeneration and publish even when unchanged checks would otherwise skip producers.
 - `--no-push` — skip `git push` after the site-repo commit (batch-friendly). Run N batch publishes with this flag, then run a final plain `kproj` to flush all queued site commits.
 - `-v` / `--verbose`, `-d` / `--debug` — increase logging verbosity. Toolchain discovery lines (`Using kicad-cli...`, `Using jbom...`) are shown under verbose mode.
 

@@ -126,7 +126,7 @@ AND kproj exits with code 1 when audit/DRC/ERC findings exist (uniform with the 
 
 *Semantics*: `private` is **prospective only**. kproj will not publish *future* snapshots while the status is private; any previously published version of the project remains on the site unchanged. The site-repo cleanliness check and iBOM availability check are deferred past status detection so a `private` project never fails preflight on either condition.
 
-*Retroactive delete workflow*: mistaken publishes are handled explicitly via site-management commands. `kproj project --list` surfaces the published project/version shape; `kproj delete <project> --version <board_rev>` removes one version; `kproj delete <project> --force` removes all published versions/project content. Bare `kproj delete <project>` is a non-destructive preview that reports what full deletion would remove.
+*Retroactive delete workflow*: mistaken publishes are handled explicitly via site-management commands. `kproj list [project]` (or `kproj list --all`) surfaces the published project/version shape; `kproj delete [project] --version <board_rev>` removes one version; `kproj delete [project] --force` removes all published versions/project content. Bare `kproj delete [project]` is a non-destructive preview that reports what full deletion would remove.
 
 #### Story 8 — Batch-publish without N pushes
 *As a project author, I want to publish many projects in a corpus-wide batch, so that I can update the site after a bulk cleanup pass.*
@@ -275,7 +275,7 @@ The following are explicitly NOT part of kproj v1. Each is documented in an ADR 
 
 ## Further Notes
 
-- The user-facing CLI surface now has three command groups: publish (default invocation), project introspection (`kproj project --list`), and deletion (`kproj delete ...`). `--site-repo` remains the highest-precedence site-repo override; `KPROJ_SITE_REPO` env var and `~/.kproj.yaml` `site_repo` key are fallbacks. See `docs/DESIGN.md` for parsing mechanics and command semantics.
+- The user-facing CLI surface now has three command groups: `publish`, `list`, and `delete`. `--site-repo` remains the highest-precedence site-repo override; `KPROJ_SITE_REPO` env var and `~/.kproj.yaml` `site_repo` key are fallbacks. See `docs/DESIGN.md` for parsing mechanics and command semantics.
 - kproj is designed to compose with sibling tools (jBOM for fab artifact generation, a future `kproj rename` for multi-variant disambiguation, a future `kicad-meta` for bulk metadata edits) via Makefile recipes — see `templates/Makefile.kicad`.
 - The `ChangeJournal` transactional write model (ADR 0005) is the foundation for v1's batch-safety promise. Any future kproj features that touch the site repo must use the same pattern.
 - Phase 6+ deepening candidates (not committed; recorded for future scoping): two-phase architecture (extract → render with `--json` intermediate), PCM-package refresh for the user-facing interactive jobset, DRC visualization as an iBOM extension, richer per-project config, CI integration with cross-repo PAT.

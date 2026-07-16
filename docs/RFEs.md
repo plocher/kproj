@@ -3,8 +3,8 @@ Loosely-held future ideas and requests that are not yet fleshed out enough to
 be GitHub issues. Promote an entry to a `plocher/kproj` issue once it is
 concrete enough to act on. Append new ideas at the bottom.
 ## Site reconciliation audit-and-fix mode
-Core delete semantics are now implemented (`kproj project --list`, `kproj delete
-<project> --version <rev>`, and `kproj delete <project> --force`), but kproj
+Core delete semantics are now implemented (`kproj list [project]`, `kproj delete
+[project] --version <rev>`, and `kproj delete [project] --force`), but kproj
 still does not run a full reconciliation pass that detects and prunes all
 orphaned site content automatically.
 Future want: an "audit and fix" mode that compares current project/source state
