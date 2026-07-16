@@ -1,7 +1,10 @@
 # Changelog
 ## Unreleased
-- Added site-management commands: `kproj project --list` for published project/version introspection and `kproj delete ...` for explicit retroactive cleanup.
-- Added delete semantics for single-version removal and full-project removal with force/preview behavior (`kproj delete <project> --version <rev>`, bare `kproj delete <project>` preview-and-fail, and `kproj delete <project> --force`).
+- Refactored CLI parsing to first-class verbs (`kproj publish`, `kproj list`, `kproj delete`) and removed legacy token-dispatch command routing.
+- Added global `kproj --version` support and aligned list/delete with publish-style optional project resolution (defaults to `.` / CWD).
+- Added `kproj list --all` for full site overview and switched list output to one-line summaries (`project [natural-ordered versions]`).
+- Added site-management commands: `kproj list [project]` for published project/version introspection and `kproj delete [project] ...` for explicit retroactive cleanup.
+- Added delete semantics for single-version removal and full-project removal with force/preview behavior (`kproj delete [project] --version <rev>`, bare `kproj delete [project]` preview-and-fail, and `kproj delete [project] --force`).
 - Added delete-specific site commit messages (`delete version <VER>` and `delete project <list of VERs deleted>`) and reused `--dry-run`/`--no-push` behavior for delete flows.
 - Added publish-context drift detection to regeneration decisions, so legacy version pages missing context metadata are regenerated once and no-op checks account for output-affecting publish changes.
 - Added `--republish` (alias `--force`) to bypass unchanged optimization and force artifact regeneration.

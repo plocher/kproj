@@ -101,7 +101,9 @@ def _run_kproj(context: Any, *, extra_argv: list[str]) -> None:
 
         workflow = _CapturingWorkflow()
         with patch.object(cli_main, "PublishWorkflow", return_value=workflow):
-            context.kproj_exit_code = cli.main(["/tmp/kproj-behave-nonexistent", *extra_argv])
+            context.kproj_exit_code = cli.main(
+                ["publish", "/tmp/kproj-behave-nonexistent", *extra_argv]
+            )
     finally:
         for key, original in saved.items():
             if original is None:

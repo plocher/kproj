@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -68,23 +69,29 @@ def _git_pending_push_count(site_repo: Path) -> int | None:
 class SiteManagementWorkflow:
     """List and delete published project content in the configured site repository."""
 
-    def list_projects(self, config: KprojConfig) -> ProjectListResult:
-        """Return the published project/version shape from the site repo."""
+    def list_projects(
+        self, config: KprojConfig, *, project: str | None = None
+    ) -> ProjectListResult:
+        """Return published project/version shape from the site repo.
+
+        Args:
+            config: Effective runtime configuration.
+            project: Optional project identifier to scope listing to one project.
+                When omitted, all published projects are listed.
+        """
         projects = _discover_published_projects(config.site_repo, config.site_profile)
         if not projects:
             return ProjectListResult(exit_code=0, message="No published projects found.")
-        blocks: list[str] = []
-        for published in projects:
-            versions = ", ".join(published.versions) if published.versions else "<none>"
-            blocks.append(
-                "\n".join(
-                    [
-                        f"Project: {published.project}",
-                        f"Versions: {versions}",
-                    ]
+        if project is not None:
+            selected = _resolve_project(projects, project)
+            if selected is None:
+                return ProjectListResult(
+                    exit_code=2,
+                    message=f"Error: project {project!r} was not found in published site content.",
                 )
-            )
-        return ProjectListResult(exit_code=0, message="\n\n".join(blocks))
+            projects = (selected,)
+        blocks = [_render_project_line(published) for published in projects]
+        return ProjectListResult(exit_code=0, message="\n".join(blocks))
 
     def delete(self, request: DeleteRequest) -> DeleteResult:
         """Delete published content according to the request semantics."""
@@ -269,15 +276,18 @@ def _discover_published_projects(
     if assets_root.is_dir():
         project_names.update(path.name for path in assets_root.iterdir() if path.is_dir())
     projects: list[PublishedProject] = []
-    for project_name in sorted(project_names):
+    for project_name in sorted(project_names, key=_natural_sort_key):
         project_versions_dir = versions_root / project_name
         versions: tuple[str, ...] = ()
         if project_versions_dir.is_dir():
             versions = tuple(
                 sorted(
-                    path.stem
-                    for path in project_versions_dir.glob("*.md")
-                    if path.is_file() and path.stem != "_index"
+                    [
+                        path.stem
+                        for path in project_versions_dir.glob("*.md")
+                        if path.is_file() and path.stem != "_index"
+                    ],
+                    key=_natural_sort_key,
                 )
             )
         projects.append(PublishedProject(project=project_name, versions=versions))
@@ -384,3 +394,27 @@ def _format_versions(versions: Sequence[str]) -> str:
     if not versions:
         return "<none>"
     return ", ".join(versions)
+
+
+_NATURAL_PARTS_RE = re.compile(r"(\d+)")
+"""Split strings into text/number chunks for natural ordering."""
+
+
+def _natural_sort_key(value: str) -> tuple[object, ...]:
+    """Return a case-insensitive natural sort key for *value*."""
+    parts = _NATURAL_PARTS_RE.split(value.casefold())
+    key: list[object] = []
+    for part in parts:
+        if not part:
+            continue
+        if part.isdigit():
+            key.append(int(part))
+        else:
+            key.append(part)
+    return tuple(key)
+
+
+def _render_project_line(project: PublishedProject) -> str:
+    """Render a one-line project summary: ``<project> [v1, v2]``."""
+    versions = ", ".join(project.versions)
+    return f"{project.project} [{versions}]"

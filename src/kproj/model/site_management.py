@@ -1,7 +1,7 @@
 """Site-management value objects for listing and deleting published content.
 
 These dataclasses model CLI operations that act on published site state
-(``kproj project --list`` and ``kproj delete ...``), separate from the
+(``kproj list ...`` and ``kproj delete ...``), separate from the
 publish pipeline's ``PublishRequest`` / ``PublishResult`` types.
 """
 

@@ -51,9 +51,39 @@ def test_list_projects_reports_project_shapes(tmp_path: Path) -> None:
     result = workflow.list_projects(_config(site_repo))
 
     assert result.exit_code == 0
-    assert "Project: Alpha" in result.message
-    assert "Project: Demo" in result.message
-    assert "Versions: 1.0, 1.1" in result.message
+    assert "Alpha [1.0]" in result.message
+    assert "Demo [1.0, 1.1]" in result.message
+
+
+def test_list_projects_scopes_to_single_project(tmp_path: Path) -> None:
+    site_repo = tmp_path / "site"
+    site_repo.mkdir()
+    _seed_project(site_repo, "Alpha", ("1.0",))
+    _seed_project(site_repo, "Demo", ("1.0", "1.1"))
+    workflow = SiteManagementWorkflow()
+
+    result = workflow.list_projects(_config(site_repo), project="Demo")
+
+    assert result.exit_code == 0
+    assert result.message == "Demo [1.0, 1.1]"
+
+
+def test_list_projects_natural_orders_projects_and_versions(tmp_path: Path) -> None:
+    site_repo = tmp_path / "site"
+    site_repo.mkdir()
+    _seed_project(site_repo, "Demo10", ("1.10", "1.2"))
+    _seed_project(site_repo, "Demo2", ("2.0",))
+    _seed_project(site_repo, "Demo1", ("1.0",))
+    workflow = SiteManagementWorkflow()
+
+    result = workflow.list_projects(_config(site_repo))
+
+    assert result.exit_code == 0
+    assert result.message.splitlines() == [
+        "Demo1 [1.0]",
+        "Demo2 [2.0]",
+        "Demo10 [1.2, 1.10]",
+    ]
 
 
 def test_delete_version_removes_single_version_and_keeps_other_versions(tmp_path: Path) -> None:
