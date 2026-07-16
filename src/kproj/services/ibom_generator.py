@@ -77,6 +77,117 @@ _IBOM_DEFAULT_HIDDEN_COLUMNS = (
 
 _IBOM_RENAME_REFERENCES_LABEL = "References"
 _IBOM_REFERENCE_LABEL = "Ref"
+_IBOM_BOM_LAYOUT_TOKEN = "table-layout: fixed;"
+_IBOM_BOM_LAYOUT_OVERRIDE = "table-layout: auto;"
+
+_IBOM_BOM_CELL_STYLE_ANCHOR = (
+    ".bom th,\n"
+    ".bom td {\n"
+    "  border: 1px solid black;\n"
+    "  padding: 5px;\n"
+    "  word-wrap: break-word;\n"
+    "  text-align: center;\n"
+    "  position: relative;\n"
+    "}\n"
+)
+_IBOM_COLUMN_WIDTH_RULES = (
+    "\n"
+    ".bom th.numCol {\n"
+    "  width: 3.2ch;\n"
+    "  min-width: 3.2ch;\n"
+    "  max-width: 4.4ch;\n"
+    "  white-space: nowrap;\n"
+    "}\n"
+    '.bom th[col_name="Ref"] {\n'
+    "  width: 8.5ch;\n"
+    "  min-width: 7.2ch;\n"
+    "  max-width: 11ch;\n"
+    "}\n"
+    '.bom th[col_name="Value"] {\n'
+    "  width: 11ch;\n"
+    "  min-width: 9ch;\n"
+    "  max-width: 15ch;\n"
+    "}\n"
+    '.bom th[col_name="Details"] {\n'
+    "  width: 20ch;\n"
+    "  min-width: 16ch;\n"
+    "  max-width: 28ch;\n"
+    "}\n"
+    '.bom th[col_name="Description"] {\n'
+    "  width: auto;\n"
+    "}\n"
+)
+
+_IBOM_COLUMN_WIDTH_HELPER_ANCHOR = (
+    "function populateBomHeader(placeHolderColumn = null, placeHolderElements = null) {"
+)
+_IBOM_COLUMN_WIDTH_HELPER = """function applySpcoastBomColumnWidths() {
+  if (!bomhead || !bomhead.firstChild) {
+    return;
+  }
+  var headerRow = bomhead.firstChild;
+  var columnSpecs = {
+    "__rownum__": { width: "3.2ch", maxWidth: "4.4ch", whiteSpace: "nowrap" },
+    "Ref": { width: "8.5ch", maxWidth: "11ch" },
+    "Value": { width: "11ch", maxWidth: "15ch" },
+    "Details": { width: "20ch", maxWidth: "28ch" },
+  };
+  for (var i = 0; i < headerRow.childNodes.length; i++) {
+    var th = headerRow.childNodes[i];
+    if (!th || th.nodeName !== "TH") {
+      continue;
+    }
+    var key = th.classList.contains("numCol") ? "__rownum__" : th.getAttribute("col_name");
+    var spec = columnSpecs[key];
+    if (!spec) {
+      continue;
+    }
+    th.style.width = spec.width;
+    th.style.maxWidth = spec.maxWidth;
+    if (spec.whiteSpace) {
+      th.style.whiteSpace = spec.whiteSpace;
+    }
+  }
+  if (!bom || !bom.childNodes) {
+    return;
+  }
+  for (var r = 0; r < bom.childNodes.length; r++) {
+    var row = bom.childNodes[r];
+    for (var c = 0; c < row.childNodes.length; c++) {
+      var td = row.childNodes[c];
+      var header = headerRow.childNodes[c];
+      if (!td || td.nodeName !== "TD" || !header || header.nodeName !== "TH") {
+        continue;
+      }
+      var headerKey = header.classList.contains("numCol")
+        ? "__rownum__"
+        : header.getAttribute("col_name");
+      var headerSpec = columnSpecs[headerKey];
+      if (!headerSpec) {
+        continue;
+      }
+      td.style.width = headerSpec.width;
+      td.style.maxWidth = headerSpec.maxWidth;
+      if (headerSpec.whiteSpace) {
+        td.style.whiteSpace = headerSpec.whiteSpace;
+      }
+    }
+  }
+}
+
+"""
+_IBOM_BOM_HEADER_APPEND_ANCHOR = "  bomhead.appendChild(tr);\n}"
+_IBOM_BOM_HEADER_APPEND_REPLACEMENT = (
+    "  bomhead.appendChild(tr);\n  applySpcoastBomColumnWidths();\n}"
+)
+_IBOM_BOM_BODY_EVENT_ANCHOR = (
+    "  EventHandler.emitEvent(\n    IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, {"
+)
+_IBOM_BOM_BODY_EVENT_REPLACEMENT = (
+    "  applySpcoastBomColumnWidths();\n"
+    "  EventHandler.emitEvent(\n"
+    "    IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, {"
+)
 
 
 class IbomGenerator:
@@ -239,6 +350,31 @@ def _customize_ibom_html_defaults(output_path: Path) -> None:
     updated = updated.replace(
         "if (hcols === null) {\n    hcols = [];\n  }",
         _IBOM_DEFAULT_HIDDEN_COLUMNS,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_BOM_LAYOUT_TOKEN,
+        _IBOM_BOM_LAYOUT_OVERRIDE,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_BOM_CELL_STYLE_ANCHOR,
+        _IBOM_BOM_CELL_STYLE_ANCHOR + _IBOM_COLUMN_WIDTH_RULES,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_COLUMN_WIDTH_HELPER_ANCHOR,
+        _IBOM_COLUMN_WIDTH_HELPER + _IBOM_COLUMN_WIDTH_HELPER_ANCHOR,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_BOM_HEADER_APPEND_ANCHOR,
+        _IBOM_BOM_HEADER_APPEND_REPLACEMENT,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_BOM_BODY_EVENT_ANCHOR,
+        _IBOM_BOM_BODY_EVENT_REPLACEMENT,
         1,
     )
 

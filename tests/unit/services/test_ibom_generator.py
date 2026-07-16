@@ -341,17 +341,35 @@ def test_generate_omits_extra_fields_flag_when_configured_empty(
     assert "--extra-fields" not in argv
 
 
-def test_customize_ibom_html_defaults_relabels_references_and_hides_columns(tmp_path: Path) -> None:
+def test_customize_ibom_html_defaults_applies_spcoast_ui_defaults(tmp_path: Path) -> None:
     """Generated iBOM HTML should apply SPCoast's default UI tweaks."""
     html_file = tmp_path / "demo.ibom.html"
     html_file.write_text(
         "\n".join(
             (
+                ".bom {",
+                "  table-layout: fixed;",
+                "}",
+                ".bom th,",
+                ".bom td {",
+                "  border: 1px solid black;",
+                "  padding: 5px;",
+                "  word-wrap: break-word;",
+                "  text-align: center;",
+                "  position: relative;",
+                "}",
                 'var fields = ["checkboxes", "References"].concat(config.fields).concat(["Quantity"]);',
                 "if (hcols === null) {",
                 "    hcols = [];",
                 "  }",
                 '<label class="menu-label">References',
+                "function populateBomHeader(placeHolderColumn = null, placeHolderElements = null) {",
+                "  bomhead.appendChild(tr);",
+                "}",
+                "function populateBomBody(placeholderColumn = null, placeHolderElements = null) {",
+                "  EventHandler.emitEvent(",
+                "    IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, {",
+                "}",
             )
         ),
         encoding="utf-8",
@@ -364,6 +382,11 @@ def test_customize_ibom_html_defaults_relabels_references_and_hides_columns(tmp_
     assert '"Ref"' in updated
     assert 'hcols = ["checkboxes", "Footprint"];' in updated
     assert ">Ref" in updated
+    assert "table-layout: auto;" in updated
+    assert '.bom th[col_name="Details"] {' in updated
+    assert "function applySpcoastBomColumnWidths()" in updated
+    assert "bomhead.appendChild(tr);\n  applySpcoastBomColumnWidths();\n}" in updated
+    assert "applySpcoastBomColumnWidths();\n  EventHandler.emitEvent(" in updated
 
 
 def test_generate_propagates_subprocess_failure(
