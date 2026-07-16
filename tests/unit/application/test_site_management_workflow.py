@@ -179,6 +179,43 @@ def test_delete_last_version_with_force_escalates_to_full_project_delete(tmp_pat
     assert commit_commands[0][2] == "delete project 1.0"
 
 
+def test_delete_last_project_creates_versions_section_index(tmp_path: Path) -> None:
+    site_repo = tmp_path / "site"
+    site_repo.mkdir()
+    _seed_project(site_repo, "Solo", ("1.0",))
+    request = DeleteRequest(
+        project="Solo",
+        version=None,
+        force=True,
+        dry_run=False,
+        config=_config(site_repo),
+    )
+    workflow = SiteManagementWorkflow()
+    git_calls: list[list[str]] = []
+
+    def _fake_git_run(cmd: list[str], *, site_repo: Path, check: bool = True) -> None:
+        del site_repo, check
+        git_calls.append(cmd)
+
+    with (
+        patch("kproj.application.site_management_workflow._git_run", side_effect=_fake_git_run),
+        patch(
+            "kproj.application.site_management_workflow._git_staged_names",
+            return_value=["content/versions/_index.md"],
+        ),
+        patch("kproj.application.site_management_workflow._git_pending_push_count", return_value=0),
+    ):
+        result = workflow.delete(request)
+
+    assert result.exit_code == 0
+    section_index = site_repo / "content/versions/_index.md"
+    assert section_index.exists()
+    assert "No published projects found." in section_index.read_text(encoding="utf-8")
+    add_commands = [call for call in git_calls if call[:2] == ["add", "-A"]]
+    assert add_commands
+    assert "content/versions/_index.md" in add_commands[0]
+
+
 def test_bare_delete_previews_and_fails_without_force(tmp_path: Path) -> None:
     site_repo = tmp_path / "site"
     site_repo.mkdir()

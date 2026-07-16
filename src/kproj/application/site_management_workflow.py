@@ -23,6 +23,12 @@ from ..model.site_management import (
 )
 from ..services.change_journal import ChangeJournal
 
+_EMPTY_VERSIONS_SECTION_INDEX = """---
+title: KiCad Projects
+---
+No published projects found.
+"""
+
 
 def _git_run(
     cmd: list[str],
@@ -233,7 +239,13 @@ class SiteManagementWorkflow:
             with ChangeJournal(site_repo, dry_run=False) as journal:
                 _register_paths_for_delete(journal, targets)
                 _delete_paths(targets)
-                staged = _stage_paths_for_delete(site_repo, targets)
+                section_index = _ensure_versions_section_index_if_empty(
+                    site_repo, request.config.site_profile
+                )
+                if section_index is not None:
+                    journal.will_modify(section_index)
+                stage_targets = targets if section_index is None else (*targets, section_index)
+                staged = _stage_paths_for_delete(site_repo, stage_targets)
                 if not staged:
                     return DeleteResult(
                         outcome="failed",
@@ -351,6 +363,20 @@ def _sorted_paths_for_deletion(paths: Sequence[Path]) -> tuple[Path, ...]:
         seen.add(path)
         deduped.append(path)
     return tuple(sorted(deduped, key=lambda path: len(path.parts), reverse=True))
+
+
+def _ensure_versions_section_index_if_empty(
+    site_repo: Path, site_profile: SiteProfile
+) -> Path | None:
+    """Create a root section index when no published projects remain."""
+    if _discover_published_projects(site_repo, site_profile):
+        return None
+    section_index = site_repo / site_profile.versions_dir / "_index.md"
+    if section_index.exists():
+        return None
+    section_index.parent.mkdir(parents=True, exist_ok=True)
+    section_index.write_text(_EMPTY_VERSIONS_SECTION_INDEX, encoding="utf-8")
+    return section_index
 
 
 def _stage_paths_for_delete(site_repo: Path, paths: Sequence[Path]) -> list[str]:
