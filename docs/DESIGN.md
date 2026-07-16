@@ -877,7 +877,7 @@ Delete execution + git semantics:
 - **Skip** `PcbExporter`, `SchematicExporter`, `IbomGenerator`, `FabPackager`, `SourcePackager` invocations.
 - **Skip** all writes to the site repo.
 - **Skip** git writes on the site repo; a read-only upstream-ahead probe may run to report pending commit debt.
-- Log to stderr: pre-flight pass/fail, findings, and the would-be public destination. The destination derives `baseURL` from `<site_repo>/hugo.toml`; if unavailable, kproj prints the site-relative URL.
+- Log to stderr: pre-flight/runtime status, a compact findings summary (counts by source/severity), and the would-be public destination. The destination derives `baseURL` from `<site_repo>/hugo.toml`; if unavailable, kproj prints the site-relative URL.
 
 `--dry-run` is read-only and idempotent. Wall-clock time is dominated by the DRC/ERC subprocess invocations (typically seconds per project, longer for boards with many violations).
 
@@ -885,11 +885,11 @@ Delete execution + git semantics:
 `cli.main` calls `common.logging_setup.configure(verbose_level, debug)` after `parse_args` and before `workflow.run`, mapping the CLI flags onto the `kproj`-namespaced logger:
 | Flags | kproj logger level | Emits |
 |---|---|---|
-| (none) | WARNING | Findings + mechanical failures only. |
-| `-v` / `--verbose` | INFO | Subprocess (kicad-cli / iBOM / git) argv on every invocation; per-artifact Make-style regen decisions; `production_stale` tolerance suppression (with mtime delta); BOM/POS candidate selection. |
+| (none) | WARNING | Runtime/publish status, compact findings summary, and mechanical failures. |
+| `-v` / `--verbose` | INFO | Default output plus subprocess (kicad-cli / iBOM / git) argv on every invocation; per-artifact Make-style regen decisions; `production_stale` tolerance suppression (with mtime delta); BOM/POS candidate selection. |
 | `-d` / `--debug` | DEBUG | Everything at INFO plus subprocess return codes and captured stdout/stderr on completion. |
 `-d` wins when both flags are present. The stderr handler is attached only to the `kproj` root logger with `propagate=False`, and handler attachment is idempotent (repeat `configure` calls do not stack handlers). Third-party loggers (`jbom`, `urllib3`, ...) keep their pre-configure levels, so a `-d` run does not turn into a firehose from unrelated libraries.
-Audit / DRC / ERC findings still surface via `StderrFormatter` regardless of level (ADR 0004 “show what is provided”) - logging is additive to the finding stream, not a substitute for it. Default terminal output uses `Info:`, `Note:`, `Warning:`, and `Error:` prefixes and presents the diagnosis only; `-v` retains finding codes and raw values for machine-oriented inspection.
+Audit / DRC / ERC findings are always preserved in `PublishResult` for version-page tables/front-matter counts and exit-code mapping. Terminal stderr emits an aggregate findings summary by default and under `-v`; detailed per-finding rows via `StderrFormatter` are emitted only when `-d` is set. Logging remains additive to finding/report generation, not a substitute for it.
 
 ## Testing strategy
 

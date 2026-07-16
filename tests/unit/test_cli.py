@@ -470,18 +470,12 @@ def _stub_workflow_returning(result: PublishResult) -> type:
     return _Stub
 
 
-def test_main_prints_findings_to_stderr(
+def test_main_prints_compact_findings_summary_to_stderr(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """ADR 0004: every audit/DRC/ERC finding must be printed to stderr.
-
-    The pre-fix CLI emitted only ``result.message``; findings only
-    showed up via the exit code (and indirectly in the version page),
-    never on the user's terminal.  The fix wires ``StderrFormatter``
-    into ``main()`` so every Finding is one stderr line.
-    """
+    """Default stderr stays compact while still signaling findings presence."""
     findings = (
         Finding(
             severity=Severity.WARNING,
@@ -514,11 +508,55 @@ def test_main_prints_findings_to_stderr(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Warning: COMMENT9 absent" in captured.err, (
-        f"issue #43: human finding message missing from stderr; got: {captured.err!r}"
+    assert "Note: Collected 2 finding(s) [audit e1/w1/x0/i0]." in captured.err
+    assert "Warning: COMMENT9 absent" not in captured.err
+    assert "Error: silk overlap" not in captured.err
+    assert "kproj: published Demo-1.0B." in captured.err
+
+
+def test_main_prints_detailed_findings_when_debug_flag_set(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """Debug mode restores full per-finding stderr rows."""
+    findings = (
+        Finding(
+            severity=Severity.WARNING,
+            field="comment9_missing",
+            value="",
+            reason="COMMENT9 absent",
+            project="Demo",
+            source="audit",
+        ),
+        Finding(
+            severity=Severity.ERROR,
+            field="drc_violation",
+            value="(50, 75)",
+            reason="silk overlap",
+            project="Demo",
+            source="drc",
+        ),
     )
-    assert "Error: silk overlap" in captured.err
-    assert "silk overlap" in captured.err
+    result = PublishResult(
+        outcome="published",
+        exit_code=1,
+        message="kproj: published Demo-1.0B.",
+        findings=findings,
+    )
+    monkeypatch.setattr(cli_main, "PublishWorkflow", _stub_workflow_returning(result))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    exit_code = cli.main(["publish", "/tmp/proj", "-d"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "warning [comment9_missing]" in captured.err
+    assert "error [drc_violation]" in captured.err
+    assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i0; drc e1/w0/x0/i0]." in captured.err
 
 
 def test_main_emits_nothing_extra_when_findings_empty(

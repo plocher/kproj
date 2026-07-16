@@ -20,6 +20,7 @@ import argparse
 import logging
 import os
 import sys
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -29,8 +30,10 @@ from ..application.site_management_workflow import SiteManagementWorkflow
 from ..common.logging_setup import configure as configure_logging
 from ..config import ConfigOverrides, KprojConfig, load_config
 from ..formatters.stderr_formatter import StderrFormatter
+from ..model.finding import Finding
 from ..model.publish_request import PublishRequest
 from ..model.publish_result import PublishResult, compute_exit_code
+from ..model.severity import Severity
 from ..model.site_management import DeleteRequest
 from ..services.kicad_project_reader import KicadProjectReader, ProjectResolutionError
 
@@ -535,33 +538,90 @@ def main(argv: Sequence[str] | None = None) -> int:
     _emit_first_run_hint(yaml_path=yaml_path, inventory=publish_request.config.inventory)
     publish_workflow = PublishWorkflow()
     publish_result = publish_workflow.run(publish_request)
-    _render_result_to_stderr(publish_result, verbose_level=publish_request.verbose_level)
+    _render_result_to_stderr(
+        publish_result,
+        verbose_level=publish_request.verbose_level,
+        debug=publish_request.debug,
+    )
     return resolve_exit_code(publish_result)
 
 
-def _render_result_to_stderr(result: PublishResult, *, verbose_level: int) -> None:
-    """Print the workflow result's findings + summary message to stderr.
+def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug: bool) -> None:
+    """Print compact findings context and the run summary to stderr.
 
-    ADR 0004 ("show what is provided") and PRD Story 5 require every
-    audit/DRC/ERC finding to surface on the user's terminal at default
-    verbosity.  The pre-fix CLI emitted only ``result.message``, so
-    findings could set ``exit_code=1`` and land in the version page
-    while remaining invisible to the user (BLOCKER 4).
+    Default and ``-v`` output stays focused on kproj runtime/publish
+    state; detailed per-finding rows are omitted and treated as report
+    artifacts. ``-d`` restores per-finding stderr lines for debugging.
 
     Args:
         result: The :class:`PublishResult` returned by
             :meth:`PublishWorkflow.run`.
-        verbose_level: 0 = default (findings + message), 1+ = future
-            command-line / subprocess diagnostics (verbose wiring is
-            tracked as a Phase 6 follow-up issue).
+        verbose_level: Current verbosity level derived from CLI flags.
+        debug: ``True`` when ``-d`` was supplied.
     """
     if result.findings:
-        formatter = StderrFormatter(verbose_level=verbose_level)
-        rendered = formatter.format_findings(result.findings)
-        if rendered:
-            print(rendered, file=sys.stderr)
+        detailed_rows_emitted = False
+        if debug:
+            formatter = StderrFormatter(verbose_level=max(verbose_level, 2))
+            rendered = formatter.format_findings(result.findings)
+            if rendered:
+                print(rendered, file=sys.stderr)
+                detailed_rows_emitted = True
+        print(
+            _findings_summary_for_stderr(
+                result.findings,
+                detailed_rows_emitted=detailed_rows_emitted,
+            ),
+            file=sys.stderr,
+        )
     if result.message:
         print(result.message, file=sys.stderr)
+
+
+def _findings_summary_for_stderr(
+    findings: Sequence[Finding], *, detailed_rows_emitted: bool
+) -> str:
+    """Return a compact findings summary suitable for stderr output."""
+    buckets: dict[str, list[Finding]] = {
+        "audit": [],
+        "drc": [],
+        "erc": [],
+        "other": [],
+    }
+    for finding in findings:
+        buckets[_source_bucket(finding.source)].append(finding)
+
+    rendered_buckets: list[str] = []
+    for bucket in ("audit", "drc", "erc", "other"):
+        grouped = buckets[bucket]
+        if not grouped:
+            continue
+        counts = Counter(item.severity for item in grouped)
+        rendered_buckets.append(
+            f"{bucket} e{counts[Severity.ERROR]}/w{counts[Severity.WARNING]}"
+            f"/x{counts[Severity.EXCLUSION]}/i{counts[Severity.INFO]}"
+        )
+
+    counts_text = "; ".join(rendered_buckets) if rendered_buckets else "none"
+    details_note = (
+        "Detailed finding rows emitted above."
+        if detailed_rows_emitted
+        else "Detailed finding rows are omitted from stderr; run with -d for full finding output."
+    )
+    return (
+        f"Note: Collected {len(findings)} finding(s) [{counts_text}]. "
+        f"{details_note}"
+    )
+
+
+def _source_bucket(source: str) -> str:
+    """Return the compact summary bucket for a finding source token."""
+    normalized = source.strip().lower()
+    if normalized in {"", "audit", "read"}:
+        return "audit"
+    if normalized in {"drc", "erc"}:
+        return normalized
+    return "other"
 
 
 if __name__ == "__main__":  # pragma: no cover

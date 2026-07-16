@@ -48,10 +48,10 @@ Run `kproj --help` for the authoritative, up-to-date flag list. As of this writi
 - `--datasheet-library PATH` — local datasheet-library clone used by the advisory publish guard.
 - `--datasheet-repo OWNER/REPO` — public repo slug that published datasheet deep-links point at.
 - `--version` — print the installed kproj version.
-- `--dry-run` — read-only mode: surface findings without writing to the site repo.
+- `--dry-run` — read-only mode: collect findings without writing to the site repo.
 - `--republish` / `--force` (publish command) — force artifact regeneration and publish even when unchanged checks would otherwise skip producers.
 - `--no-push` — skip `git push` after the site-repo commit (batch-friendly). Run N batch publishes with this flag, then run a final plain `kproj` to flush all queued site commits.
-- `-v` / `--verbose`, `-d` / `--debug` — increase logging verbosity. Toolchain discovery lines (`Using kicad-cli...`, `Using jbom...`) are shown under verbose mode.
+- `-v` / `--verbose`, `-d` / `--debug` — increase logging verbosity. Default and `-v` stderr show a compact findings summary; `-d` additionally emits detailed per-finding rows for debugging.
 
 ## Configuration
 
@@ -92,7 +92,7 @@ When `inventory` is configured, kproj queries `jbom bom --inventory <path> --fab
 ## Exit codes
 
 - `0` — clean: published (or refreshed/noop/private-skip) with no error/warning findings.
-- `1` — findings present: the same outcomes above, but with at least one error or warning finding (audit, DRC/ERC, etc.), surfaced on stderr and in the version page's Markdown body.
+- `1` — findings present: the same outcomes above, but with at least one error or warning finding (audit, DRC/ERC, etc.). Stderr shows compact counts; detailed rows are in the version page's Markdown body (and on stderr under `-d`).
 - `2` — mechanical failure: kicad-cli not found, project resolution failed, or another pipeline step raised.
 
 ## Composition with other tools

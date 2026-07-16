@@ -480,13 +480,15 @@ def step_when_run_plain_kproj_unchanged(context: Any) -> None:
 @when("I run kproj with -v")
 def step_when_run_kproj_verbose(context: Any) -> None:
     """Run the workflow with verbose_level=1 and capture the stderr text."""
+    import importlib
+    import io
+    from contextlib import redirect_stderr
     workflow = _build_workflow(context)
     request = _build_request(context)
     # verbose_level=1 emulates `kproj -v <path>`.
     from dataclasses import replace as _replace
 
     request = _replace(request, verbose_level=1)
-    captured_findings: list[Any] = []
     with (
         patch("kproj.services.site_publisher._git_run") as mock_git,
         patch(
@@ -498,12 +500,11 @@ def step_when_run_kproj_verbose(context: Any) -> None:
         context.git_calls = [tuple(call.args[0]) for call in mock_git.call_args_list]
     context.outcome = context.result.outcome
     context.exit_code = context.result.exit_code
-    # Render findings via StderrFormatter to build the stderr surface the
-    # CLI would have produced; matches the wire-up added in BLOCKER 4.
-    from kproj.formatters.stderr_formatter import StderrFormatter
-
-    captured_findings.extend(context.result.findings)
-    context.stderr = StderrFormatter(verbose_level=1).format_findings(captured_findings)
+    cli_main = importlib.import_module("kproj.cli.main")
+    err_buffer = io.StringIO()
+    with redirect_stderr(err_buffer):
+        cli_main._render_result_to_stderr(context.result, verbose_level=1, debug=False)
+    context.stderr = err_buffer.getvalue()
 
 
 # ─────────────────────────── Then steps ──────────────────────────────────────
@@ -772,21 +773,18 @@ def step_then_no_git_commit_invoked(context: Any) -> None:
     assert not commits, f"expected no git commit; got {commits!r}"
 
 
-@then("stderr contains the audit finding names")
-def step_then_stderr_has_audit_names(context: Any) -> None:
-    """Assert the rendered stderr text contains audit finding rule names.
-
-    Uses the AuditProject fixture (see :func:`step_given_project_with_warnings`)
-    which triggers ``date_format`` and ``designer_format`` warnings.
-    """
+@then("stderr reports a compact findings summary")
+def step_then_stderr_reports_compact_summary(context: Any) -> None:
+    """Assert verbose stderr contains aggregate findings context, not finding rows."""
     stderr_text = getattr(context, "stderr", "") or ""
     finding_fields = {f.field for f in context.result.findings}
     assert finding_fields, (
         "expected at least one finding under the AuditProject fixture; "
         f"got findings={finding_fields}"
     )
-    # At least one finding's field name must appear in stderr.
-    hits = [name for name in finding_fields if name in stderr_text]
-    assert hits, (
-        f"No finding names surfaced on stderr. stderr={stderr_text!r} findings={finding_fields}"
+    assert "Note: Collected" in stderr_text, (
+        f"expected compact findings summary on stderr; got stderr={stderr_text!r}"
+    )
+    assert not any(name in stderr_text for name in finding_fields), (
+        f"expected no per-finding names on verbose stderr; got stderr={stderr_text!r}"
     )
