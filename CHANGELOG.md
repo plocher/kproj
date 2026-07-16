@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.7.1 (2026-07-16)
+
+### Bug Fixes
+
+* fix: relabel ibom references menu entry ([`4264459`](https://github.com/plocher/kproj/commit/4264459a7c5307e25af86cd93e490e0dfdbe32a7))
+
+
 ## v0.7.0 (2026-07-16)
 
 ### Features
