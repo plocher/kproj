@@ -21,6 +21,16 @@ kproj [<project-or-dir-or-file>] [options]
 Run from inside a KiCad project directory, or pass a path to a `.kicad_pro` / `.kicad_sch` / `.kicad_pcb` file, a project directory, or a basename resolved under the KiCad projects root. Defaults to `.` (the current directory).
 
 Pipeline: **render → ibom → fab → publish**. Each release generates board renders, schematic SVG/PDF, the interactive HTML BOM, packages fabrication artifacts, and commits (+ pushes) a version page and its assets into the configured site repo.
+### Project/site management commands
+
+- `kproj project --list` — list published projects and their published versions from the configured site repo.
+- `kproj delete <project> --version <board_rev>` — delete one published version.
+  - If this is the last published version, the command fails unless `--force` is provided.
+  - With `--force` in that last-version case, behavior escalates to full-project delete.
+- `kproj delete <project>` — non-destructive preview: prints what full-project deletion would remove, then exits non-zero.
+- `kproj delete <project> --force` — delete all published versions and project content for that project.
+- `--dry-run` works for destructive delete paths and reports what would be removed without writing.
+- `--no-push` keeps the delete commit local (batch-friendly), matching publish behavior.
 
 ### CLI flags
 

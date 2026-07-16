@@ -24,11 +24,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ..application.publish_workflow import PublishWorkflow
+from ..application.site_management_workflow import SiteManagementWorkflow
 from ..common.logging_setup import configure as configure_logging
-from ..config import ConfigOverrides, load_config
+from ..config import ConfigOverrides, KprojConfig, load_config
 from ..formatters.stderr_formatter import StderrFormatter
 from ..model.publish_request import PublishRequest
 from ..model.publish_result import PublishResult, compute_exit_code
+from ..model.site_management import DeleteRequest
 
 _log = logging.getLogger(__name__)
 
@@ -60,11 +62,15 @@ Environment variables:
 
 Without a ~/.kproj.yaml and no --inventory/KPROJ_INVENTORY, kproj publishes
 without datasheet deep-links (jbom is never invoked - see --inventory below).
+
+Additional commands:
+  kproj project --list
+  kproj delete <project> [--version <board_rev>] [--force] [--dry-run] [--no-push]
 """
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    """Construct the argparse parser for kproj's CLI surface.
+def _build_publish_parser() -> argparse.ArgumentParser:
+    """Construct the publish parser for the default kproj CLI surface.
 
     Returns:
         A configured :class:`argparse.ArgumentParser`. Building the
@@ -192,6 +198,81 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Implementation-private debug output (not a stable interface).",
     )
+    parser.set_defaults(command="publish")
+    return parser
+
+
+def _build_delete_parser() -> argparse.ArgumentParser:
+    """Construct the parser for ``kproj delete``."""
+    parser = argparse.ArgumentParser(
+        prog="kproj delete",
+        description="Delete published site content for a project.",
+    )
+    parser.add_argument(
+        "project",
+        type=str,
+        help="Published project identifier to delete from the site repo.",
+    )
+    parser.add_argument(
+        "--version",
+        type=str,
+        default=None,
+        metavar="REV",
+        help="Delete only one published version.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help=(
+            "Allow destructive project deletion. Required for full-project delete; "
+            "also required when --version targets the project's last published version."
+        ),
+    )
+    parser.add_argument(
+        "--site-repo",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Override the local SPCoast site-repo checkout (highest precedence).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Read-only mode: show what delete would remove without writing.",
+    )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        default=False,
+        help="Skip git push after delete commit.",
+    )
+    parser.set_defaults(command="delete")
+    return parser
+
+
+def _build_project_parser() -> argparse.ArgumentParser:
+    """Construct the parser for ``kproj project`` commands."""
+    parser = argparse.ArgumentParser(
+        prog="kproj project",
+        description="Inspect published project state in the site repo.",
+    )
+    parser.add_argument(
+        "--list",
+        dest="list_projects",
+        action="store_true",
+        default=False,
+        help="List published projects and their versions.",
+    )
+    parser.add_argument(
+        "--site-repo",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Override the local SPCoast site-repo checkout (highest precedence).",
+    )
+    parser.set_defaults(command="project")
     return parser
 
 
@@ -204,8 +285,18 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     Returns:
         The :class:`argparse.Namespace` produced by the parser.
     """
-    parser = _build_parser()
-    return parser.parse_args(list(argv))
+    args = list(argv)
+    if args and args[0] == "delete":
+        parser = _build_delete_parser()
+        return parser.parse_args(args[1:])
+    if args and args[0] == "project":
+        parser = _build_project_parser()
+        namespace = parser.parse_args(args[1:])
+        if not namespace.list_projects:
+            parser.error("project command requires --list")
+        return namespace
+    parser = _build_publish_parser()
+    return parser.parse_args(args)
 
 
 def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
@@ -219,19 +310,24 @@ def _overrides_from(namespace: argparse.Namespace) -> ConfigOverrides:
         did not explicitly pass - preserving the precedence semantics
         in :func:`kproj.config.load_config`.
     """
+    site_repo = getattr(namespace, "site_repo", None)
+    no_push = bool(getattr(namespace, "no_push", False))
+    inventory = getattr(namespace, "inventory", None)
+    datasheet_library = getattr(namespace, "datasheet_library", None)
+    datasheet_repo = getattr(namespace, "datasheet_repo", None)
+    ibom_extra_fields = getattr(namespace, "ibom_extra_fields", None)
+    fabricator = getattr(namespace, "fabricator", None)
     return ConfigOverrides(
-        site_repo=Path(namespace.site_repo) if namespace.site_repo else None,
+        site_repo=Path(site_repo) if site_repo else None,
         # argparse default for --no-push is False; only treat True as an override
         # so that absence falls through to env / yaml / default.
-        no_push=True if namespace.no_push else None,
+        no_push=True if no_push else None,
         kicad_cli=None,  # reserved for future --kicad-cli flag
-        inventory=Path(namespace.inventory) if namespace.inventory else None,
-        datasheet_library=(
-            Path(namespace.datasheet_library) if namespace.datasheet_library else None
-        ),
-        datasheet_repo=namespace.datasheet_repo or None,
-        ibom_extra_fields=namespace.ibom_extra_fields or None,
-        fabricator=namespace.fabricator or None,
+        inventory=Path(inventory) if inventory else None,
+        datasheet_library=Path(datasheet_library) if datasheet_library else None,
+        datasheet_repo=datasheet_repo or None,
+        ibom_extra_fields=ibom_extra_fields or None,
+        fabricator=fabricator or None,
     )
 
 
@@ -251,8 +347,7 @@ def build_request(
         A fully populated :class:`PublishRequest` ready for
         :meth:`PublishWorkflow.run`.
     """
-    overrides = _overrides_from(namespace)
-    config = load_config(overrides=overrides, env=env, yaml_path=yaml_path)
+    config = _load_runtime_config(namespace, env=env, yaml_path=yaml_path)
     verbose_level = int(namespace.verbose) + (1 if namespace.debug else 0)
     return PublishRequest(
         project_arg=str(namespace.project),
@@ -262,6 +357,33 @@ def build_request(
         verbose_level=verbose_level,
         debug=bool(namespace.debug),
     )
+
+
+def build_delete_request(
+    namespace: argparse.Namespace,
+    env: Mapping[str, str],
+    yaml_path: Path,
+) -> DeleteRequest:
+    """Build a :class:`DeleteRequest` from a parsed delete namespace + env."""
+    config = _load_runtime_config(namespace, env=env, yaml_path=yaml_path)
+    return DeleteRequest(
+        project=str(namespace.project),
+        version=str(namespace.version) if namespace.version else None,
+        force=bool(namespace.force),
+        dry_run=bool(namespace.dry_run),
+        config=config,
+    )
+
+
+def _load_runtime_config(
+    namespace: argparse.Namespace,
+    *,
+    env: Mapping[str, str],
+    yaml_path: Path,
+) -> KprojConfig:
+    """Resolve :class:`KprojConfig` from parsed args + env + yaml path."""
+    overrides = _overrides_from(namespace)
+    return load_config(overrides=overrides, env=env, yaml_path=yaml_path)
 
 
 def resolve_exit_code(result: PublishResult) -> int:
@@ -321,19 +443,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:]) if argv is None else list(argv)
     namespace = parse_args(args)
     yaml_path = _default_yaml_path()
-    request = build_request(
+    command = str(getattr(namespace, "command", "publish"))
+
+    if command == "project":
+        config = _load_runtime_config(namespace, env=os.environ, yaml_path=yaml_path)
+        project_workflow = SiteManagementWorkflow()
+        project_result = project_workflow.list_projects(config)
+        if project_result.message:
+            print(project_result.message, file=sys.stderr)
+        return project_result.exit_code
+
+    if command == "delete":
+        delete_request = build_delete_request(namespace, env=os.environ, yaml_path=yaml_path)
+        delete_workflow = SiteManagementWorkflow()
+        delete_result = delete_workflow.delete(delete_request)
+        if delete_result.message:
+            print(delete_result.message, file=sys.stderr)
+        return delete_result.exit_code
+
+    publish_request = build_request(
         namespace,
         env=os.environ,
         yaml_path=yaml_path,
     )
     # Wire -v / -d to the kproj-namespaced logger BEFORE the workflow runs
     # so subprocess argv, git invocations, and regen decisions are visible.
-    configure_logging(verbose_level=request.verbose_level, debug=request.debug)
-    _emit_first_run_hint(yaml_path=yaml_path, inventory=request.config.inventory)
-    workflow = PublishWorkflow()
-    result = workflow.run(request)
-    _render_result_to_stderr(result, verbose_level=request.verbose_level)
-    return resolve_exit_code(result)
+    configure_logging(verbose_level=publish_request.verbose_level, debug=publish_request.debug)
+    _emit_first_run_hint(yaml_path=yaml_path, inventory=publish_request.config.inventory)
+    publish_workflow = PublishWorkflow()
+    publish_result = publish_workflow.run(publish_request)
+    _render_result_to_stderr(publish_result, verbose_level=publish_request.verbose_level)
+    return resolve_exit_code(publish_result)
 
 
 def _render_result_to_stderr(result: PublishResult, *, verbose_level: int) -> None:
