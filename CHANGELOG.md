@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.9.0 (2026-07-16)
+
+### Features
+
+* feat(cli): add project listing and delete site-management commands ([`ddc3267`](https://github.com/plocher/kproj/commit/ddc3267f139269dfeed29ade6f29c86d17b09c88))
+
+
 ## v0.8.0 (2026-07-16)
 
 ### Features
