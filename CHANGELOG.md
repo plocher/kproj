@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v0.10.5 (2026-07-17)
+
+### Bug Fixes
+
+* fix: relabel References->Ref on every re-render, not just first load
+
+The one-time window.onload relabel missed the vismenu dropdown's own
+'References' list item and wouldn't survive drag-reorder or bom-mode
+changes (which rebuild the header/body from scratch). Move the DOM
+text-edit to the documented BOM_BODY_CHANGE_EVENT callback instead,
+which fires on initial render and every subsequent re-render, and
+extend it to also cover the vismenu-content dropdown's own label. ([`161e22c`](https://github.com/plocher/kproj/commit/161e22cd211fe7b78d99de11a9fd9417b137df1d))
+
+* fix: use iBOM's native user.css/user.js hooks instead of HTML splicing
+
+Replaces _customize_ibom_html_defaults()'s anchor-text splicing into
+iBOM's generated HTML/JS with kproj-owned user.css/user.js files
+written into iBOM's own supported customization directory
+(<install-root>/web/, per iBOM's Customization wiki), which iBOM
+embeds via its own ///USERCSS/// / ///USERJS/// placeholders.
+
+This removes the th.numCol width constraint (3.2ch/4.4ch + nowrap)
+that was applied to the exact table cell hosting the column-visibility
+menu button/dropdown, which is the most likely cause of the dropdown
+rendering only a single entry. It also eliminates the 'sanity guard'
+logic that existed only to repair state corruption the old splicing
+approach could itself cause: hidden-column defaults are now seeded
+once via iBOM's own storage-key convention (only when unset), instead
+of being force-replaced on every generation.
+
+References->Ref relabeling moves from a source-text replace to a
+targeted DOM text edit in user.js, so it survives upstream iBOM
+refactors that don't change the visible label wording. ([`617a9e2`](https://github.com/plocher/kproj/commit/617a9e226f85dce4c090cce69db19265e5f1730d))
+
+
 ## v0.10.4 (2026-07-17)
 
 ### Bug Fixes
