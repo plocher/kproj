@@ -40,6 +40,7 @@ from ..services.kicad_project_reader import KicadProjectReader, ProjectResolutio
 _log = logging.getLogger(__name__)
 
 _DEFAULT_YAML_FILENAME = ".kproj.yaml"
+_COMPACT_VISIBLE_ADVISORY_FIELDS = frozenset({"github_link_missing", "github_link_unpushed"})
 
 _CONFIG_EPILOG = """\
 Configuration precedence (highest wins):
@@ -567,6 +568,12 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
             if rendered:
                 print(rendered, file=sys.stderr)
                 detailed_rows_emitted = True
+        if not detailed_rows_emitted:
+            highlighted = _findings_to_highlight_in_compact_stderr(result.findings)
+            if highlighted:
+                rendered = StderrFormatter(verbose_level=0).format_findings(highlighted)
+                if rendered:
+                    print(rendered, file=sys.stderr)
         print(
             _findings_summary_for_stderr(
                 result.findings,
@@ -609,6 +616,13 @@ def _findings_summary_for_stderr(
         else "Detailed finding rows are omitted from stderr; run with -d for full finding output."
     )
     return f"Note: Collected {len(findings)} finding(s) [{counts_text}]. {details_note}"
+
+
+def _findings_to_highlight_in_compact_stderr(findings: Sequence[Finding]) -> tuple[Finding, ...]:
+    """Return selected advisory findings that remain explicit in compact stderr mode."""
+    return tuple(
+        finding for finding in findings if finding.field in _COMPACT_VISIBLE_ADVISORY_FIELDS
+    )
 
 
 def _source_bucket(source: str) -> str:
