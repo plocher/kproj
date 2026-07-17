@@ -44,6 +44,7 @@ from ..common.datasheet_library import (
     read_ibom_rows,
 )
 from ..common.github_link import derive_github_link, detect_github_link, finding_for_detection
+from ..common.install_info import detect_install_info, format_provenance
 from ..common.kicad_install import (
     SUPPORTED_KICAD_MAJORS,
     KicadNotFoundError,
@@ -75,7 +76,7 @@ from ..model.severity import Severity
 from ..services.change_journal import ChangeJournal
 from ..services.design_analyzer import DesignAnalysisError, DesignAnalyzer
 from ..services.fab_packager import FabPackager
-from ..services.ibom_generator import IbomGenerator
+from ..services.ibom_generator import IbomGenerator, write_ibom_user_files
 from ..services.kicad_project_reader import (
     KicadProjectReader,
     ProjectResolutionError,
@@ -218,8 +219,15 @@ __all__ = [
     "SitePublisherFactory",
 ]
 
-_PUBLISH_CONTEXT_SCHEMA: int = 1
-"""Schema version for ``kproj_publish_context`` front-matter metadata."""
+_PUBLISH_CONTEXT_SCHEMA: int = 2
+"""Schema version for ``kproj_publish_context`` front-matter metadata.
+
+Bumped 1 -> 2 to add ``kproj_install_type`` + ``watermark`` (RCA
+follow-up: distinguishing which kproj install/build produced a given
+publish - see :mod:`kproj.common.install_info`). The bump means every
+version page published under schema 1 is treated as drifted once and
+regenerates on its next publish, picking up the new fields.
+"""
 
 
 class PublishWorkflow:
@@ -299,6 +307,18 @@ class PublishWorkflow:
         Returns:
             A :class:`PublishResult` describing the run.
         """
+        # kproj can be invoked from more than one installation on this
+        # machine (a PyPI/Homebrew release, or a dev/editable checkout
+        # via `uv run`); detected once, up front, so the -v banner, the
+        # iBOM page's embedded provenance, the front-matter
+        # `kproj_publish_context`, and the site-repo commit trailer all
+        # agree on "which kproj, really" (see kproj.common.install_info).
+        install_info = detect_install_info()
+        if request.verbose_level >= 1:
+            print(f"Info: {format_provenance(install_info, request.watermark)}", file=sys.stderr)
+            if install_info.location:
+                print(f"Info: kproj loaded from {install_info.location}", file=sys.stderr)
+
         site_repo = request.config.site_repo
 
         # ── Steps 1-2: Resolve project + discover kicad-cli ──
@@ -433,6 +453,21 @@ class PublishWorkflow:
                 findings=analysis.findings,
             )
 
+        # Refresh iBOM's own web/user.css + user.js (see
+        # kproj.services.ibom_generator.write_ibom_user_files) with this
+        # run's provenance every publish, independent of whether
+        # artifact regeneration itself runs below - both because the
+        # write is idempotent/cheap, and so a stale/wiped web/ dir
+        # (e.g. after a Plugin and Content Manager reinstall) self-heals
+        # on the very next publish rather than only on the next
+        # iBOM-regenerating one.
+        if not request.dry_run:
+            write_ibom_user_files(
+                ibom_script,
+                install_info=install_info,
+                watermark=request.watermark,
+            )
+
         # ── Step 5b: Site-repo cleanliness check (non-private only, non-dry-run) ──
         if not request.dry_run:
             try:
@@ -488,6 +523,8 @@ class PublishWorkflow:
             inventory_enabled=request.config.inventory is not None,
             fabricator=request.config.fabricator,
             ibom_extra_fields=request.config.ibom_extra_fields,
+            install_type=install_info.install_type,
+            watermark=request.watermark,
         )
         existing_publish_context = _existing_publish_context(version_file)
         publish_context_drift = version_file.exists() and (
@@ -882,8 +919,25 @@ def _current_publish_context(
     inventory_enabled: bool,
     fabricator: str,
     ibom_extra_fields: tuple[str, ...],
+    install_type: str,
+    watermark: str,
 ) -> dict[str, object]:
-    """Return the current run's output-affecting publish context metadata."""
+    """Return the current run's output-affecting publish context metadata.
+
+    Args:
+        kicad_version: The discovered ``kicad-cli`` ``(major, minor, patch)``.
+        inventory_enabled: Whether inventory-derived iBOM enrichment is active.
+        fabricator: The configured jBOM fabricator profile.
+        ibom_extra_fields: The configured extra iBOM columns.
+        install_type: This run's detected kproj install type
+            (``"release"``/``"editable"``; see
+            :func:`kproj.common.install_info.detect_install_info`). Not
+            itself "output-affecting" for the BOM/render pipeline, but
+            included here (schema 2) so the front-matter block doubles
+            as a provenance record, per the RCA follow-up on
+            distinguishing which kproj install produced a given publish.
+        watermark: This run's ``--watermark`` value (empty by default).
+    """
     major, minor, patch = kicad_version
     return {
         "schema": _PUBLISH_CONTEXT_SCHEMA,
@@ -892,11 +946,26 @@ def _current_publish_context(
         "inventory_enabled": inventory_enabled,
         "fabricator": fabricator,
         "ibom_extra_fields": list(ibom_extra_fields),
+        "kproj_install_type": install_type,
+        "watermark": watermark,
     }
 
 
 def _normalize_publish_context(context: Mapping[str, object] | None) -> dict[str, object]:
-    """Normalize publish-context metadata for deterministic equality checks."""
+    """Normalize publish-context metadata for deterministic equality checks.
+
+    Includes ``kproj_install_type``/``watermark`` like every other
+    field: a watermark change forcing a regeneration is intentional,
+    not incidental. ``write_ibom_user_files`` refreshes the shared
+    ``web/user.css``/``user.js`` on every publish regardless of this
+    decision, but the actual ``.ibom.html`` artifact is only
+    regenerated when ``needs_regen`` is true - if a watermark change
+    didn't count as drift, a "skip" outcome would leave a *stale*
+    watermark baked into the on-disk iBOM page while the shared
+    ``web/`` files already show the new one, reintroducing the exact
+    "which run does this actually reflect" confusion ``--watermark``
+    exists to prevent.
+    """
     if context is None:
         return {
             "schema": 0,
@@ -905,6 +974,8 @@ def _normalize_publish_context(context: Mapping[str, object] | None) -> dict[str
             "inventory_enabled": False,
             "fabricator": "",
             "ibom_extra_fields": (),
+            "kproj_install_type": "",
+            "watermark": "",
         }
     raw_schema = context.get("schema", 0)
     try:
@@ -927,6 +998,8 @@ def _normalize_publish_context(context: Mapping[str, object] | None) -> dict[str
         "inventory_enabled": bool(context.get("inventory_enabled", False)),
         "fabricator": str(context.get("fabricator", "")).strip().lower(),
         "ibom_extra_fields": ibom_fields,
+        "kproj_install_type": str(context.get("kproj_install_type", "")).strip(),
+        "watermark": str(context.get("watermark", "")).strip(),
     }
 
 

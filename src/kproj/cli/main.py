@@ -189,6 +189,21 @@ def _build_publish_parser(
         ),
     )
     parser.add_argument(
+        "--watermark",
+        type=str,
+        default="",
+        metavar="TAG",
+        help=(
+            "Free-text tag stamped into the generated iBOM page, the Hugo "
+            "front-matter kproj_publish_context, and the site-repo commit "
+            "message, alongside the auto-detected kproj version/install type. "
+            "Intended for dev/test invocations (e.g. `uv run kproj publish "
+            "--watermark <unique-tag>`) so their output is unmistakably "
+            "distinct from a normal production publish; forces a regeneration "
+            "like any other publish-context change."
+        ),
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -396,6 +411,7 @@ def build_request(
         republish=bool(namespace.republish),
         verbose_level=verbose_level,
         debug=bool(namespace.debug),
+        watermark=str(getattr(namespace, "watermark", "") or "").strip(),
     )
 
 

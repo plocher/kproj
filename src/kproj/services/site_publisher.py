@@ -39,11 +39,14 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import yaml
 
+from ..common.install_info import InstallInfo, InstallType, format_provenance
 from ..common.subprocess_runner import DEFAULT_GIT_TIMEOUT
 from ..common.subprocess_runner import run as subprocess_run
 from ..config import SiteProfile
@@ -344,6 +347,7 @@ class SitePublisher:
             version_is_new=version_is_new,
             staged=staged,
             site_profile=site_profile,
+            publish_context=publication.publish_context,
         )
         _git_run(["commit", "-m", commit_msg], site_repo=site_repo)
         self._journal.mark_committed()
@@ -460,6 +464,7 @@ def _commit_message(
     version_is_new: bool,
     staged: list[str],
     site_profile: SiteProfile,
+    publish_context: Mapping[str, object] | None = None,
 ) -> str:
     """Derive the site-commit message prefix from what git staged.
 
@@ -471,19 +476,53 @@ def _commit_message(
         staged: The repo-relative paths git has staged this run.
         site_profile: Profile providing ``assets_dir`` so asset changes
             can be told apart from markdown-only changes.
+        publish_context: The current run's ``kproj_publish_context``
+            (see ``kproj.application.publish_workflow``). When it
+            carries ``kproj_install_type``, a ``kproj: <provenance>``
+            trailer line is appended so ``git log`` on the site repo is
+            self-diagnosing (RCA follow-up: which kproj install/build
+            produced a given commit, without inspecting file contents).
 
     Returns:
         The commit message string.
     """
     PR = f"{project}-{board_rev}"
     if project_is_new:
-        return f"add: {project} {board_rev}"
-    if version_is_new:
-        return f"publish: {PR}"
-    assets_prefix = f"{site_profile.assets_dir}/{project}/{board_rev}/"
-    if any(name.startswith(assets_prefix) for name in staged):
-        return f"republish: {PR}"
-    return f"refresh: {PR} (metadata updated)"
+        prefix = f"add: {project} {board_rev}"
+    elif version_is_new:
+        prefix = f"publish: {PR}"
+    else:
+        assets_prefix = f"{site_profile.assets_dir}/{project}/{board_rev}/"
+        if any(name.startswith(assets_prefix) for name in staged):
+            prefix = f"republish: {PR}"
+        else:
+            prefix = f"refresh: {PR} (metadata updated)"
+
+    trailer = _provenance_trailer(publish_context)
+    return f"{prefix}\n\n{trailer}" if trailer else prefix
+
+
+def _provenance_trailer(publish_context: Mapping[str, object] | None) -> str:
+    """Return a ``kproj: <provenance>`` commit trailer, or ``\"\"``.
+
+    Empty when *publish_context* carries no ``kproj_install_type``
+    (e.g. legacy schema-1 callers, or direct :func:`_commit_message`
+    callers in tests that don't pass one) so existing commit-message
+    expectations for those cases stay unchanged.
+    """
+    if not publish_context:
+        return ""
+    install_type = str(publish_context.get("kproj_install_type", "")).strip()
+    if not install_type:
+        return ""
+    version = str(publish_context.get("kproj_version", "")).strip()
+    watermark = str(publish_context.get("watermark", "")).strip()
+    # install_type round-trips through YAML front-matter as a plain str;
+    # detect_install_info() is the only writer and only ever produces one
+    # of the two InstallType literals, so this cast documents that
+    # invariant rather than silencing the check outright.
+    info = InstallInfo(install_type=cast(InstallType, install_type), version=version)
+    return f"kproj: {format_provenance(info, watermark)}"
 
 
 def _atomic_write(path: Path, content: str) -> None:
