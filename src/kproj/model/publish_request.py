@@ -30,6 +30,14 @@ class PublishRequest:
         verbose_level: ``0`` = quiet, ``1`` = ``-v``, ``2`` = ``-v -d``.
         debug: ``True`` enables implementation-private debug output;
             independent of :attr:`verbose_level`.
+        watermark: Optional free-text tag (``--watermark``) stamped
+            into the generated iBOM page, the Hugo front-matter
+            ``kproj_publish_context``, and the site-repo commit
+            message, alongside the auto-detected kproj version/install
+            type (see :mod:`kproj.common.install_info`). Intended for
+            dev/test invocations so their output is unmistakably
+            distinct from a normal production publish; empty by
+            default.
     """
 
     project_arg: str
@@ -38,3 +46,4 @@ class PublishRequest:
     republish: bool = False
     verbose_level: int = 0
     debug: bool = False
+    watermark: str = ""

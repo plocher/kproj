@@ -22,6 +22,10 @@
 - Added generated iBOM column-width heuristics to minimize row number/`Ref`/`Value`/`Details` columns and favor remaining width for `Description` under common layouts.
 - Fixed the iBOM column-visibility dropdown (top-left cell) rendering only a single entry: SPCoast's iBOM UI defaults (column widths, default hidden columns, `References`->`Ref` relabeling) now ride iBOM's own supported `user.css`/`user.js` customization hooks instead of splicing text into iBOM's generated HTML/JS after the fact, and the `th.numCol` width constraint that hosted the dropdown (and was corrupting its rendering) is no longer applied.
 - Preserved fallback behavior when inventory is not configured (legacy PCB-backed iBOM extra-data path remains valid).
+- Added kproj install-type detection (`kproj.common.install_info`), distinguishing a release (PyPI/Homebrew/pip) install from a dev/editable (`uv run`) checkout, so a publish's actual provenance is no longer ambiguous when more than one kproj install exists on the same machine.
+- Added a `-v` banner reporting the resolved kproj version + install type (+ source path) at the start of every publish.
+- Added `--watermark TAG` to stamp a free-text tag into the generated iBOM page (an HTML comment plus a hover tooltip on iBOM's own credit line), the Hugo front-matter `kproj_publish_context`, and the site-repo commit message, alongside the auto-detected install type - intended for dev/test invocations so their output is unmistakably distinct from a normal production publish. A watermark change forces a regeneration like any other publish-context change.
+- Bumped the `kproj_publish_context` front-matter schema to 2, adding `kproj_install_type` + `watermark`; legacy schema-1 version pages regenerate once on their next publish to pick up the new fields.
 ## 0.4.0
 - Humanized console output with `Info:`, `Note:`, `Warning:`, and `Error:` prefixes; GitHub-link environment diagnostics are now INFO and no longer change a successful exit code.
 - Dry-run reports the public destination from the site checkout's `hugo.toml`, with a site-relative fallback.

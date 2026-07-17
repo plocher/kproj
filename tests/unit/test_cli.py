@@ -106,6 +106,18 @@ def test_parse_args_force_alias_sets_republish() -> None:
     assert parsed.republish is True
 
 
+def test_parse_args_watermark_defaults_empty() -> None:
+    """``--watermark`` defaults to an empty string when not supplied."""
+    parsed = cli.parse_args(["publish"])
+    assert parsed.watermark == ""
+
+
+def test_parse_args_watermark_accepts_free_text() -> None:
+    """``--watermark`` accepts an arbitrary tag string."""
+    parsed = cli.parse_args(["publish", "--watermark", "my-test-tag"])
+    assert parsed.watermark == "my-test-tag"
+
+
 def test_parse_args_list_command_defaults_to_cwd_project() -> None:
     """List command defaults to CWD-style project input."""
     parsed = cli.parse_args(["list"])
@@ -264,6 +276,20 @@ def test_build_request_omits_no_push_override_when_flag_not_given(
         yaml_path=tmp_path / "missing.yaml",
     )
     assert request.config.no_push is True
+
+
+def test_build_request_propagates_watermark(tmp_path: Path) -> None:
+    """``--watermark`` reaches :class:`PublishRequest` verbatim (stripped)."""
+    parsed = cli.parse_args(["publish", "--watermark", "  my-test-tag  "])
+    request = cli.build_request(parsed, env={}, yaml_path=tmp_path / "missing.yaml")
+    assert request.watermark == "my-test-tag"
+
+
+def test_build_request_defaults_watermark_to_empty_string(tmp_path: Path) -> None:
+    """Without ``--watermark``, the request carries an empty string, not ``None``."""
+    parsed = cli.parse_args(["publish"])
+    request = cli.build_request(parsed, env={}, yaml_path=tmp_path / "missing.yaml")
+    assert request.watermark == ""
 
 
 # ----------------------------------------------------------------------

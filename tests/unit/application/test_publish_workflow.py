@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from kproj.application import publish_workflow as workflow_module
 from kproj.application.publish_workflow import PublishWorkflow
@@ -1779,4 +1780,291 @@ def test_artifact_generator_diagnostics_flow_into_result(
     ), (
         "M6: producer-stage diagnostic did not reach PublishResult.findings. "
         f"result.findings={[f.field for f in result.findings]}"
+    )
+
+
+# ----- RCA follow-up: install-type/watermark provenance -----
+
+
+def test_verbose_mode_emits_provenance_banner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-v`` prints the "which kproj, really" banner before anything else."""
+    from kproj.common.install_info import InstallInfo
+
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "private"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="Hello",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+    monkeypatch.setattr(
+        workflow_module,
+        "detect_install_info",
+        lambda: InstallInfo(
+            install_type="editable", version="0.dev0+gabc123", location="/dev/kproj"
+        ),
+    )
+
+    config = KprojConfig(
+        site_repo=tmp_path / "site",
+        no_push=False,
+        kicad_cli=fake_cli,
+        site_profile=GENERIC_SITE_PROFILE,
+    )
+    request = replace(
+        PublishRequest(project_arg=str(proj_dir), config=config),
+        verbose_level=1,
+        watermark="my-test-tag",
+    )
+    workflow = _workflow(tmp_path)
+    workflow.run(request)
+    err = capsys.readouterr().err
+    assert "Info: kproj 0.dev0+gabc123 (editable) [my-test-tag]" in err
+    assert "Info: kproj loaded from /dev/kproj" in err
+
+
+def test_run_calls_write_ibom_user_files_with_install_info_and_watermark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run`` refreshes iBOM's web/user.css+js directly, not through the artifact generator.
+
+    Verifies the RCA follow-up wiring: :func:`write_ibom_user_files` is
+    called once per publish with this run's detected
+    :class:`~kproj.common.install_info.InstallInfo` and ``--watermark``,
+    independent of whether artifact regeneration itself runs.
+    """
+    from kproj.common.install_info import InstallInfo
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+    fixed_info = InstallInfo(install_type="editable", version="0.dev0+gabc123")
+    monkeypatch.setattr(workflow_module, "detect_install_info", lambda: fixed_info)
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        workflow_module,
+        "write_ibom_user_files",
+        lambda ibom_script, **kw: calls.append({"ibom_script": ibom_script, **kw}),
+    )
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = replace(
+        _make_full_request(str(proj_dir), fake_cli, site),
+        watermark="my-test-tag",
+    )
+    with patch("kproj.services.site_publisher._git_run"):
+        workflow.run(request)
+
+    assert len(calls) == 1, f"expected exactly one write_ibom_user_files call; got {calls}"
+    assert calls[0]["install_info"] is fixed_info
+    assert calls[0]["watermark"] == "my-test-tag"
+
+
+def test_run_skips_write_ibom_user_files_on_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``dry_run=True`` must not touch the shared, machine-global iBOM web/ dir."""
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        workflow_module,
+        "write_ibom_user_files",
+        lambda *a, **kw: calls.append((a, kw)),
+    )
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = _make_full_request(str(proj_dir), fake_cli, site, dry_run=True)
+    with patch("kproj.services.site_publisher._git_run"):
+        workflow.run(request)
+
+    assert calls == []
+
+
+def test_front_matter_carries_schema_2_install_type_and_watermark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The written version page's ``kproj_publish_context`` reflects schema 2."""
+    from kproj.common.install_info import InstallInfo
+
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+    monkeypatch.setattr(
+        workflow_module,
+        "detect_install_info",
+        lambda: InstallInfo(install_type="editable", version="0.dev0+gabc123"),
+    )
+
+    workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    request = replace(
+        _make_full_request(str(proj_dir), fake_cli, site),
+        watermark="my-test-tag",
+    )
+    with patch("kproj.services.site_publisher._git_run"):
+        workflow.run(request)
+
+    version_file = site / GENERIC_SITE_PROFILE.versions_dir / "demo" / "1.0.md"
+    content = version_file.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(content.split("---\n", 2)[1])
+    context = parsed["kproj_publish_context"]
+    assert context["schema"] == 2
+    assert context["kproj_install_type"] == "editable"
+    assert context["watermark"] == "my-test-tag"
+
+
+def test_watermark_change_forces_regeneration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed ``--watermark`` counts as publish-context drift.
+
+    Deliberate: ``write_ibom_user_files`` refreshes the shared
+    ``web/user.css``/``user.js`` on every publish regardless of
+    ``needs_regen``, but the actual ``.ibom.html`` artifact is only
+    regenerated when ``needs_regen`` is true. If a watermark change
+    didn't count as drift, a "skip" outcome would leave a *stale*
+    watermark baked into the on-disk iBOM page.
+    """
+    site = _make_site_repo(tmp_path)
+    proj_dir = make_minimal_project(
+        tmp_path / "demo",
+        "demo",
+        sch_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            comments={1: "Alice Designer", 9: "active"},
+        ),
+        pcb_title_block=TitleBlockSpec(
+            title="My Board",
+            revision="1.0",
+            date="2026.04",
+            comments={1: "Alice Designer"},
+        ),
+    )
+    fake_cli = tmp_path / "kicad-cli"
+    fake_cli.write_text("")
+    _stub_kicad_version(monkeypatch, (9, 0, 4))
+
+    seed_workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
+    seed_request = replace(
+        _make_full_request(str(proj_dir), fake_cli, site, no_push=True),
+        watermark="tag-one",
+    )
+    first = seed_workflow.run(seed_request)
+    assert first.outcome in {"published", "refreshed"}
+
+    fake_ibom = tmp_path / "generate_interactive_bom.py"
+    fake_ibom.write_text("")
+    fake_python = tmp_path / "kicad-python3"
+    fake_python.write_text("")
+    generator_calls: list[int] = []
+
+    def _recording_gen(
+        resolved: object,
+        project_info: object,
+        kicad_cli: Path,
+        ibom_script: Path,
+        kicad_python: Path,
+        _site_repo: Path,
+        _site_profile: object,
+        inventory: Path | None,
+        fabricator: str,
+        ibom_extra_fields: tuple[str, ...],
+        journal: ChangeJournal,
+    ) -> tuple[tuple[AssetRef, ...], tuple[AssetRef, ...], tuple[object, ...]]:
+        del (
+            resolved,
+            project_info,
+            kicad_cli,
+            ibom_script,
+            kicad_python,
+            _site_repo,
+            _site_profile,
+            inventory,
+            fabricator,
+            ibom_extra_fields,
+            journal,
+        )
+        generator_calls.append(1)
+        return (), (), ()
+
+    second_workflow = PublishWorkflow(
+        project_reader=KicadProjectReader(projects_root=tmp_path),
+        design_analyzer_factory=_silent_design_analyzer_factory(),
+        ibom_script_locator=_stub_ibom_locator(fake_ibom),
+        kicad_python_locator=lambda: fake_python,
+        artifact_generator=_recording_gen,
+        site_publisher_factory=_stub_site_publisher_factory(site),
+    )
+    second_request = replace(seed_request, watermark="tag-two")
+    with patch("kproj.services.site_publisher._git_run"):
+        second_workflow.run(second_request)
+
+    assert len(generator_calls) == 1, (
+        "a --watermark change must force artifact regeneration, otherwise a "
+        "skip outcome leaves a stale watermark baked into the on-disk iBOM page"
     )

@@ -19,6 +19,7 @@ Validates the contract per ADR 0008 + ``docs/DESIGN.md`` §
 
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Iterable
 from pathlib import Path
@@ -28,6 +29,7 @@ import pytest
 
 from kproj.common import subprocess_runner
 from kproj.common.datasheet_library import build_datasheet_link
+from kproj.common.install_info import InstallInfo
 from kproj.model.datasheet_row import DatasheetRow
 from kproj.model.export_result import ExportResult
 from kproj.services import ibom_generator as ibom_generator_module
@@ -341,15 +343,17 @@ def test_generate_omits_extra_fields_flag_when_configured_empty(
     assert "--extra-fields" not in argv
 
 
-def test_generate_writes_ibom_user_css_and_js_next_to_web_dir(
+def test_generate_does_not_write_ibom_user_files(
     ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``generate()`` writes ``user.css``/``user.js`` into iBOM's own ``web/`` dir.
+    """``generate()`` no longer writes ``web/user.css``/``user.js`` itself.
 
-    iBOM reads customization files from ``<install-root>/web/`` (a
-    sibling of ``generate_interactive_bom.py``) and embeds them via its
-    own ``///USERCSS///`` / ``///USERJS///`` placeholders. kproj must
-    write there instead of splicing text into the generated HTML.
+    That responsibility moved to the module-level, publicly callable
+    :func:`write_ibom_user_files`, invoked directly by
+    ``PublishWorkflow.run`` once per publish (see
+    ``tests/unit/application/test_publish_workflow.py``), so it can
+    carry the per-publish install-type/watermark provenance without
+    widening the injected artifact-generator callable's signature.
     """
     fake_run, _ = _make_fake_ibom_run()
     monkeypatch.setattr(ibom_generator_module, "subprocess_run", fake_run)
@@ -364,11 +368,29 @@ def test_generate_writes_ibom_user_css_and_js_next_to_web_dir(
         name_format="demo.ibom",
     )
 
+    assert not (ibom_script.parent / "web").exists()
+
+
+def test_write_ibom_user_files_content(
+    ibom_script: Path,
+) -> None:
+    """``write_ibom_user_files`` writes provenance-stamped user.css/user.js."""
+    install_info = InstallInfo(install_type="editable", version="0.10.5")
+
+    ibom_generator_module.write_ibom_user_files(
+        ibom_script,
+        install_info=install_info,
+        watermark="my-test-tag",
+    )
+
     web_dir = ibom_script.parent / "web"
     user_css = (web_dir / "user.css").read_text(encoding="utf-8")
     user_js = (web_dir / "user.js").read_text(encoding="utf-8")
 
+    expected_provenance = "kproj 0.10.5 (editable) [my-test-tag]"
+
     assert "Managed by kproj" in user_css
+    assert expected_provenance in user_css
     assert "table-layout: auto;" in user_css
     assert '.bom th[col_name="Details"] {' in user_css
     # th.numCol (hosts the vismenu dropdown) must stay unconstrained --
@@ -378,6 +400,8 @@ def test_generate_writes_ibom_user_css_and_js_next_to_web_dir(
     assert "#vismenu-content" in user_css
 
     assert "Managed by kproj" in user_js
+    assert expected_provenance in user_js
+    assert json.dumps(expected_provenance) in user_js
     assert 'storagePrefix + "hiddenColumns"' in user_js
     assert '["checkboxes", "Footprint"]' in user_js
     assert "referencesCheckbox" in user_js
@@ -387,28 +411,45 @@ def test_generate_writes_ibom_user_css_and_js_next_to_web_dir(
     assert "EventHandler.registerCallback(IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT" in user_js
     assert 'window.addEventListener("load"' not in user_js
     assert "vismenu-content" in user_js
+    # The same provenance is also surfaced as a hover tooltip inside
+    # iBOM's own UI (the standalone .ibom.html is a downloadable
+    # artifact in its own right; see kproj.common.install_info).
+    assert ".shameless-plug" in user_js
+    assert "creditLine.title" in user_js
 
 
-def test_generate_overwrites_ibom_user_files_idempotently(
-    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_write_ibom_user_files_omits_bracket_when_watermark_empty(
+    ibom_script: Path,
 ) -> None:
-    """Repeated ``generate()`` calls rewrite (not append to) user.css/user.js."""
-    fake_run, _ = _make_fake_ibom_run()
-    monkeypatch.setattr(ibom_generator_module, "subprocess_run", fake_run)
+    """A default (empty) watermark omits the trailing bracketed tag."""
+    install_info = InstallInfo(install_type="release", version="0.10.5")
 
-    pcb = tmp_path / "demo.kicad_pcb"
-    pcb.write_text("(kicad_pcb)")
-    output = tmp_path / "demo.ibom.html"
-    generator = IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python)
-
-    generator.generate(pcb_path=pcb, output_file=output, name_format="demo.ibom")
-    generator.generate(pcb_path=pcb, output_file=output, name_format="demo.ibom")
+    ibom_generator_module.write_ibom_user_files(ibom_script, install_info=install_info)
 
     web_dir = ibom_script.parent / "web"
-    assert (web_dir / "user.css").read_text(
-        encoding="utf-8"
-    ) == ibom_generator_module._IBOM_USER_CSS
-    assert (web_dir / "user.js").read_text(encoding="utf-8") == ibom_generator_module._IBOM_USER_JS
+    user_css = (web_dir / "user.css").read_text(encoding="utf-8")
+    assert "kproj 0.10.5 (release)" in user_css
+    assert "[" not in user_css.split("kproj 0.10.5 (release)")[1].split("\n")[0]
+
+
+def test_write_ibom_user_files_overwrites_idempotently(
+    ibom_script: Path,
+) -> None:
+    """Repeated calls rewrite (not append to) user.css/user.js."""
+    install_info = InstallInfo(install_type="release", version="0.10.5")
+
+    ibom_generator_module.write_ibom_user_files(ibom_script, install_info=install_info)
+    ibom_generator_module.write_ibom_user_files(ibom_script, install_info=install_info)
+
+    web_dir = ibom_script.parent / "web"
+    expected_css = ibom_generator_module._build_user_css(
+        ibom_generator_module.format_provenance(install_info)
+    )
+    expected_js = ibom_generator_module._build_user_js(
+        ibom_generator_module.format_provenance(install_info)
+    )
+    assert (web_dir / "user.css").read_text(encoding="utf-8") == expected_css
+    assert (web_dir / "user.js").read_text(encoding="utf-8") == expected_js
 
 
 def test_generate_propagates_subprocess_failure(

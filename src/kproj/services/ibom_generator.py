@@ -38,6 +38,7 @@ release-asset filename is independent of the iBOM staging directory.
 from __future__ import annotations
 
 import html
+import json
 import os
 import tempfile
 import time
@@ -46,6 +47,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..common.datasheet_library import build_datasheet_link
+from ..common.install_info import InstallInfo, format_provenance
 from ..common.subprocess_runner import DEFAULT_KICAD_TIMEOUT
 from ..common.subprocess_runner import run as subprocess_run
 from ..model.datasheet_row import DatasheetRow
@@ -69,8 +71,9 @@ _TRUE_DNP_MARKERS: frozenset[str] = frozenset({"1", "true", "yes", "y", "dnp"})
 _IBOM_DEFAULT_LAYER_VIEW = "F"
 """Preferred initial PCB layer view for generated iBOM pages."""
 
-_IBOM_USER_CSS = """/* Managed by kproj -- regenerated on every publish. Do not hand-edit.
- * See src/kproj/services/ibom_generator.py (_write_ibom_user_files).
+_IBOM_USER_CSS_TEMPLATE = """/* Managed by kproj -- regenerated on every publish. Do not hand-edit.
+ * __PROVENANCE__
+ * See src/kproj/services/ibom_generator.py (write_ibom_user_files).
  *
  * Uses iBOM's supported user.css customization hook
  * (https://github.com/openscopeproject/InteractiveHtmlBom/wiki/Customization).
@@ -117,10 +120,11 @@ _IBOM_USER_CSS = """/* Managed by kproj -- regenerated on every publish. Do not 
   z-index: 1;
 }
 """
-"""Content written to iBOM's ``web/user.css`` customization file."""
+"""``user.css`` template; ``__PROVENANCE__`` is filled in by :func:`_build_user_css`."""
 
-_IBOM_USER_JS = """// Managed by kproj -- regenerated on every publish. Do not hand-edit.
-// See src/kproj/services/ibom_generator.py (_write_ibom_user_files).
+_IBOM_USER_JS_TEMPLATE = """// Managed by kproj -- regenerated on every publish. Do not hand-edit.
+// __PROVENANCE__
+// See src/kproj/services/ibom_generator.py (write_ibom_user_files).
 //
 // Uses iBOM's supported user.js customization hook
 // (https://github.com/openscopeproject/InteractiveHtmlBom/wiki/Customization)
@@ -174,9 +178,38 @@ EventHandler.registerCallback(IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, function s
   if (vismenuContent) {
     Array.from(vismenuContent.querySelectorAll("label")).forEach(relabelChildren);
   }
+
+  // Surface the same provenance descriptor inside iBOM's own UI, since
+  // the standalone .ibom.html file is also a downloadable artifact in
+  // its own right and may be opened outside the Hugo wrapper entirely
+  // (see docs on kproj.common.install_info). A hover-only title
+  // attribute on iBOM's existing credit line -- not new visible text,
+  // not a change to iBOM's own HTML source.
+  var creditLine = document.querySelector(".shameless-plug");
+  if (creditLine) {
+    creditLine.title = __PROVENANCE_JSON__;
+  }
 });
 """
-"""Content written to iBOM's ``web/user.js`` customization file."""
+"""``user.js`` template; ``__PROVENANCE__``/``__PROVENANCE_JSON__`` are filled
+in by :func:`_build_user_js`."""
+
+
+def _build_user_css(provenance: str) -> str:
+    """Return ``user.css`` content with *provenance* in its header comment."""
+    return _IBOM_USER_CSS_TEMPLATE.replace("__PROVENANCE__", provenance)
+
+
+def _build_user_js(provenance: str) -> str:
+    """Return ``user.js`` content with *provenance* in its header comment.
+
+    Also embeds *provenance* as a properly quoted JS string literal
+    (via :func:`json.dumps`) for the runtime ``title`` attribute set on
+    iBOM's own credit line.
+    """
+    return _IBOM_USER_JS_TEMPLATE.replace("__PROVENANCE__", provenance).replace(
+        "__PROVENANCE_JSON__", json.dumps(provenance)
+    )
 
 
 class IbomGenerator:
@@ -262,8 +295,6 @@ class IbomGenerator:
             # restores the prior bytes via git checkout.
             journal.register_output(output_file)
 
-        _write_ibom_user_files(self._ibom_script)
-
         with tempfile.TemporaryDirectory(prefix="kproj-ibom-") as staging:
             staging_dir = Path(staging)
             extra_data_file = pcb_path
@@ -323,7 +354,12 @@ class IbomGenerator:
         )
 
 
-def _write_ibom_user_files(ibom_script: Path) -> None:
+def write_ibom_user_files(
+    ibom_script: Path,
+    *,
+    install_info: InstallInfo,
+    watermark: str = "",
+) -> None:
     """Write kproj's ``user.css``/``user.js`` into iBOM's own ``web/`` dir.
 
     iBOM reads ``user.css`` / ``user.js`` (and ``userheader.html`` /
@@ -337,18 +373,32 @@ def _write_ibom_user_files(ibom_script: Path) -> None:
     extension point instead of splicing text into iBOM's generated
     output after the fact.
 
-    Idempotent: overwrites both files unconditionally on every call,
-    so a Plugin and Content Manager reinstall that wipes ``web/``
-    self-heals on the next :meth:`IbomGenerator.generate` call.
+    Called directly by :meth:`~kproj.application.publish_workflow.PublishWorkflow.run`
+    (not from :meth:`IbomGenerator.generate`) so it can carry the
+    per-publish :class:`~kproj.common.install_info.InstallInfo` +
+    ``--watermark`` value without widening the injected
+    ``ArtifactGeneratorCallable`` signature every provenance-surfacing
+    site would otherwise need to thread through.
+
+    Idempotent: overwrites both files unconditionally on every call, so
+    a Plugin and Content Manager reinstall that wipes ``web/`` self-heals
+    on the next publish.
 
     Args:
         ibom_script: Path to ``generate_interactive_bom.py``. iBOM's
             ``web/`` directory is always a sibling of this script.
+        install_info: This process's detected kproj version + install
+            type (see :func:`kproj.common.install_info.detect_install_info`),
+            embedded in both files' header comments and, for ``user.js``,
+            as a hover tooltip on iBOM's own credit line.
+        watermark: Optional free-text tag (``--watermark``) appended to
+            the embedded provenance string; empty by default.
     """
+    provenance = format_provenance(install_info, watermark)
     web_dir = ibom_script.parent / "web"
     web_dir.mkdir(parents=True, exist_ok=True)
-    (web_dir / "user.css").write_text(_IBOM_USER_CSS, encoding="utf-8")
-    (web_dir / "user.js").write_text(_IBOM_USER_JS, encoding="utf-8")
+    (web_dir / "user.css").write_text(_build_user_css(provenance), encoding="utf-8")
+    (web_dir / "user.js").write_text(_build_user_js(provenance), encoding="utf-8")
 
 
 def _normalize_field_name(field: str) -> str:

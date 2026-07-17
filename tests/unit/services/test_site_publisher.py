@@ -35,7 +35,9 @@ from kproj.services.change_journal import ChangeJournal
 from kproj.services.site_publisher import (
     SitePublisher,
     _build_project_index_content,
+    _commit_message,
     _git_pending_push_count,
+    _provenance_trailer,
     public_version_destination,
 )
 
@@ -440,3 +442,64 @@ class TestBuildProjectIndexContent:
             f"  download: {only.download_url}\n"
         ) in content
         assert content.split("---\n", 2)[2] == "\n"
+
+
+# ──────────────────────────── commit-message provenance ───────────────────────
+
+
+class TestProvenanceTrailer:
+    """Tests for the RCA-follow-up ``kproj: <provenance>`` commit trailer.
+
+    Both helpers are pure functions (no I/O), so they're tested directly
+    rather than through the full mocked-git ``SitePublisher.publish()``
+    flow used elsewhere in this file.
+    """
+
+    def test_provenance_trailer_empty_without_install_type(self) -> None:
+        """No ``kproj_install_type`` (e.g. a legacy schema-1 context) omits the trailer."""
+        assert _provenance_trailer(None) == ""
+        assert _provenance_trailer({}) == ""
+        assert _provenance_trailer({"kproj_version": "0.10.5"}) == ""
+
+    def test_provenance_trailer_release_without_watermark(self) -> None:
+        """A release install with no watermark has no trailing bracketed tag."""
+        trailer = _provenance_trailer(
+            {"kproj_install_type": "release", "kproj_version": "0.10.5", "watermark": ""}
+        )
+        assert trailer == "kproj: kproj 0.10.5 (release)"
+
+    def test_provenance_trailer_editable_with_watermark(self) -> None:
+        """An editable install with a watermark appends the bracketed tag."""
+        trailer = _provenance_trailer(
+            {
+                "kproj_install_type": "editable",
+                "kproj_version": "0.dev0+g8dae9d4",
+                "watermark": "my-test-tag",
+            }
+        )
+        assert trailer == "kproj: kproj 0.dev0+g8dae9d4 (editable) [my-test-tag]"
+
+    def test_commit_message_appends_trailer_when_context_present(self) -> None:
+        """``_commit_message`` appends the trailer, blank-line separated, when given a context."""
+        msg = _commit_message(
+            "Demo",
+            "1.0B",
+            project_is_new=False,
+            version_is_new=False,
+            staged=[f"{GENERIC_SITE_PROFILE.assets_dir}/Demo/1.0B/Demo-1.0B.ibom.html"],
+            site_profile=GENERIC_SITE_PROFILE,
+            publish_context={"kproj_install_type": "release", "kproj_version": "0.10.5"},
+        )
+        assert msg == "republish: Demo-1.0B\n\nkproj: kproj 0.10.5 (release)"
+
+    def test_commit_message_omits_trailer_without_context(self) -> None:
+        """The default (no ``publish_context``) call site keeps the bare prefix."""
+        msg = _commit_message(
+            "Demo",
+            "1.0B",
+            project_is_new=False,
+            version_is_new=True,
+            staged=[],
+            site_profile=GENERIC_SITE_PROFILE,
+        )
+        assert msg == "publish: Demo-1.0B"
