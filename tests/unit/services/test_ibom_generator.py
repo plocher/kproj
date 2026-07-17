@@ -341,73 +341,69 @@ def test_generate_omits_extra_fields_flag_when_configured_empty(
     assert "--extra-fields" not in argv
 
 
-def test_customize_ibom_html_defaults_applies_spcoast_ui_defaults(tmp_path: Path) -> None:
-    """Generated iBOM HTML should apply SPCoast's default UI tweaks."""
-    html_file = tmp_path / "demo.ibom.html"
-    html_file.write_text(
-        "\n".join(
-            (
-                ".bom {",
-                "  table-layout: fixed;",
-                "}",
-                ".bom th,",
-                ".bom td {",
-                "  border: 1px solid black;",
-                "  padding: 5px;",
-                "  word-wrap: break-word;",
-                "  text-align: center;",
-                "  position: relative;",
-                "}",
-                'var fields = ["checkboxes", "References"].concat(config.fields).concat(["Quantity"]);',
-                "if (hcols === null) {",
-                "    hcols = [];",
-                "  }",
-                "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));",
-                '  var cord = JSON.parse(readStorage("columnOrder"));',
-                "  if (cord === null) {",
-                "    cord = fields;",
-                "  } else {",
-                "    cord = cord.filter(e => fields.includes(e));",
-                "    if (cord.length != fields.length)",
-                "      cord = fields;",
-                "  }",
-                "  settings.columnOrder = cord;",
-                '<label class="menu-label">References',
-                "function populateBomHeader(placeHolderColumn = null, placeHolderElements = null) {",
-                "  bomhead.appendChild(tr);",
-                "}",
-                "function populateBomBody(placeholderColumn = null, placeHolderElements = null) {",
-                "  EventHandler.emitEvent(",
-                "    IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, {",
-                "}",
-            )
-        ),
-        encoding="utf-8",
+def test_generate_writes_ibom_user_css_and_js_next_to_web_dir(
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``generate()`` writes ``user.css``/``user.js`` into iBOM's own ``web/`` dir.
+
+    iBOM reads customization files from ``<install-root>/web/`` (a
+    sibling of ``generate_interactive_bom.py``) and embeds them via its
+    own ``///USERCSS///`` / ``///USERJS///`` placeholders. kproj must
+    write there instead of splicing text into the generated HTML.
+    """
+    fake_run, _ = _make_fake_ibom_run()
+    monkeypatch.setattr(ibom_generator_module, "subprocess_run", fake_run)
+
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "demo.ibom.html"
+
+    IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
+        pcb_path=pcb,
+        output_file=output,
+        name_format="demo.ibom",
     )
 
-    ibom_generator_module._customize_ibom_html_defaults(html_file)
+    web_dir = ibom_script.parent / "web"
+    user_css = (web_dir / "user.css").read_text(encoding="utf-8")
+    user_js = (web_dir / "user.js").read_text(encoding="utf-8")
 
-    updated = html_file.read_text(encoding="utf-8")
-    assert '"References"' not in updated
-    assert '"Ref"' in updated
-    assert 'hcols = ["checkboxes", "Footprint"];' in updated
-    assert ">Ref" in updated
-    assert (
-        "var visibleNonUtility = nonUtilityFields.filter(e => !settings.hiddenColumns.includes(e));"
-        in updated
-    )
-    assert (
-        'settings.hiddenColumns = ["checkboxes", "Footprint"].filter(e => fields.includes(e));'
-        in updated
-    )
-    assert "var orderedNonUtility = cord.filter(e => nonUtilityFields.includes(e));" in updated
-    assert "if (nonUtilityFields.length > 0 && orderedNonUtility.length === 0) {" in updated
-    assert "cord = fields;" in updated
-    assert "table-layout: auto;" in updated
-    assert '.bom th[col_name="Details"] {' in updated
-    assert "function applySpcoastBomColumnWidths()" in updated
-    assert "bomhead.appendChild(tr);\n  applySpcoastBomColumnWidths();\n}" in updated
-    assert "applySpcoastBomColumnWidths();\n  EventHandler.emitEvent(" in updated
+    assert "Managed by kproj" in user_css
+    assert "table-layout: auto;" in user_css
+    assert '.bom th[col_name="Details"] {' in user_css
+    # th.numCol (hosts the vismenu dropdown) must stay unconstrained --
+    # squeezing its width previously corrupted the dropdown's rendering.
+    assert "th.numCol {" not in user_css
+    assert "max-width: 4.4ch" not in user_css
+    assert "#vismenu-content" in user_css
+
+    assert "Managed by kproj" in user_js
+    assert 'storagePrefix + "hiddenColumns"' in user_js
+    assert '["checkboxes", "Footprint"]' in user_js
+    assert "referencesCheckbox" in user_js
+    assert 'th[col_name="References"]' in user_js
+
+
+def test_generate_overwrites_ibom_user_files_idempotently(
+    ibom_script: Path, kicad_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated ``generate()`` calls rewrite (not append to) user.css/user.js."""
+    fake_run, _ = _make_fake_ibom_run()
+    monkeypatch.setattr(ibom_generator_module, "subprocess_run", fake_run)
+
+    pcb = tmp_path / "demo.kicad_pcb"
+    pcb.write_text("(kicad_pcb)")
+    output = tmp_path / "demo.ibom.html"
+    generator = IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python)
+
+    generator.generate(pcb_path=pcb, output_file=output, name_format="demo.ibom")
+    generator.generate(pcb_path=pcb, output_file=output, name_format="demo.ibom")
+
+    web_dir = ibom_script.parent / "web"
+    assert (web_dir / "user.css").read_text(
+        encoding="utf-8"
+    ) == ibom_generator_module._IBOM_USER_CSS
+    assert (web_dir / "user.js").read_text(encoding="utf-8") == ibom_generator_module._IBOM_USER_JS
 
 
 def test_generate_propagates_subprocess_failure(

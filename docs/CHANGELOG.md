@@ -20,6 +20,7 @@
 - Updated default iBOM extra columns to `Details,Description`; `Details` now composes `Manufacturer`, `MPN`, and a compact `Datasheet` link (`<br>` separated), replacing separate `Manufacturer`, `MPN`, `Fabricator Part Number`, `Datasheet`, and `Datasheet Name` default columns.
 - Updated generated iBOM UI defaults to start on the front side (`layer_view=F`) and hide `checkboxes` + `Footprint` columns by default while relabeling `References` to `Ref`.
 - Added generated iBOM column-width heuristics to minimize row number/`Ref`/`Value`/`Details` columns and favor remaining width for `Description` under common layouts.
+- Fixed the iBOM column-visibility dropdown (top-left cell) rendering only a single entry: SPCoast's iBOM UI defaults (column widths, default hidden columns, `References`->`Ref` relabeling) now ride iBOM's own supported `user.css`/`user.js` customization hooks instead of splicing text into iBOM's generated HTML/JS after the fact, and the `th.numCol` width constraint that hosted the dropdown (and was corrupting its rendering) is no longer applied.
 - Preserved fallback behavior when inventory is not configured (legacy PCB-backed iBOM extra-data path remains valid).
 ## 0.4.0
 - Humanized console output with `Info:`, `Note:`, `Warning:`, and `Error:` prefixes; GitHub-link environment diagnostics are now INFO and no longer change a successful exit code.
