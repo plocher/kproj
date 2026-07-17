@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.10.1 (2026-07-17)
+
+### Bug Fixes
+
+* fix(cli): summarize findings output and preserve empty versions index ([`214ab60`](https://github.com/plocher/kproj/commit/214ab603a62dac8da64c8f8f0200012613a3272b))
+
+
 ## v0.10.0 (2026-07-16)
 
 ### Features
