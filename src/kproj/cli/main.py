@@ -608,10 +608,7 @@ def _findings_summary_for_stderr(
         if detailed_rows_emitted
         else "Detailed finding rows are omitted from stderr; run with -d for full finding output."
     )
-    return (
-        f"Note: Collected {len(findings)} finding(s) [{counts_text}]. "
-        f"{details_note}"
-    )
+    return f"Note: Collected {len(findings)} finding(s) [{counts_text}]. {details_note}"
 
 
 def _source_bucket(source: str) -> str:
