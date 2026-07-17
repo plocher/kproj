@@ -514,6 +514,56 @@ def test_main_prints_compact_findings_summary_to_stderr(
     assert "kproj: published Demo-1.0B." in captured.err
 
 
+def test_main_compact_mode_surfaces_github_link_advisory_note(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """Compact stderr still surfaces GitHub-link advisories for non-git projects."""
+    findings = (
+        Finding(
+            severity=Severity.INFO,
+            field="github_link_missing",
+            value="",
+            reason=(
+                "Project is not a Git repository, so no links to a repo will be published. "
+                "You can run `git init` to start tracking this project."
+            ),
+            project="Demo",
+            source="audit",
+        ),
+        Finding(
+            severity=Severity.WARNING,
+            field="metadata_warning",
+            value="",
+            reason="A genuine metadata warning.",
+            project="Demo",
+            source="audit",
+        ),
+    )
+    result = PublishResult(
+        outcome="published",
+        exit_code=1,
+        message="kproj: published Demo-1.0B.",
+        findings=findings,
+    )
+    monkeypatch.setattr(cli_main, "PublishWorkflow", _stub_workflow_returning(result))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("KPROJ_SITE_REPO", raising=False)
+    monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
+    monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
+
+    exit_code = cli.main(["publish", "/tmp/proj"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Note: Project is not a Git repository, so no links to a repo will be published." in (
+        captured.err
+    )
+    assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i1]." in captured.err
+    assert "Warning: A genuine metadata warning." not in captured.err
+
+
 def test_main_prints_detailed_findings_when_debug_flag_set(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

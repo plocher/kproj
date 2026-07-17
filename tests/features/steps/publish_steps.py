@@ -687,10 +687,16 @@ def step_then_pending_debt_is_reported(context: Any, mode: str) -> None:
 
 @then("stderr shows the GitHub-link Note")
 def step_then_github_link_note_is_rendered(context: Any) -> None:
-    """Assert the INFO advisory uses the default human Note presentation."""
-    from kproj.formatters.stderr_formatter import StderrFormatter
+    """Assert compact CLI stderr includes the human GitHub-link advisory note."""
+    import importlib
+    import io
+    from contextlib import redirect_stderr
 
-    rendered = StderrFormatter().format_findings(context.result.findings)
+    cli_main = importlib.import_module("kproj.cli.main")
+    err_buffer = io.StringIO()
+    with redirect_stderr(err_buffer):
+        cli_main._render_result_to_stderr(context.result, verbose_level=0, debug=False)
+    rendered = err_buffer.getvalue()
     assert "Note: Project is not a Git repository" in rendered
 
 
