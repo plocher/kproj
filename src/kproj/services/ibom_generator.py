@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import html
 import os
-import re
 import tempfile
 import time
 import xml.etree.ElementTree as ElementTree
@@ -70,167 +69,105 @@ _TRUE_DNP_MARKERS: frozenset[str] = frozenset({"1", "true", "yes", "y", "dnp"})
 _IBOM_DEFAULT_LAYER_VIEW = "F"
 """Preferred initial PCB layer view for generated iBOM pages."""
 
-_IBOM_DEFAULT_HIDDEN_COLUMNS = (
-    'if (hcols === null) {\n    hcols = ["checkboxes", "Footprint"];\n  }'
-)
-"""JS snippet used to hide checkboxes + footprint columns by default."""
-_IBOM_VIS_MENU_STYLE_ANCHOR = (
-    "#vismenu-content {\n  left: 0px;\n  font-family: Verdana, sans-serif;\n}\n"
-)
-_IBOM_VIS_MENU_STYLE_REPLACEMENT = (
-    "#vismenu-content {\n"
-    "  left: 0px;\n"
-    "  font-family: Verdana, sans-serif;\n"
-    "  max-height: 70vh;\n"
-    "  overflow-y: auto;\n"
-    "  z-index: 4000;\n"
-    "}\n"
-    ".bom thead {\n"
-    "  position: relative;\n"
-    "  z-index: 1200;\n"
-    "}\n"
-    ".bom tbody {\n"
-    "  position: relative;\n"
-    "  z-index: 1;\n"
-    "}\n"
-)
-"""Ensures the visibility dropdown renders above BOM body rows in Safari."""
-_IBOM_HIDDEN_COLUMNS_SANITY_ANCHOR = (
-    "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));\n"
-)
-_IBOM_HIDDEN_COLUMNS_SANITY_REPLACEMENT = (
-    "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));\n"
-    '  var nonUtilityFields = fields.filter(e => e !== "checkboxes" && e !== "Quantity");\n'
-    "  var visibleNonUtility = nonUtilityFields.filter(e => !settings.hiddenColumns.includes(e));\n"
-    "  if (nonUtilityFields.length > 0 && visibleNonUtility.length === 0) {\n"
-    '    settings.hiddenColumns = ["checkboxes", "Footprint"].filter(e => fields.includes(e));\n'
-    "  }\n"
-)
-"""Injects a guard so stale storage cannot hide every meaningful BOM column."""
-
-_IBOM_COLUMN_ORDER_SANITY_ANCHOR = "  settings.columnOrder = cord;\n"
-_IBOM_COLUMN_ORDER_SANITY_REPLACEMENT = (
-    "  var orderedNonUtility = cord.filter(e => nonUtilityFields.includes(e));\n"
-    "  if (nonUtilityFields.length > 0 && orderedNonUtility.length === 0) {\n"
-    "    cord = fields;\n"
-    "  }\n"
-    "  settings.columnOrder = cord;\n"
-)
-"""Injects a guard so stale storage cannot collapse menu order to checkboxes-only."""
-
-_IBOM_RENAME_REFERENCES_LABEL = "References"
-_IBOM_REFERENCE_LABEL = "Ref"
-_IBOM_BOM_LAYOUT_TOKEN = "table-layout: fixed;"
-_IBOM_BOM_LAYOUT_OVERRIDE = "table-layout: auto;"
-
-_IBOM_BOM_CELL_STYLE_ANCHOR = (
-    ".bom th,\n"
-    ".bom td {\n"
-    "  border: 1px solid black;\n"
-    "  padding: 5px;\n"
-    "  word-wrap: break-word;\n"
-    "  text-align: center;\n"
-    "  position: relative;\n"
-    "}\n"
-)
-_IBOM_COLUMN_WIDTH_RULES = (
-    "\n"
-    ".bom th.numCol {\n"
-    "  width: 3.2ch;\n"
-    "  min-width: 3.2ch;\n"
-    "  max-width: 4.4ch;\n"
-    "  white-space: nowrap;\n"
-    "}\n"
-    '.bom th[col_name="Ref"] {\n'
-    "  width: 8.5ch;\n"
-    "  min-width: 7.2ch;\n"
-    "  max-width: 11ch;\n"
-    "}\n"
-    '.bom th[col_name="Value"] {\n'
-    "  width: 11ch;\n"
-    "  min-width: 9ch;\n"
-    "  max-width: 15ch;\n"
-    "}\n"
-    '.bom th[col_name="Details"] {\n'
-    "  width: 20ch;\n"
-    "  min-width: 16ch;\n"
-    "  max-width: 28ch;\n"
-    "}\n"
-    '.bom th[col_name="Description"] {\n'
-    "  width: auto;\n"
-    "}\n"
-)
-
-_IBOM_COLUMN_WIDTH_HELPER_ANCHOR = (
-    "function populateBomHeader(placeHolderColumn = null, placeHolderElements = null) {"
-)
-_IBOM_COLUMN_WIDTH_HELPER = """function applySpcoastBomColumnWidths() {
-  if (!bomhead || !bomhead.firstChild) {
-    return;
-  }
-  var headerRow = bomhead.firstChild;
-  var columnSpecs = {
-    "__rownum__": { width: "3.2ch", maxWidth: "4.4ch", whiteSpace: "nowrap" },
-    "Ref": { width: "8.5ch", maxWidth: "11ch" },
-    "Value": { width: "11ch", maxWidth: "15ch" },
-    "Details": { width: "20ch", maxWidth: "28ch" },
-  };
-  for (var i = 0; i < headerRow.childNodes.length; i++) {
-    var th = headerRow.childNodes[i];
-    if (!th || th.nodeName !== "TH") {
-      continue;
-    }
-    var key = th.classList.contains("numCol") ? "__rownum__" : th.getAttribute("col_name");
-    var spec = columnSpecs[key];
-    if (!spec) {
-      continue;
-    }
-    th.style.width = spec.width;
-    th.style.maxWidth = spec.maxWidth;
-    if (spec.whiteSpace) {
-      th.style.whiteSpace = spec.whiteSpace;
-    }
-  }
-  if (!bom || !bom.childNodes) {
-    return;
-  }
-  for (var r = 0; r < bom.childNodes.length; r++) {
-    var row = bom.childNodes[r];
-    for (var c = 0; c < row.childNodes.length; c++) {
-      var td = row.childNodes[c];
-      var header = headerRow.childNodes[c];
-      if (!td || td.nodeName !== "TD" || !header || header.nodeName !== "TH") {
-        continue;
-      }
-      var headerKey = header.classList.contains("numCol")
-        ? "__rownum__"
-        : header.getAttribute("col_name");
-      var headerSpec = columnSpecs[headerKey];
-      if (!headerSpec) {
-        continue;
-      }
-      td.style.width = headerSpec.width;
-      td.style.maxWidth = headerSpec.maxWidth;
-      if (headerSpec.whiteSpace) {
-        td.style.whiteSpace = headerSpec.whiteSpace;
-      }
-    }
-  }
+_IBOM_USER_CSS = """/* Managed by kproj -- regenerated on every publish. Do not hand-edit.
+ * See src/kproj/services/ibom_generator.py (_write_ibom_user_files).
+ *
+ * Uses iBOM's supported user.css customization hook
+ * (https://github.com/openscopeproject/InteractiveHtmlBom/wiki/Customization).
+ * This stylesheet is appended after iBOM's built-in CSS in the same
+ * <style> block, so same-specificity selectors here win by source
+ * order alone -- no anchor matching against iBOM's own CSS text.
+ */
+.bom {
+  table-layout: auto;
 }
-
+.bom th[col_name="References"] {
+  width: 8.5ch;
+  min-width: 7.2ch;
+  max-width: 11ch;
+}
+.bom th[col_name="Value"] {
+  width: 11ch;
+  min-width: 9ch;
+  max-width: 15ch;
+}
+.bom th[col_name="Details"] {
+  width: 20ch;
+  min-width: 16ch;
+  max-width: 28ch;
+}
+.bom th[col_name="Description"] {
+  width: auto;
+}
+/* th.numCol hosts the column-visibility menu button/dropdown
+ * (#vismenu / #vismenu-content). It is intentionally left
+ * unconstrained here: forcing it narrow previously corrupted that
+ * dropdown's own sizing and serves no layout purpose. */
+#vismenu-content {
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: 4000;
+}
+.bom thead {
+  position: relative;
+  z-index: 1200;
+}
+.bom tbody {
+  position: relative;
+  z-index: 1;
+}
 """
-_IBOM_BOM_HEADER_APPEND_ANCHOR = "  bomhead.appendChild(tr);\n}"
-_IBOM_BOM_HEADER_APPEND_REPLACEMENT = (
-    "  bomhead.appendChild(tr);\n  applySpcoastBomColumnWidths();\n}"
-)
-_IBOM_BOM_BODY_EVENT_ANCHOR = (
-    "  EventHandler.emitEvent(\n    IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, {"
-)
-_IBOM_BOM_BODY_EVENT_REPLACEMENT = (
-    "  applySpcoastBomColumnWidths();\n"
-    "  EventHandler.emitEvent(\n"
-    "    IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, {"
-)
+"""Content written to iBOM's ``web/user.css`` customization file."""
+
+_IBOM_USER_JS = """// Managed by kproj -- regenerated on every publish. Do not hand-edit.
+// See src/kproj/services/ibom_generator.py (_write_ibom_user_files).
+//
+// Uses iBOM's supported user.js customization hook
+// (https://github.com/openscopeproject/InteractiveHtmlBom/wiki/Customization)
+// instead of patching iBOM's own generated/bundled HTML, CSS, or JS.
+
+(function seedSpcoastDefaultHiddenColumns() {
+  // Seed a first-visit default (only when the visitor has no saved
+  // preference yet) using iBOM's own storage-key convention (see
+  // util.js: `storagePrefix` + readStorage/writeStorage), so that
+  // initDefaults() reads it exactly as if a visitor had chosen it via
+  // the UI once. This runs at parse time, before iBOM's own
+  // window.onload calls initStorage()/initDefaults(), so `storage`
+  // (iBOM's own abstraction) isn't set up yet; we talk to
+  // window.localStorage directly instead, using the same prefix.
+  try {
+    var key = storagePrefix + "hiddenColumns";
+    if (window.localStorage.getItem(key) === null) {
+      window.localStorage.setItem(key, JSON.stringify(["checkboxes", "Footprint"]));
+    }
+  } catch (e) {
+    // localStorage unavailable (e.g. private browsing); iBOM's own
+    // built-in default (nothing hidden) takes over silently.
+  }
+})();
+
+window.addEventListener("load", function spcoastRelabelReferences() {
+  // Cosmetically relabel "References" to "Ref" in the rendered UI by
+  // editing rendered text nodes rather than iBOM's source. The
+  // internal field name ("References", used in storage keys and
+  // col_name attributes) stays untouched so iBOM's own column
+  // matching / drag-reorder keeps working unmodified.
+  function relabel(el) {
+    if (!el) {
+      return;
+    }
+    Array.from(el.childNodes).forEach(function (node) {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.includes("References")) {
+        node.textContent = node.textContent.replace("References", "Ref");
+      }
+    });
+  }
+  var referencesCheckbox = document.getElementById("referencesCheckbox");
+  relabel(referencesCheckbox && referencesCheckbox.parentElement);
+  relabel(document.querySelector('th[col_name="References"]'));
+});
+"""
+"""Content written to iBOM's ``web/user.js`` customization file."""
 
 
 class IbomGenerator:
@@ -316,6 +253,8 @@ class IbomGenerator:
             # restores the prior bytes via git checkout.
             journal.register_output(output_file)
 
+        _write_ibom_user_files(self._ibom_script)
+
         with tempfile.TemporaryDirectory(prefix="kproj-ibom-") as staging:
             staging_dir = Path(staging)
             extra_data_file = pcb_path
@@ -366,7 +305,6 @@ class IbomGenerator:
                     f"iBOM exited 0 but produced no HTML at {produced}; "
                     f"check the iBOM script ({self._ibom_script}) is the one shipped by PCM."
                 )
-            _customize_ibom_html_defaults(produced)
             os.replace(produced, output_file)
 
         return ExportResult(
@@ -376,69 +314,32 @@ class IbomGenerator:
         )
 
 
-def _customize_ibom_html_defaults(output_path: Path) -> None:
-    """Apply SPCoast iBOM UI defaults in the generated HTML payload."""
-    text = output_path.read_text(encoding="utf-8")
+def _write_ibom_user_files(ibom_script: Path) -> None:
+    """Write kproj's ``user.css``/``user.js`` into iBOM's own ``web/`` dir.
 
-    updated = text.replace(
-        f'"{_IBOM_RENAME_REFERENCES_LABEL}"',
-        f'"{_IBOM_REFERENCE_LABEL}"',
-    )
-    updated = re.sub(
-        r'(id="referencesCheckbox"[^>]*>\s*)References(\s*</label>)',
-        rf"\1{_IBOM_REFERENCE_LABEL}\2",
-        updated,
-        count=1,
-    )
-    updated = updated.replace(
-        "if (hcols === null) {\n    hcols = [];\n  }",
-        _IBOM_DEFAULT_HIDDEN_COLUMNS,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_HIDDEN_COLUMNS_SANITY_ANCHOR,
-        _IBOM_HIDDEN_COLUMNS_SANITY_REPLACEMENT,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_COLUMN_ORDER_SANITY_ANCHOR,
-        _IBOM_COLUMN_ORDER_SANITY_REPLACEMENT,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_BOM_LAYOUT_TOKEN,
-        _IBOM_BOM_LAYOUT_OVERRIDE,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_BOM_CELL_STYLE_ANCHOR,
-        _IBOM_BOM_CELL_STYLE_ANCHOR + _IBOM_COLUMN_WIDTH_RULES,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_VIS_MENU_STYLE_ANCHOR,
-        _IBOM_VIS_MENU_STYLE_REPLACEMENT,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_COLUMN_WIDTH_HELPER_ANCHOR,
-        _IBOM_COLUMN_WIDTH_HELPER + _IBOM_COLUMN_WIDTH_HELPER_ANCHOR,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_BOM_HEADER_APPEND_ANCHOR,
-        _IBOM_BOM_HEADER_APPEND_REPLACEMENT,
-        1,
-    )
-    updated = updated.replace(
-        _IBOM_BOM_BODY_EVENT_ANCHOR,
-        _IBOM_BOM_BODY_EVENT_REPLACEMENT,
-        1,
-    )
+    iBOM reads ``user.css`` / ``user.js`` (and ``userheader.html`` /
+    ``userfooter.html``, unused here) from ``<install-root>/web/`` and
+    embeds them into every generated page via its own
+    ``///USERCSS///`` / ``///USERJS///`` placeholders
+    (``InteractiveHtmlBom/core/ibom.py::generate_file``). This is
+    iBOM's documented customization surface -- see
+    https://github.com/openscopeproject/InteractiveHtmlBom/wiki/Customization.
+    Writing here means SPCoast's UI defaults ride iBOM's own supported
+    extension point instead of splicing text into iBOM's generated
+    output after the fact.
 
-    if updated == text:
-        return
-    output_path.write_text(updated, encoding="utf-8")
+    Idempotent: overwrites both files unconditionally on every call,
+    so a Plugin and Content Manager reinstall that wipes ``web/``
+    self-heals on the next :meth:`IbomGenerator.generate` call.
+
+    Args:
+        ibom_script: Path to ``generate_interactive_bom.py``. iBOM's
+            ``web/`` directory is always a sibling of this script.
+    """
+    web_dir = ibom_script.parent / "web"
+    web_dir.mkdir(parents=True, exist_ok=True)
+    (web_dir / "user.css").write_text(_IBOM_USER_CSS, encoding="utf-8")
+    (web_dir / "user.js").write_text(_IBOM_USER_JS, encoding="utf-8")
 
 
 def _normalize_field_name(field: str) -> str:
