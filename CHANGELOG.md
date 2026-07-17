@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.10.4 (2026-07-17)
+
+### Bug Fixes
+
+* fix: keep ibom visibility menu above bom rows ([`37687e8`](https://github.com/plocher/kproj/commit/37687e816a5ff13024e64b3d8ec6d8a16a51c480))
+
+
 ## v0.10.3 (2026-07-17)
 
 ### Bug Fixes
