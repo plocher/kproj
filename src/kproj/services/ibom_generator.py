@@ -74,6 +74,27 @@ _IBOM_DEFAULT_HIDDEN_COLUMNS = (
     'if (hcols === null) {\n    hcols = ["checkboxes", "Footprint"];\n  }'
 )
 """JS snippet used to hide checkboxes + footprint columns by default."""
+_IBOM_VIS_MENU_STYLE_ANCHOR = (
+    "#vismenu-content {\n  left: 0px;\n  font-family: Verdana, sans-serif;\n}\n"
+)
+_IBOM_VIS_MENU_STYLE_REPLACEMENT = (
+    "#vismenu-content {\n"
+    "  left: 0px;\n"
+    "  font-family: Verdana, sans-serif;\n"
+    "  max-height: 70vh;\n"
+    "  overflow-y: auto;\n"
+    "  z-index: 4000;\n"
+    "}\n"
+    ".bom thead {\n"
+    "  position: relative;\n"
+    "  z-index: 1200;\n"
+    "}\n"
+    ".bom tbody {\n"
+    "  position: relative;\n"
+    "  z-index: 1;\n"
+    "}\n"
+)
+"""Ensures the visibility dropdown renders above BOM body rows in Safari."""
 _IBOM_HIDDEN_COLUMNS_SANITY_ANCHOR = (
     "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));\n"
 )
@@ -392,6 +413,11 @@ def _customize_ibom_html_defaults(output_path: Path) -> None:
     updated = updated.replace(
         _IBOM_BOM_CELL_STYLE_ANCHOR,
         _IBOM_BOM_CELL_STYLE_ANCHOR + _IBOM_COLUMN_WIDTH_RULES,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_VIS_MENU_STYLE_ANCHOR,
+        _IBOM_VIS_MENU_STYLE_REPLACEMENT,
         1,
     )
     updated = updated.replace(
