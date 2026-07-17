@@ -74,6 +74,28 @@ _IBOM_DEFAULT_HIDDEN_COLUMNS = (
     'if (hcols === null) {\n    hcols = ["checkboxes", "Footprint"];\n  }'
 )
 """JS snippet used to hide checkboxes + footprint columns by default."""
+_IBOM_HIDDEN_COLUMNS_SANITY_ANCHOR = (
+    "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));\n"
+)
+_IBOM_HIDDEN_COLUMNS_SANITY_REPLACEMENT = (
+    "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));\n"
+    '  var nonUtilityFields = fields.filter(e => e !== "checkboxes" && e !== "Quantity");\n'
+    "  var visibleNonUtility = nonUtilityFields.filter(e => !settings.hiddenColumns.includes(e));\n"
+    "  if (nonUtilityFields.length > 0 && visibleNonUtility.length === 0) {\n"
+    '    settings.hiddenColumns = ["checkboxes", "Footprint"].filter(e => fields.includes(e));\n'
+    "  }\n"
+)
+"""Injects a guard so stale storage cannot hide every meaningful BOM column."""
+
+_IBOM_COLUMN_ORDER_SANITY_ANCHOR = "  settings.columnOrder = cord;\n"
+_IBOM_COLUMN_ORDER_SANITY_REPLACEMENT = (
+    "  var orderedNonUtility = cord.filter(e => nonUtilityFields.includes(e));\n"
+    "  if (nonUtilityFields.length > 0 && orderedNonUtility.length === 0) {\n"
+    "    cord = fields;\n"
+    "  }\n"
+    "  settings.columnOrder = cord;\n"
+)
+"""Injects a guard so stale storage cannot collapse menu order to checkboxes-only."""
 
 _IBOM_RENAME_REFERENCES_LABEL = "References"
 _IBOM_REFERENCE_LABEL = "Ref"
@@ -350,6 +372,16 @@ def _customize_ibom_html_defaults(output_path: Path) -> None:
     updated = updated.replace(
         "if (hcols === null) {\n    hcols = [];\n  }",
         _IBOM_DEFAULT_HIDDEN_COLUMNS,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_HIDDEN_COLUMNS_SANITY_ANCHOR,
+        _IBOM_HIDDEN_COLUMNS_SANITY_REPLACEMENT,
+        1,
+    )
+    updated = updated.replace(
+        _IBOM_COLUMN_ORDER_SANITY_ANCHOR,
+        _IBOM_COLUMN_ORDER_SANITY_REPLACEMENT,
         1,
     )
     updated = updated.replace(

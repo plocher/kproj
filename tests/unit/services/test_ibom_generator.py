@@ -362,6 +362,16 @@ def test_customize_ibom_html_defaults_applies_spcoast_ui_defaults(tmp_path: Path
                 "if (hcols === null) {",
                 "    hcols = [];",
                 "  }",
+                "  settings.hiddenColumns = hcols.filter(e => fields.includes(e));",
+                '  var cord = JSON.parse(readStorage("columnOrder"));',
+                "  if (cord === null) {",
+                "    cord = fields;",
+                "  } else {",
+                "    cord = cord.filter(e => fields.includes(e));",
+                "    if (cord.length != fields.length)",
+                "      cord = fields;",
+                "  }",
+                "  settings.columnOrder = cord;",
                 '<label class="menu-label">References',
                 "function populateBomHeader(placeHolderColumn = null, placeHolderElements = null) {",
                 "  bomhead.appendChild(tr);",
@@ -382,6 +392,17 @@ def test_customize_ibom_html_defaults_applies_spcoast_ui_defaults(tmp_path: Path
     assert '"Ref"' in updated
     assert 'hcols = ["checkboxes", "Footprint"];' in updated
     assert ">Ref" in updated
+    assert (
+        "var visibleNonUtility = nonUtilityFields.filter(e => !settings.hiddenColumns.includes(e));"
+        in updated
+    )
+    assert (
+        'settings.hiddenColumns = ["checkboxes", "Footprint"].filter(e => fields.includes(e));'
+        in updated
+    )
+    assert "var orderedNonUtility = cord.filter(e => nonUtilityFields.includes(e));" in updated
+    assert "if (nonUtilityFields.length > 0 && orderedNonUtility.length === 0) {" in updated
+    assert "cord = fields;" in updated
     assert "table-layout: auto;" in updated
     assert '.bom th[col_name="Details"] {' in updated
     assert "function applySpcoastBomColumnWidths()" in updated
