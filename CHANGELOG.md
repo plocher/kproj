@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.10.2 (2026-07-17)
+
+### Bug Fixes
+
+* fix(cli): surface github-link advisory in compact stderr ([`ac01441`](https://github.com/plocher/kproj/commit/ac014417880675f16da117ff01e32f3666d379c8))
+
+
 ## v0.10.1 (2026-07-17)
 
 ### Bug Fixes
