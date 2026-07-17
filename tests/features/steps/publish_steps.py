@@ -483,6 +483,7 @@ def step_when_run_kproj_verbose(context: Any) -> None:
     import importlib
     import io
     from contextlib import redirect_stderr
+
     workflow = _build_workflow(context)
     request = _build_request(context)
     # verbose_level=1 emulates `kproj -v <path>`.
