@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## v0.10.3 (2026-07-17)
+
+### Bug Fixes
+
+* fix: recover ibom field menu from stale storage states ([`29abedd`](https://github.com/plocher/kproj/commit/29abedd129452e22a2e2dfa636d08217c77dd35f))
+
+
 ## v0.10.2 (2026-07-17)
 
 ### Bug Fixes
