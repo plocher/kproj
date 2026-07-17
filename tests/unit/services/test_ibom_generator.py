@@ -382,6 +382,11 @@ def test_generate_writes_ibom_user_css_and_js_next_to_web_dir(
     assert '["checkboxes", "Footprint"]' in user_js
     assert "referencesCheckbox" in user_js
     assert 'th[col_name="References"]' in user_js
+    # Relabeling must survive re-renders (drag-reorder, mode changes),
+    # so it rides the documented event hook, not a one-time load listener.
+    assert "EventHandler.registerCallback(IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT" in user_js
+    assert 'window.addEventListener("load"' not in user_js
+    assert "vismenu-content" in user_js
 
 
 def test_generate_overwrites_ibom_user_files_idempotently(

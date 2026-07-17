@@ -146,13 +146,18 @@ _IBOM_USER_JS = """// Managed by kproj -- regenerated on every publish. Do not h
   }
 })();
 
-window.addEventListener("load", function spcoastRelabelReferences() {
-  // Cosmetically relabel "References" to "Ref" in the rendered UI by
-  // editing rendered text nodes rather than iBOM's source. The
-  // internal field name ("References", used in storage keys and
-  // col_name attributes) stays untouched so iBOM's own column
-  // matching / drag-reorder keeps working unmodified.
-  function relabel(el) {
+// Cosmetically relabel "References" to "Ref" in the rendered UI by
+// editing rendered text nodes rather than iBOM's source. The internal
+// field name ("References", used in storage keys and col_name
+// attributes) stays untouched so iBOM's own column matching /
+// drag-reorder keeps working unmodified. Registered on the documented
+// BOM_BODY_CHANGE_EVENT hook (fires on initial render and every
+// subsequent re-render: drag-reorder, mode change, etc.) rather than a
+// one-time window.onload listener, so the column header and the
+// vismenu dropdown's own list item both stay relabeled across
+// re-renders, not just the first paint.
+EventHandler.registerCallback(IBOM_EVENT_TYPES.BOM_BODY_CHANGE_EVENT, function spcoastRelabelReferences() {
+  function relabelChildren(el) {
     if (!el) {
       return;
     }
@@ -163,8 +168,12 @@ window.addEventListener("load", function spcoastRelabelReferences() {
     });
   }
   var referencesCheckbox = document.getElementById("referencesCheckbox");
-  relabel(referencesCheckbox && referencesCheckbox.parentElement);
-  relabel(document.querySelector('th[col_name="References"]'));
+  relabelChildren(referencesCheckbox && referencesCheckbox.parentElement);
+  relabelChildren(document.querySelector('th[col_name="References"]'));
+  var vismenuContent = document.getElementById("vismenu-content");
+  if (vismenuContent) {
+    Array.from(vismenuContent.querySelectorAll("label")).forEach(relabelChildren);
+  }
 });
 """
 """Content written to iBOM's ``web/user.js`` customization file."""
