@@ -1,6 +1,6 @@
 [project]
 name = "kproj"
-version = "0.10.5"
+version = "0.11.0"
 description = "KiCad project publisher for the SPCoast Hugo site"
 readme = "README.md"
 requires-python = ">=3.10"

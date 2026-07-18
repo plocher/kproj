@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v0.11.0 (2026-07-18)
+
+### Features
+
+* feat: add publish provenance tracking and --watermark flag
+
+RCA follow-up from the iBOM dropdown regression (toolchain-version
+mismatch between a dev/editable kproj checkout and a released
+install, silently overwriting each other's output with no way to
+tell which produced what):
+
+- kproj.common.install_info: detects release vs. editable install
+  (PEP 660 direct_url.json) + kproj's own version, and formats a
+  single canonical provenance string reused by every surfacing site.
+- -v now prints an Info: kproj <version> (<type>) banner at the
+  start of every publish, before anything else runs.
+- New --watermark TAG flag: stamped into the generated iBOM page
+  (a header comment plus a hover tooltip on iBOM's own credit line,
+  since the standalone .ibom.html is also a downloadable artifact in
+  its own right), the Hugo front-matter kproj_publish_context, and
+  the site-repo commit message trailer - so dev/test publishes are
+  unmistakably distinct from production ones.
+- kproj_publish_context schema bumped 1 -> 2 to carry
+  kproj_install_type + watermark; legacy schema-1 pages regenerate
+  once on their next publish. A watermark change forces
+  regeneration like any other context change - write_ibom_user_files
+  refreshes the shared web/user.css+js on every publish regardless
+  of needs_regen, but the actual .ibom.html artifact only regenerates
+  when needs_regen is true, so excluding watermark from drift
+  detection would let a 'skip' outcome leave a stale watermark baked
+  into the on-disk page.
+- write_ibom_user_files (services/ibom_generator.py) is now called
+  directly from PublishWorkflow.run rather than from
+  IbomGenerator.generate(), so it can carry this run's install info
+  + watermark without widening the injected ArtifactGeneratorCallable
+  signature (and its ~8 test fakes) for a value only two provenance
+  call sites need.
+- New ADR 0011 documents the prior user.css/user.js migration's
+  shared-global-state tradeoff and an upstream-PR-vs-fork escalation
+  policy for future iBOM customization needs.
+- WARP.md documents the pyenv shim/.python-version resolution hazard
+  that caused the original toolchain-mismatch confusion, and the
+  --watermark convention for dev/test publishes. ([`2220d90`](https://github.com/plocher/kproj/commit/2220d90ec5e95b09cd1a9cf58ccb836015d785df))
+
+
 ## v0.10.5 (2026-07-17)
 
 ### Bug Fixes
