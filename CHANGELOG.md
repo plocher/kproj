@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v0.12.0 (2026-07-29)
+
+### Bug Fixes
+
+* fix(output): update verbose.feature + step to new -v semantics; restore audit findings in end-of-run block
+
+-v now shows per-finding rows for audit (non-DRC/ERC) findings at end-of-run
+via _render_result_to_stderr, not just the compact advisory subset.  DRC/ERC
+are still shown inline by the workflow and skipped in the end-of-run block.
+
+- verbose.feature: rewrite scenario to expect per-finding detail, not compact
+- publish_steps.py: replace 'compact findings summary' step with 'findings
+  detail and a summary'; assert audit field names ARE visible on verbose stderr
+- cli/main.py: restore non_design findings output under verbose_level >= 1
+- test_cli.py: update unit test to assert audit finding IS shown, DRC is not ([`0b5b412`](https://github.com/plocher/kproj/commit/0b5b412c52592793bc335867e3d03881bcbc0c59))
+
+### Features
+
+* feat(output): rework -v/-d display; shell-transcript exec log; inline DRC/ERC findings
+
+- brew upgrade fontconfig 2.18.0 -> 2.18.2 (fixes xsi:nil Fontconfig warnings at source)
+- subprocess_runner: replace kproj [INFO/DEBUG] exec syslog with shell-transcript
+  format (√  % <argv> / ?N % <argv>) activated by -d; add _filter_known_stderr_noise()
+  to strip residual Fontconfig warning lines as belt-and-suspenders
+- logging_setup: drop kproj [LEVEL] bracket prefix from log format (%(message)s)
+- publish_workflow: add _print_design_findings_inline(); call with -v to show DRC/ERC
+  findings grouped by source right after design analysis, before end-of-run summary
+- cli/main: _render_result_to_stderr now skips DRC/ERC at end when -v (already shown
+  inline); updates hint text from 'run with -d' to 'run with -v'
+- tests: 9 new tests for _filter_known_stderr_noise and debug log format; update
+  cli test to reflect new -v semantics (audit shown, DRC skipped at end of run) ([`a40bda6`](https://github.com/plocher/kproj/commit/a40bda6292965554cdd5192e0ccc197bfd6b270b))
+
+
 ## v0.11.0 (2026-07-18)
 
 ### Features
