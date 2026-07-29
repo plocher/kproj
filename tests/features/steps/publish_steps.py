@@ -780,9 +780,17 @@ def step_then_no_git_commit_invoked(context: Any) -> None:
     assert not commits, f"expected no git commit; got {commits!r}"
 
 
-@then("stderr reports a compact findings summary")
-def step_then_stderr_reports_compact_summary(context: Any) -> None:
-    """Assert verbose stderr contains aggregate findings context, not finding rows."""
+@then("stderr reports findings detail and a summary")
+def step_then_stderr_reports_findings_detail(context: Any) -> None:
+    """Assert verbose stderr shows per-finding rows and a summary line.
+
+    With ``-v`` (``verbose_level >= 1``):
+    - DRC/ERC findings are printed inline by the workflow before this
+      function is called (exercised separately in unit tests).
+    - Non-design (audit) findings are emitted by ``_render_result_to_stderr``
+      as one-line rows with field names visible.
+    - The ``Note: Collected`` aggregate summary is always present.
+    """
     stderr_text = getattr(context, "stderr", "") or ""
     finding_fields = {f.field for f in context.result.findings}
     assert finding_fields, (
@@ -790,8 +798,12 @@ def step_then_stderr_reports_compact_summary(context: Any) -> None:
         f"got findings={finding_fields}"
     )
     assert "Note: Collected" in stderr_text, (
-        f"expected compact findings summary on stderr; got stderr={stderr_text!r}"
+        f"expected findings summary on stderr; got stderr={stderr_text!r}"
     )
-    assert not any(name in stderr_text for name in finding_fields), (
-        f"expected no per-finding names on verbose stderr; got stderr={stderr_text!r}"
+    audit_fields = {
+        f.field for f in context.result.findings if f.source.lower() not in {"drc", "erc"}
+    }
+    assert any(name in stderr_text for name in audit_fields), (
+        f"expected at least one audit field name on verbose stderr; "
+        f"audit_fields={audit_fields!r} stderr={stderr_text!r}"
     )
