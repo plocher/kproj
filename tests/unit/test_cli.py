@@ -595,8 +595,8 @@ def test_main_verbose_flag_shows_audit_findings_and_skips_drc_in_end_block(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """``-v`` shows audit findings at end-of-run; DRC/ERC are skipped there
-    (they are displayed inline by the workflow before ``_render_result_to_stderr``).
+    """``-v`` emits per-finding rows for audit findings at end-of-run; DRC/ERC
+    are skipped there because the workflow shows them inline before this point.
     """
     findings = (
         Finding(
@@ -632,11 +632,11 @@ def test_main_verbose_flag_shows_audit_findings_and_skips_drc_in_end_block(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    # Audit finding shown by _render_result_to_stderr with verbose_level >= 1.
+    # Audit finding shown as per-finding row by _render_result_to_stderr.
     assert "warning [comment9_missing]" in captured.err
-    # DRC finding skipped at end-of-run (shown inline by workflow; workflow is stubbed here).
+    # DRC finding skipped at end-of-run (shown inline by workflow; stubbed here).
     assert "error [drc_violation]" not in captured.err
-    # Summary reflects new hint text.
+    # Summary present with updated hint text.
     assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i0; drc e1/w0/x0/i0]." in captured.err
     assert "DRC/ERC violations shown above." in captured.err
 

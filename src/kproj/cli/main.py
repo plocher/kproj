@@ -566,12 +566,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug: bool) -> None:
     """Print compact findings context and the run summary to stderr.
 
-    With ``-v`` (``verbose_level >= 1``): DRC/ERC findings were already
-    printed inline by :func:`~kproj.application.publish_workflow.\n    _print_design_findings_inline`; only non-design (audit/advisory)
-    findings are shown here, plus the summary line.
+    End-of-run output is always compact regardless of verbosity:
+    only selected high-signal advisories (``production_missing``,
+    ``github_link_missing``) are shown as one-liners, plus the
+    ``Note: Collected`` summary line.
 
-    With no flags: compact mode shows only highlighted advisories
-    (``production_missing``, ``github_link_missing``) plus the summary.
+    With ``-v`` (``verbose_level >= 1``), DRC/ERC findings were already
+    shown inline by
+    :func:`~kproj.application.publish_workflow._print_design_findings_inline`
+    before this function is called; the summary hint text reflects that.
 
     ``-d`` controls the exec-transcript display in
     :mod:`kproj.common.subprocess_runner` and has no effect here.
@@ -585,14 +588,15 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
     """
     if result.findings:
         if verbose_level >= 1:
-            # DRC/ERC already shown inline; emit only non-design findings.
+            # -v: DRC/ERC were shown inline by the workflow; emit non-design
+            # findings as per-finding rows so audit details are visible.
             non_design = [f for f in result.findings if f.source.lower() not in {"drc", "erc"}]
             if non_design:
                 rendered = StderrFormatter(verbose_level=1).format_findings(non_design)
                 if rendered:
                     print(rendered, file=sys.stderr)
         else:
-            # Compact mode: surface selected high-signal advisories.
+            # Compact mode: surface only selected high-signal advisories.
             highlighted = _findings_to_highlight_in_compact_stderr(result.findings)
             if highlighted:
                 rendered = StderrFormatter(verbose_level=0).format_findings(highlighted)
