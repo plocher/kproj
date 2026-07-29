@@ -219,7 +219,7 @@ def test_debug_log_emits_failure_code_on_nonzero(
         run(["false"], check=False)
     debug_lines = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
     assert any("?3" in line for line in debug_lines), (
-        f"Expected a \"?3\" line in debug output; got: {debug_lines}"
+        f'Expected a "?3" line in debug output; got: {debug_lines}'
     )
 
 
