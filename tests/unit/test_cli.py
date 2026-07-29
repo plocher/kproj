@@ -638,7 +638,7 @@ def test_main_verbose_flag_shows_audit_findings_and_skips_drc_in_end_block(
     assert "error [drc_violation]" not in captured.err
     # Summary present with updated hint text.
     assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i0; drc e1/w0/x0/i0]." in captured.err
-    assert "DRC/ERC violations shown above." in captured.err
+    assert "Findings shown above." in captured.err
 
 
 def test_main_emits_nothing_extra_when_findings_empty(

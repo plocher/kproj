@@ -282,24 +282,35 @@ def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Se
     goes in :attr:`Finding.source` so the markdown formatter renders
     the Location column from ``value`` and front-matter counts use
     ``source`` rather than overloading ``location_hint``.
+
+    Excluded violations (KiCad GUI "ignored tests" or violations with an
+    ``excluded``/``ignored``/``suppressed`` flag) are **downgraded to
+    Severity.EXCLUSION** rather than dropped entirely.  This keeps them
+    visible in ``-v`` output (labelled ``[exclusion]``) so the user can
+    confirm which violations were suppressed, while ensuring they do not
+    contribute to exit-code 1 or publication blocking per the locked
+    :data:`~kproj.model.publish_result._FINDING_SEVERITIES` contract.
     """
     if not isinstance(violation, dict):
         return ()
     severity_token = str(violation.get("severity", "")).lower()
+    # Excluded violations are downgraded, not dropped: the user intentionally
+    # suppressed them in KiCad, but they should still be visible with -v.
     if _is_excluded_violation(violation, severity_token=severity_token):
-        return ()
-    severity = _SEVERITY_BY_TOKEN.get(severity_token, Severity.WARNING)
+        effective_severity = Severity.EXCLUSION
+    else:
+        effective_severity = _SEVERITY_BY_TOKEN.get(severity_token, Severity.WARNING)
     rule = str(violation.get("type", "unknown"))
     base_reason = str(violation.get("description", "")) or rule
     items = violation.get("items")
     if isinstance(items, list) and items:
         findings: list[Finding] = []
         for item in items:
-            if _is_excluded_item(item):
-                continue
+            # Per-item exclusion flag → also downgrade that item to EXCLUSION.
+            item_severity = Severity.EXCLUSION if _is_excluded_item(item) else effective_severity
             findings.append(
                 Finding(
-                    severity=severity,
+                    severity=item_severity,
                     field=rule,
                     value=_item_location(item),
                     reason=_item_reason(item, base_reason),
@@ -310,7 +321,7 @@ def _findings_from_violation(violation: Any, *, origin: str, project: str) -> Se
         return tuple(findings)
     return (
         Finding(
-            severity=severity,
+            severity=effective_severity,
             field=rule,
             value="",
             reason=base_reason,

@@ -40,7 +40,17 @@ from ..services.kicad_project_reader import KicadProjectReader, ProjectResolutio
 _log = logging.getLogger(__name__)
 
 _DEFAULT_YAML_FILENAME = ".kproj.yaml"
-_COMPACT_VISIBLE_ADVISORY_FIELDS = frozenset({"github_link_missing", "github_link_unpushed"})
+_COMPACT_VISIBLE_ADVISORY_FIELDS = frozenset(
+    {
+        # GitHub-link advisories: project has no repo / unpushed repo.
+        "github_link_missing",
+        "github_link_unpushed",
+        # Production-folder advisories: directly affect what gets published
+        # (fab.zip is omitted when production/ is missing or incomplete).
+        "production_missing",
+        "production_incomplete",
+    }
+)
 
 _CONFIG_EPILOG = """\
 Configuration precedence (highest wins):
@@ -567,9 +577,9 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
     """Print compact findings context and the run summary to stderr.
 
     End-of-run output is always compact regardless of verbosity:
-    only selected high-signal advisories (``production_missing``,
-    ``github_link_missing``) are shown as one-liners, plus the
-    ``Note: Collected`` summary line.
+    only selected high-signal advisories in
+    :data:`_COMPACT_VISIBLE_ADVISORY_FIELDS` are shown as one-liners,
+    plus the ``Note: Collected`` summary line.
 
     With ``-v`` (``verbose_level >= 1``), DRC/ERC findings were already
     shown inline by
@@ -634,9 +644,9 @@ def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: 
 
     counts_text = "; ".join(rendered_buckets) if rendered_buckets else "none"
     details_note = (
-        "DRC/ERC violations shown above."
+        "Findings shown above."
         if verbose_level >= 1
-        else "Detailed finding rows are omitted from stderr; run with -v to see DRC/ERC violations inline."
+        else "Detailed finding rows are omitted from stderr; run with -v to see findings detail."
     )
     return f"Note: Collected {len(findings)} finding(s) [{counts_text}]. {details_note}"
 
