@@ -597,6 +597,7 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
             call-site compatibility).
     """
     if result.findings:
+        active = [f for f in result.findings if f.severity != Severity.EXCLUSION]
         if verbose_level >= 1:
             # -v: DRC/ERC were shown inline by the workflow; emit non-design
             # findings as per-finding rows so audit details are visible.
@@ -605,6 +606,11 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
                 rendered = StderrFormatter(verbose_level=1).format_findings(non_design)
                 if rendered:
                     print(rendered, file=sys.stderr)
+            # Always show Note in -v so the user gets a confirmation line.
+            print(
+                _findings_summary_for_stderr(result.findings, verbose_level=verbose_level),
+                file=sys.stderr,
+            )
         else:
             # Compact mode: surface only selected high-signal advisories.
             highlighted = _findings_to_highlight_in_compact_stderr(result.findings)
@@ -612,10 +618,15 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
                 rendered = StderrFormatter(verbose_level=0).format_findings(highlighted)
                 if rendered:
                     print(rendered, file=sys.stderr)
-        print(
-            _findings_summary_for_stderr(result.findings, verbose_level=verbose_level),
-            file=sys.stderr,
-        )
+            # Only print the Note line when there are active findings not already
+            # shown by the compact advisory display.  If every active finding was
+            # already surfaced above, the Note line just repeats what was said.
+            hidden_active = [f for f in active if f.field not in _COMPACT_VISIBLE_ADVISORY_FIELDS]
+            if hidden_active or (active and not highlighted):
+                print(
+                    _findings_summary_for_stderr(result.findings, verbose_level=verbose_level),
+                    file=sys.stderr,
+                )
     if result.message:
         print(result.message, file=sys.stderr)
 
@@ -628,7 +639,6 @@ def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: 
     do not inflate the issue count or appear as problems to fix.
     """
     active = [f for f in findings if f.severity != Severity.EXCLUSION]
-    suppressed = [f for f in findings if f.severity == Severity.EXCLUSION]
 
     # Build per-source description of active findings.
     source_counts: dict[str, Counter] = {}
@@ -655,12 +665,6 @@ def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: 
             items.append(f"{n} note{'s' if n > 1 else ''}")
         source_parts.append(f"{bucket}: {', '.join(items)}")
 
-    # Build suppression note.
-    sup_by_source: Counter = Counter()
-    for f in suppressed:
-        sup_by_source[_source_bucket(f.source)] += 1
-    sup_parts = [f"{count} {src}" for src, count in sorted(sup_by_source.items())]
-
     n_active = len(active)
     if n_active > 0:
         issue_word = "issue" if n_active == 1 else "issues"
@@ -669,12 +673,10 @@ def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: 
     else:
         issue_text = "No issues."
 
-    sup_text = f"  {' + '.join(sup_parts)} suppressed." if sup_parts else ""
-
     details_note = (
         "  Findings shown above." if verbose_level >= 1 else "  run with -v to see findings detail."
     )
-    return f"Note: {issue_text}{sup_text}{details_note}"
+    return f"Note: {issue_text}{details_note}"
 
 
 def _findings_to_highlight_in_compact_stderr(findings: Sequence[Finding]) -> tuple[Finding, ...]:
