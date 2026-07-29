@@ -168,7 +168,7 @@ class FabPackager:
                 skipped=True,
             )
         assert bom_path is not None and pos_path is not None  # for type checker
-        _log.info(
+        _log.debug(
             "fab.zip inputs: gerbers=%s bom=%s pos=%s",
             gerber.name,
             bom_path.name,

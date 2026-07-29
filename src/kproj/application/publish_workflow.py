@@ -538,7 +538,7 @@ class PublishWorkflow:
             != _normalize_publish_context(publish_context)
         )
         if publish_context_drift:
-            _log.info(
+            _log.debug(
                 "publish context drift for %s-%s: existing=%s current=%s",
                 project_info.project,
                 project_info.board_rev,
@@ -559,7 +559,7 @@ class PublishWorkflow:
         current_github_url = github_link_detection.url or ""
         github_url_drift = version_file.exists() and existing_github_url != current_github_url
         if github_url_drift:
-            _log.info(
+            _log.debug(
                 "metadata drift for %s-%s: github_url changed from %r to %r",
                 project_info.project,
                 project_info.board_rev,
@@ -576,7 +576,7 @@ class PublishWorkflow:
             decision = "skip (sources unchanged)"
         if not needs_regen and github_url_drift:
             decision = "skip (sources unchanged; metadata drift: github_url changed)"
-        _log.info(
+        _log.debug(
             "artifact regeneration decision for %s-%s: %s",
             project_info.project,
             project_info.board_rev,

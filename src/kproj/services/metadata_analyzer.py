@@ -352,11 +352,10 @@ class MetadataAnalyzer:
                 )
             elif delta > 0:
                 # Zip is older than the PCB but within the tolerance window
-                # (i.e. the happy-path Save/fab timing).  INFO-log the
-                # suppression + numeric delta so ``-v`` still reveals the
-                # timing kproj is trusting; the user can second-guess if
-                # their workflow does not match the happy-path assumption.
-                _log.info(
+                # (i.e. the happy-path Save/fab timing).  DEBUG-log the
+                # suppression + numeric delta so ``-d`` reveals the
+                # timing kproj is trusting when diagnosing staleness.
+                _log.debug(
                     "production_stale suppressed: %s is %.1fs older than %s "
                     "(tolerance %.0fs; happy-path Save/fab timing)",
                     zip_path.name,

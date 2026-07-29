@@ -382,7 +382,7 @@ def test_production_stale_tolerates_happy_path_save_timing(
     can legitimately be a few seconds/minutes newer than the fab zip.
     Only a delta larger than ``_PRODUCTION_STALE_TOLERANCE_SECONDS``
     (5 min) should trigger the warning; below that, the suppression is
-    logged at INFO so ``-v`` reveals the timing kproj is trusting.
+    logged at DEBUG so ``-d`` reveals the timing kproj is trusting.
     """
     import logging as _logging
 
@@ -398,12 +398,12 @@ def test_production_stale_tolerates_happy_path_save_timing(
     os.utime(fresh, (1000, 1000))
     os.utime(pcb, (1060, 1060))
     info = _info()
-    with caplog.at_level(_logging.INFO, logger="kproj.services.metadata_analyzer"):
+    with caplog.at_level(_logging.DEBUG, logger="kproj.services.metadata_analyzer"):
         result = _analyzer(tmp_path).analyze(info, project_dir)
     assert "production_stale" not in _fields(result.findings)
-    # INFO log surfaces the suppression + delta so -v reveals what happened.
+    # DEBUG log surfaces the suppression + delta so -d reveals what happened.
     suppressions = [r for r in caplog.records if "production_stale suppressed" in r.message]
-    assert suppressions, f"expected suppression INFO log; got records={caplog.records!r}"
+    assert suppressions, f"expected suppression DEBUG log; got records={caplog.records!r}"
 
 
 def test_production_stale_boundary_just_under_threshold_is_quiet(tmp_path: Path) -> None:

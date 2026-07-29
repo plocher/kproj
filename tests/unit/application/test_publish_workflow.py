@@ -1248,7 +1248,7 @@ def test_second_publish_refreshes_metadata_when_project_becomes_pushed_github_re
 
     workflow = _full_pipeline_workflow(tmp_path, site, monkeypatch)
     request = _make_full_request(str(proj_dir), fake_cli, site, no_push=True)
-    caplog.set_level(logging.INFO, logger="kproj.application.publish_workflow")
+    caplog.set_level(logging.DEBUG, logger="kproj.application.publish_workflow")
 
     # Initial publish while the project directory is NOT a git repo.
     first = workflow.run(request)
