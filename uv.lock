@@ -150,7 +150,7 @@ provides-extras = ["excel", "numbers", "search", "dev", "all"]
 
 [[package]]
 name = "kproj"
-version = "0.11.0"
+version = "0.12.0"
 source = { editable = "." }
 dependencies = [
     { name = "jbom" },
