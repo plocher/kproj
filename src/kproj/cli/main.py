@@ -586,10 +586,7 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
     if result.findings:
         if verbose_level >= 1:
             # DRC/ERC already shown inline; emit only non-design findings.
-            non_design = [
-                f for f in result.findings
-                if f.source.lower() not in {"drc", "erc"}
-            ]
+            non_design = [f for f in result.findings if f.source.lower() not in {"drc", "erc"}]
             if non_design:
                 rendered = StderrFormatter(verbose_level=1).format_findings(non_design)
                 if rendered:
@@ -609,9 +606,7 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
         print(result.message, file=sys.stderr)
 
 
-def _findings_summary_for_stderr(
-    findings: Sequence[Finding], *, verbose_level: int = 0
-) -> str:
+def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: int = 0) -> str:
     """Return a compact findings summary suitable for stderr output."""
     buckets: dict[str, list[Finding]] = {
         "audit": [],
