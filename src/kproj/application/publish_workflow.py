@@ -373,6 +373,12 @@ class PublishWorkflow:
                 "failed",
                 message=f"Error: Design analysis failed ({exc.origin}): {exc}",
             )
+        # -v: show DRC/ERC findings inline right after analysis so the
+        # user sees them in context without waiting for the end-of-run
+        # summary.  The same findings appear in the final PublishResult
+        # for the summary line; this call is display-only.
+        if request.verbose_level >= 1:
+            _print_design_findings_inline(design_analysis.findings)
         analysis = AnalysisInfo(
             findings=tuple(read_findings) + metadata_analysis.findings + design_analysis.findings
         )
@@ -832,6 +838,46 @@ class PublishWorkflow:
 
 
 # ──────────────────────────── module-level helpers ────────────────────────────
+
+
+_DESIGN_SOURCES: tuple[str, ...] = ("drc", "erc")
+
+
+def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
+    """Print DRC/ERC findings grouped by source to stderr immediately.
+
+    Called from :meth:`PublishWorkflow.run` when ``verbose_level >= 1``
+    (``-v``).  Findings are displayed right after :meth:`DesignAnalyzer.analyze`
+    returns so they appear in context rather than at the end-of-run summary.
+
+    Format per group::
+
+        DRC: 3 violation(s)
+          [warning] copper_to_board_edge: Silkscreen clipped by copper
+          [error]   track_width: Track width too narrow (at pos 42.3, 18.7)
+        ERC: 0 violation(s)
+
+    Args:
+        findings: The findings from :meth:`DesignAnalyzer.analyze` — only
+            entries with ``source in ("drc", "erc")`` are displayed.
+    """
+    by_source: dict[str, list[Finding]] = {src: [] for src in _DESIGN_SOURCES}
+    for finding in findings:
+        src = finding.source.lower()
+        if src in by_source:
+            by_source[src].append(finding)
+    for src in _DESIGN_SOURCES:
+        group = by_source[src]
+        label = src.upper()
+        count = len(group)
+        print(f"{label}: {count} violation(s)", file=sys.stderr)
+        if group:
+            for f in group:
+                sev = f.severity.value.lower()
+                location = f" (at {f.value})" if f.value else ""
+                print(f"  [{sev}] {f.field}: {f.reason}{location}", file=sys.stderr)
+        else:
+            print("  (none)", file=sys.stderr)
 
 
 def _default_datasheet_name_lookup(

@@ -23,9 +23,11 @@ _KPROJ_LOGGER_NAME = "kproj"
 ``kproj`` package is a descendant of this logger and inherits its level +
 handlers when propagation is enabled (the default)."""
 
-_LOG_FORMAT = "kproj [%(levelname)s] %(message)s"
-"""Compact stderr format: level in brackets, then the message.  Matches
-the one-liner shape of :class:`~kproj.formatters.stderr_formatter.StderrFormatter`
+_LOG_FORMAT = "%(message)s"
+"""Bare message format: subprocess lines carry their own √/? prefix;
+other INFO messages emit naturally without the bracket noise.
+Matches the one-liner shape of
+:class:`~kproj.formatters.stderr_formatter.StderrFormatter`
 so mixed output stays scan-friendly."""
 
 _HANDLER_ATTR = "_kproj_stderr_handler"

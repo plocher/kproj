@@ -590,12 +590,14 @@ def test_main_compact_mode_surfaces_github_link_advisory_note(
     assert "Warning: A genuine metadata warning." not in captured.err
 
 
-def test_main_prints_detailed_findings_when_debug_flag_set(
+def test_main_verbose_flag_shows_audit_findings_and_skips_drc_in_end_block(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """Debug mode restores full per-finding stderr rows."""
+    """``-v`` shows audit findings at end-of-run; DRC/ERC are skipped there
+    (they are displayed inline by the workflow before ``_render_result_to_stderr``).
+    """
     findings = (
         Finding(
             severity=Severity.WARNING,
@@ -626,13 +628,17 @@ def test_main_prints_detailed_findings_when_debug_flag_set(
     monkeypatch.delenv("KPROJ_NO_PUSH", raising=False)
     monkeypatch.delenv("KPROJ_KICAD_CLI", raising=False)
 
-    exit_code = cli.main(["publish", "/tmp/proj", "-d"])
+    exit_code = cli.main(["publish", "/tmp/proj", "-v"])
     captured = capsys.readouterr()
 
     assert exit_code == 1
+    # Audit finding shown by _render_result_to_stderr with verbose_level >= 1.
     assert "warning [comment9_missing]" in captured.err
-    assert "error [drc_violation]" in captured.err
+    # DRC finding skipped at end-of-run (shown inline by workflow; workflow is stubbed here).
+    assert "error [drc_violation]" not in captured.err
+    # Summary reflects new hint text.
     assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i0; drc e1/w0/x0/i0]." in captured.err
+    assert "DRC/ERC violations shown above." in captured.err
 
 
 def test_main_emits_nothing_extra_when_findings_empty(
