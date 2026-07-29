@@ -150,11 +150,38 @@ class _RunOptions:
     env: Mapping[str, str] | None = field(default=None)
 
 
+_FONTCONFIG_NOISE_PREFIX = "Fontconfig warning:"
+
+
+def _filter_known_stderr_noise(text: str) -> str:
+    """Strip known-noisy stderr lines that are not actionable.
+
+    Currently filters:
+    - ``Fontconfig warning:`` lines emitted by Qt/KiCad when the system
+      fontconfig conf.d files use ``xsi:nil`` attributes that older
+      fontconfig versions don't recognise.  Upgrading fontconfig via
+      Homebrew (2.18.1+) disables these at source; this filter is
+      belt-and-suspenders for systems that haven't upgraded yet.
+
+    Args:
+        text: Raw stderr text captured from a subprocess.
+
+    Returns:
+        The input with known-noisy lines removed; trailing newline preserved
+        when the input had one.
+    """
+    lines = text.splitlines()
+    filtered = [line for line in lines if not line.startswith(_FONTCONFIG_NOISE_PREFIX)]
+    if not filtered:
+        return ""
+    result = "\n".join(filtered)
+    if text.endswith("\n"):
+        result += "\n"
+    return result
+
+
 def _execute(options: _RunOptions) -> SubprocessResult:
     """Run *options.command* under :func:`subprocess.run` with capture."""
-    # INFO: exec argv on invocation so ``-v`` shows every kicad-cli / iBOM /
-    # git call the workflow issues without needing to modify each caller.
-    _log.info("exec: %s", " ".join(options.command))
     started = time.monotonic()
     try:
         completed = subprocess.run(
@@ -170,17 +197,20 @@ def _execute(options: _RunOptions) -> SubprocessResult:
         raise SubprocessTimeoutError(options.command, options.timeout) from exc
     elapsed = time.monotonic() - started
 
-    # DEBUG: full return + captured streams so ``-d`` reveals what the
-    # subprocess actually did.  INFO callers already saw the argv above;
-    # DEBUG adds returncode + stdout + stderr on completion.
+    # DEBUG (-d): emit one shell-transcript line per subprocess call so
+    # the developer can see exactly what kproj ran and whether it succeeded.
+    # √  % <argv>  (elapsed)  — success
+    # ?N % <argv>  (elapsed)  — failure, N = exit code
+    # Followed by filtered stderr lines indented with "   >> ".
     if _log.isEnabledFor(logging.DEBUG):
-        _log.debug(
-            "exec rc=%d elapsed=%.3fs stdout=%r stderr=%r",
-            completed.returncode,
-            elapsed,
-            completed.stdout or "",
-            completed.stderr or "",
-        )
+        rc = completed.returncode
+        status = "√ " if rc == 0 else f"?{rc}"
+        argv_str = " ".join(options.command)
+        _log.debug("%s  %% %s  (%.3fs)", status, argv_str, elapsed)
+        filtered_stderr = _filter_known_stderr_noise(completed.stderr or "")
+        for line in filtered_stderr.splitlines():
+            if line.strip():
+                _log.debug("   >> %s", line)
 
     if options.check and completed.returncode != 0:
         raise SubprocessFailedError(

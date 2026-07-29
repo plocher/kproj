@@ -21,6 +21,7 @@ from kproj.common.subprocess_runner import (
     SubprocessFailedError,
     SubprocessResult,
     SubprocessTimeoutError,
+    _filter_known_stderr_noise,
     run,
 )
 
@@ -144,3 +145,124 @@ def test_run_passes_cwd_and_env_through(monkeypatch: pytest.MonkeyPatch, tmp_pat
     kwargs = captured["kwargs"]
     assert kwargs["cwd"] == tmp_path  # type: ignore[index]
     assert kwargs["env"] == {"FOO": "bar"}  # type: ignore[index]
+
+
+# ----- _filter_known_stderr_noise -----
+
+
+def test_filter_strips_fontconfig_warning_lines() -> None:
+    """``Fontconfig warning:`` lines are removed; other lines are preserved."""
+    raw = (
+        'Fontconfig warning: "/opt/homebrew/etc/fonts/conf.d/48.conf", line 19: invalid attribute\n'
+        'Fontconfig warning: "/opt/homebrew/etc/fonts/conf.d/49.conf", line 10: invalid constant\n'
+        "Saved ERC Report to /tmp/kproj-erc-xxx/erc.json\n"
+    )
+    result = _filter_known_stderr_noise(raw)
+    assert "Fontconfig warning" not in result
+    assert "Saved ERC Report" in result
+    assert result.endswith("\n")
+
+
+def test_filter_preserves_non_noisy_stderr() -> None:
+    """Stderr without noisy lines passes through unchanged."""
+    raw = "some error from kicad\nanother line\n"
+    assert _filter_known_stderr_noise(raw) == raw
+
+
+def test_filter_empty_input_returns_empty() -> None:
+    """Empty input returns empty string."""
+    assert _filter_known_stderr_noise("") == ""
+
+
+def test_filter_all_noisy_returns_empty() -> None:
+    """When every line is noisy, the result is empty (no trailing newline)."""
+    raw = "Fontconfig warning: bad stuff\nFontconfig warning: more bad stuff\n"
+    assert _filter_known_stderr_noise(raw) == ""
+
+
+# ----- debug log format (-d shell-transcript) -----
+
+
+def test_debug_log_emits_checkmark_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """On success (rc=0), the debug log line starts with ``\u221a ``."""
+    import logging
+
+    monkeypatch.setattr(
+        subprocess_runner.subprocess,
+        "run",
+        _make_fake_run(returncode=0, stdout="ok", stderr=""),
+    )
+    with caplog.at_level(logging.DEBUG, logger="kproj.common.subprocess_runner"):
+        run(["git", "status"])
+    debug_lines = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("\u221a " in line for line in debug_lines), (
+        f"Expected a checkmark line in debug output; got: {debug_lines}"
+    )
+
+
+def test_debug_log_emits_failure_code_on_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """On non-zero return, the debug log line starts with ``?<rc>``."""
+    import logging
+
+    monkeypatch.setattr(
+        subprocess_runner.subprocess,
+        "run",
+        _make_fake_run(returncode=3, stdout="", stderr="oops"),
+    )
+    with caplog.at_level(logging.DEBUG, logger="kproj.common.subprocess_runner"):
+        run(["false"], check=False)
+    debug_lines = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("?3" in line for line in debug_lines), (
+        f"Expected a \"?3\" line in debug output; got: {debug_lines}"
+    )
+
+
+def test_debug_log_shows_filtered_stderr_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-empty, non-noisy stderr lines appear as ``   >> ``-prefixed debug records."""
+    import logging
+
+    monkeypatch.setattr(
+        subprocess_runner.subprocess,
+        "run",
+        _make_fake_run(
+            returncode=0,
+            stderr="Fontconfig warning: noise\nactual error line\n",
+        ),
+    )
+    with caplog.at_level(logging.DEBUG, logger="kproj.common.subprocess_runner"):
+        run(["kicad-cli", "sch", "erc"])
+    debug_lines = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    # Fontconfig line stripped; actual error shown with >> prefix.
+    assert any(">> actual error line" in line for line in debug_lines), (
+        f"Expected '>> actual error line' in debug output; got: {debug_lines}"
+    )
+    assert not any("Fontconfig" in line for line in debug_lines), (
+        "Fontconfig noise should be filtered from debug output"
+    )
+
+
+def test_no_debug_log_without_debug_level(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No exec-transcript lines emitted when logger is at INFO level."""
+    import logging
+
+    monkeypatch.setattr(
+        subprocess_runner.subprocess,
+        "run",
+        _make_fake_run(returncode=0, stdout="hi"),
+    )
+    with caplog.at_level(logging.INFO, logger="kproj.common.subprocess_runner"):
+        run(["echo", "hi"])
+    debug_lines = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    assert not debug_lines, f"Expected no debug lines at INFO level; got: {debug_lines}"

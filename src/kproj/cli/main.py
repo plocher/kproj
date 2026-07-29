@@ -566,35 +566,43 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug: bool) -> None:
     """Print compact findings context and the run summary to stderr.
 
-    Default and ``-v`` output stays focused on kproj runtime/publish
-    state; detailed per-finding rows are omitted and treated as report
-    artifacts. ``-d`` restores per-finding stderr lines for debugging.
+    With ``-v`` (``verbose_level >= 1``): DRC/ERC findings were already
+    printed inline by :func:`~kproj.application.publish_workflow.\n    _print_design_findings_inline`; only non-design (audit/advisory)
+    findings are shown here, plus the summary line.
+
+    With no flags: compact mode shows only highlighted advisories
+    (``production_missing``, ``github_link_missing``) plus the summary.
+
+    ``-d`` controls the exec-transcript display in
+    :mod:`kproj.common.subprocess_runner` and has no effect here.
 
     Args:
         result: The :class:`PublishResult` returned by
             :meth:`PublishWorkflow.run`.
         verbose_level: Current verbosity level derived from CLI flags.
-        debug: ``True`` when ``-d`` was supplied.
+        debug: ``True`` when ``-d`` was supplied (unused here; kept for
+            call-site compatibility).
     """
     if result.findings:
-        detailed_rows_emitted = False
-        if debug:
-            formatter = StderrFormatter(verbose_level=max(verbose_level, 2))
-            rendered = formatter.format_findings(result.findings)
-            if rendered:
-                print(rendered, file=sys.stderr)
-                detailed_rows_emitted = True
-        if not detailed_rows_emitted:
+        if verbose_level >= 1:
+            # DRC/ERC already shown inline; emit only non-design findings.
+            non_design = [
+                f for f in result.findings
+                if f.source.lower() not in {"drc", "erc"}
+            ]
+            if non_design:
+                rendered = StderrFormatter(verbose_level=1).format_findings(non_design)
+                if rendered:
+                    print(rendered, file=sys.stderr)
+        else:
+            # Compact mode: surface selected high-signal advisories.
             highlighted = _findings_to_highlight_in_compact_stderr(result.findings)
             if highlighted:
                 rendered = StderrFormatter(verbose_level=0).format_findings(highlighted)
                 if rendered:
                     print(rendered, file=sys.stderr)
         print(
-            _findings_summary_for_stderr(
-                result.findings,
-                detailed_rows_emitted=detailed_rows_emitted,
-            ),
+            _findings_summary_for_stderr(result.findings, verbose_level=verbose_level),
             file=sys.stderr,
         )
     if result.message:
@@ -602,7 +610,7 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
 
 
 def _findings_summary_for_stderr(
-    findings: Sequence[Finding], *, detailed_rows_emitted: bool
+    findings: Sequence[Finding], *, verbose_level: int = 0
 ) -> str:
     """Return a compact findings summary suitable for stderr output."""
     buckets: dict[str, list[Finding]] = {
@@ -627,9 +635,9 @@ def _findings_summary_for_stderr(
 
     counts_text = "; ".join(rendered_buckets) if rendered_buckets else "none"
     details_note = (
-        "Detailed finding rows emitted above."
-        if detailed_rows_emitted
-        else "Detailed finding rows are omitted from stderr; run with -d for full finding output."
+        "DRC/ERC violations shown above."
+        if verbose_level >= 1
+        else "Detailed finding rows are omitted from stderr; run with -v to see DRC/ERC violations inline."
     )
     return f"Note: Collected {len(findings)} finding(s) [{counts_text}]. {details_note}"
 
