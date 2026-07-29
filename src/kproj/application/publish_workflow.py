@@ -850,12 +850,15 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
     (``-v``).  Findings are displayed right after :meth:`DesignAnalyzer.analyze`
     returns so they appear in context rather than at the end-of-run summary.
 
-    Format per group::
+    Active issues (non-EXCLUSION) are shown first and counted in the header.
+    KiCad-suppressed violations (``Severity.EXCLUSION``) are shown separately
+    as ``[suppressed]`` lines so they are visible but clearly not problems::
 
-        DRC: 3 violation(s)
-          [warning] copper_to_board_edge: Silkscreen clipped by copper
-          [error]   track_width: Track width too narrow (at pos 42.3, 18.7)
-        ERC: 0 violation(s)
+        DRC: 1 issue(s)  (6 suppressed)
+          [error] track_width: Track width too narrow (at pos 42.3, 18.7)
+          [suppressed] courtyards_overlap: Footprint Board1 (at ...)
+        ERC: 0 issue(s)
+          (none)
 
     Args:
         findings: The findings from :meth:`DesignAnalyzer.analyze` — only
@@ -869,15 +872,20 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
     for src in _DESIGN_SOURCES:
         group = by_source[src]
         label = src.upper()
-        count = len(group)
-        print(f"{label}: {count} violation(s)", file=sys.stderr)
-        if group:
-            for f in group:
+        active = [f for f in group if f.severity != Severity.EXCLUSION]
+        suppressed = [f for f in group if f.severity == Severity.EXCLUSION]
+        sup_note = f"  ({len(suppressed)} suppressed)" if suppressed else ""
+        print(f"{label}: {len(active)} issue(s){sup_note}", file=sys.stderr)
+        if active:
+            for f in active:
                 sev = f.severity.value.lower()
                 location = f" (at {f.value})" if f.value else ""
                 print(f"  [{sev}] {f.field}: {f.reason}{location}", file=sys.stderr)
-        else:
+        elif not suppressed:
             print("  (none)", file=sys.stderr)
+        for f in suppressed:
+            location = f" (at {f.value})" if f.value else ""
+            print(f"  [suppressed] {f.field}: {f.reason}{location}", file=sys.stderr)
 
 
 def _default_datasheet_name_lookup(

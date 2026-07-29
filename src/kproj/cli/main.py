@@ -621,34 +621,60 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
 
 
 def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: int = 0) -> str:
-    """Return a compact findings summary suitable for stderr output."""
-    buckets: dict[str, list[Finding]] = {
-        "audit": [],
-        "drc": [],
-        "erc": [],
-        "other": [],
-    }
-    for finding in findings:
-        buckets[_source_bucket(finding.source)].append(finding)
+    """Return a human-readable findings summary suitable for stderr output.
 
-    rendered_buckets: list[str] = []
+    Active issues (ERROR/WARNING/INFO) are counted and described by source.
+    Exclusions (KiCad-suppressed violations) are noted separately so they
+    do not inflate the issue count or appear as problems to fix.
+    """
+    active = [f for f in findings if f.severity != Severity.EXCLUSION]
+    suppressed = [f for f in findings if f.severity == Severity.EXCLUSION]
+
+    # Build per-source description of active findings.
+    source_counts: dict[str, Counter] = {}
+    for f in active:
+        bucket = _source_bucket(f.source)
+        if bucket not in source_counts:
+            source_counts[bucket] = Counter()
+        source_counts[bucket][f.severity] += 1
+
+    source_parts: list[str] = []
     for bucket in ("audit", "drc", "erc", "other"):
-        grouped = buckets[bucket]
-        if not grouped:
+        counts = source_counts.get(bucket)
+        if not counts:
             continue
-        counts = Counter(item.severity for item in grouped)
-        rendered_buckets.append(
-            f"{bucket} e{counts[Severity.ERROR]}/w{counts[Severity.WARNING]}"
-            f"/x{counts[Severity.EXCLUSION]}/i{counts[Severity.INFO]}"
-        )
+        items: list[str] = []
+        if counts[Severity.ERROR]:
+            n = counts[Severity.ERROR]
+            items.append(f"{n} error{'s' if n > 1 else ''}")
+        if counts[Severity.WARNING]:
+            n = counts[Severity.WARNING]
+            items.append(f"{n} warning{'s' if n > 1 else ''}")
+        if counts[Severity.INFO]:
+            n = counts[Severity.INFO]
+            items.append(f"{n} note{'s' if n > 1 else ''}")
+        source_parts.append(f"{bucket}: {', '.join(items)}")
 
-    counts_text = "; ".join(rendered_buckets) if rendered_buckets else "none"
+    # Build suppression note.
+    sup_by_source: Counter = Counter()
+    for f in suppressed:
+        sup_by_source[_source_bucket(f.source)] += 1
+    sup_parts = [f"{count} {src}" for src, count in sorted(sup_by_source.items())]
+
+    n_active = len(active)
+    if n_active > 0:
+        issue_word = "issue" if n_active == 1 else "issues"
+        detail = f" ({'; '.join(source_parts)})" if source_parts else ""
+        issue_text = f"{n_active} {issue_word}{detail}."
+    else:
+        issue_text = "No issues."
+
+    sup_text = f"  {' + '.join(sup_parts)} suppressed." if sup_parts else ""
+
     details_note = (
-        "Findings shown above."
-        if verbose_level >= 1
-        else "Detailed finding rows are omitted from stderr; run with -v to see findings detail."
+        "  Findings shown above." if verbose_level >= 1 else "  run with -v to see findings detail."
     )
-    return f"Note: Collected {len(findings)} finding(s) [{counts_text}]. {details_note}"
+    return f"Note: {issue_text}{sup_text}{details_note}"
 
 
 def _findings_to_highlight_in_compact_stderr(findings: Sequence[Finding]) -> tuple[Finding, ...]:

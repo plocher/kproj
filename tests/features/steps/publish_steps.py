@@ -797,7 +797,7 @@ def step_then_stderr_reports_findings_detail(context: Any) -> None:
         "expected at least one finding under the AuditProject fixture; "
         f"got findings={finding_fields}"
     )
-    assert "Note: Collected" in stderr_text, (
+    assert "Note:" in stderr_text and ("issue" in stderr_text or "No issues" in stderr_text), (
         f"expected findings summary on stderr; got stderr={stderr_text!r}"
     )
     audit_fields = {
