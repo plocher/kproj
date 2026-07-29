@@ -636,9 +636,8 @@ def test_main_verbose_flag_shows_audit_findings_and_skips_drc_in_end_block(
     assert "warning [comment9_missing]" in captured.err
     # DRC finding skipped at end-of-run (shown inline by workflow; stubbed here).
     assert "error [drc_violation]" not in captured.err
-    # Summary present with updated hint text.
-    assert "Note: 2 issues (audit: 1 warning; drc: 1 error)." in captured.err
-    assert "Findings shown above." in captured.err
+    # No Note line in -v: everything is shown inline, nothing hidden.
+    assert "Note:" not in captured.err
 
 
 def test_main_emits_nothing_extra_when_findings_empty(

@@ -797,9 +797,8 @@ def step_then_stderr_reports_findings_detail(context: Any) -> None:
         "expected at least one finding under the AuditProject fixture; "
         f"got findings={finding_fields}"
     )
-    assert "Note:" in stderr_text and ("issue" in stderr_text or "No issues" in stderr_text), (
-        f"expected findings summary on stderr; got stderr={stderr_text!r}"
-    )
+    # With -v there is no Note summary line (everything is shown inline).
+    # Verify that per-finding rows for audit findings ARE present on stderr.
     audit_fields = {
         f.field for f in context.result.findings if f.source.lower() not in {"drc", "erc"}
     }

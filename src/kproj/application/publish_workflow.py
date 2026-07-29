@@ -881,8 +881,6 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
                 sev = f.severity.value.lower()
                 location = f" (at {f.value})" if f.value else ""
                 print(f"  [{sev}] {f.field}: {f.reason}{location}", file=sys.stderr)
-        elif not suppressed:
-            print("  (none)", file=sys.stderr)
         for f in suppressed:
             location = f" (at {f.value})" if f.value else ""
             print(f"  [excluded] {f.field}: {f.reason}{location}", file=sys.stderr)

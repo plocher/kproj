@@ -599,18 +599,14 @@ def _render_result_to_stderr(result: PublishResult, *, verbose_level: int, debug
     if result.findings:
         active = [f for f in result.findings if f.severity != Severity.EXCLUSION]
         if verbose_level >= 1:
-            # -v: DRC/ERC were shown inline by the workflow; emit non-design
-            # findings as per-finding rows so audit details are visible.
+            # -v: DRC/ERC were already shown inline by the workflow.  Emit
+            # non-design (audit/other) findings so the detail is visible.
+            # No Note line: everything is shown, nothing is hidden.
             non_design = [f for f in result.findings if f.source.lower() not in {"drc", "erc"}]
             if non_design:
                 rendered = StderrFormatter(verbose_level=1).format_findings(non_design)
                 if rendered:
                     print(rendered, file=sys.stderr)
-            # Always show Note in -v so the user gets a confirmation line.
-            print(
-                _findings_summary_for_stderr(result.findings, verbose_level=verbose_level),
-                file=sys.stderr,
-            )
         else:
             # Compact mode: surface only selected high-signal advisories.
             highlighted = _findings_to_highlight_in_compact_stderr(result.findings)
