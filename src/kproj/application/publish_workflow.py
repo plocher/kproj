@@ -851,13 +851,13 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
     returns so they appear in context rather than at the end-of-run summary.
 
     Active issues (non-EXCLUSION) are shown first and counted in the header.
-    KiCad-suppressed violations (``Severity.EXCLUSION``) are shown separately
-    as ``[suppressed]`` lines so they are visible but clearly not problems::
+    KiCad-excluded violations (``Severity.EXCLUSION``) are shown separately
+    as ``[excluded]`` lines so they are visible but clearly not problems::
 
-        DRC: 1 issue(s)  (6 suppressed)
+        DRC: 1 issue (6 excluded)
           [error] track_width: Track width too narrow (at pos 42.3, 18.7)
-          [suppressed] courtyards_overlap: Footprint Board1 (at ...)
-        ERC: 0 issue(s)
+          [excluded] courtyards_overlap: Footprint Board1 (at ...)
+        ERC: 0 issues
           (none)
 
     Args:
@@ -874,8 +874,9 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
         label = src.upper()
         active = [f for f in group if f.severity != Severity.EXCLUSION]
         suppressed = [f for f in group if f.severity == Severity.EXCLUSION]
-        sup_note = f"  ({len(suppressed)} suppressed)" if suppressed else ""
-        print(f"{label}: {len(active)} issue(s){sup_note}", file=sys.stderr)
+        sup_note = f" ({len(suppressed)} excluded)" if suppressed else ""
+        iss_note = "issue" if len(active) == 1 else "issues"
+        print(f"{label}: {len(active)} {iss_note}{sup_note}", file=sys.stderr)
         if active:
             for f in active:
                 sev = f.severity.value.lower()

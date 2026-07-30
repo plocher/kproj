@@ -327,8 +327,8 @@ def _read_metadata_safely(
         finding = Finding(
             severity=Severity.WARNING,
             field=f"{label.lower()}_titleblock_unreadable",
-            value=str(path),
-            reason=f"failed to read {label} title-block at {path}: {exc}",
+            value=path.name,
+            reason=f"failed to read {label} title-block ({path.name}): {exc}",
             project=project,
             source="read",
         )

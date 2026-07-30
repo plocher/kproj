@@ -218,7 +218,7 @@ class DesignAnalyzer:
                     Finding(
                         severity=Severity.WARNING,
                         field=f"{origin}_json_unreadable",
-                        value=str(output_path),
+                        value="",
                         reason=f"could not parse {origin.upper()} JSON: {exc}",
                         project=project,
                         source=origin,

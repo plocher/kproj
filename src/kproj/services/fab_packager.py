@@ -110,10 +110,10 @@ class FabPackager:
                 Finding(
                     severity=Severity.WARNING,
                     field="production_missing",
-                    value=str(production_dir),
+                    value="production/",
                     reason=(
-                        "production/ missing or empty; run `jbom fab` to populate it. "
-                        "Publishing without fab.zip."
+                        "./production is missing or empty; run `jbom fab` to populate it. "
+                        "Fabrication artifacts will not be published."
                     ),
                 )
             )
@@ -278,8 +278,8 @@ def _discover_gerber_zip(
                 Finding(
                     severity=Severity.WARNING,
                     field="production_missing",
-                    value=str(production_dir),
-                    reason=("no gerber zip found in production/; run `jbom fab` to populate it."),
+                    value="production/",
+                    reason="no gerber zip found in ./production; run `jbom fab` to populate it.",
                 )
             ],
             False,

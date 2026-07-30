@@ -127,7 +127,7 @@ class MetadataAnalyzer:
             yield Finding(
                 severity=Severity.ERROR,
                 field="kicad_sch_missing",
-                value=str(sch_path),
+                value=sch_path.name,
                 reason=f"expected schematic file {sch_path.name} not found",
                 project=info.project,
             )
@@ -135,7 +135,7 @@ class MetadataAnalyzer:
             yield Finding(
                 severity=Severity.ERROR,
                 field="kicad_pcb_missing",
-                value=str(pcb_path),
+                value=pcb_path.name,
                 reason=f"expected PCB file {pcb_path.name} not found",
                 project=info.project,
             )
@@ -298,10 +298,7 @@ class MetadataAnalyzer:
             severity=Severity.WARNING,
             field="replaced_by_target_missing",
             value=target,
-            reason=(
-                f"replaced-by:{target} references a project directory "
-                f"that does not exist at {target_dir}"
-            ),
+            reason=f"replaced-by:{target} references a project that does not exist",
             project=info.project,
         )
 
@@ -311,11 +308,8 @@ class MetadataAnalyzer:
             yield Finding(
                 severity=Severity.WARNING,
                 field="production_missing",
-                value=str(production_dir),
-                reason=(
-                    f"{production_dir} is missing or empty; "
-                    "fab.zip artifact will be omitted from the publish"
-                ),
+                value="production/",
+                reason="./production is missing or empty; fabrication artifacts will not be published",
                 project=info.project,
             )
             return
@@ -343,7 +337,7 @@ class MetadataAnalyzer:
                 yield Finding(
                     severity=Severity.WARNING,
                     field="production_stale",
-                    value=str(zip_path),
+                    value=zip_path.name,
                     reason=(
                         f"{zip_path.name} is older than {pcb_path.name}; "
                         "re-run `jbom fab` to regenerate fab artifacts"
