@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.13.2 (2026-07-30)
+
+### Bug Fixes
+
+* fix(audit): make production_stale revision-aware
+
+Reuse FabPackager gerber zip selection in MetadataAnalyzer so stale checks evaluate only the selected revision zip and ignore historical production archives. Add regression tests for mixed historical/current zip scenarios. ([`26b0124`](https://github.com/plocher/kproj/commit/26b01244877537bce2155b155ab7fd73b624a3b5))
+
+
 ## v0.13.1 (2026-07-30)
 
 ### Bug Fixes
