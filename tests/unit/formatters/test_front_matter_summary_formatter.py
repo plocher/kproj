@@ -311,15 +311,19 @@ class TestAuditDrcCounts:
 class TestLibrariesSection:
     def test_three_bucket_libraries_rendered(self) -> None:
         libs = (
-            LibraryRef(name="InternalLib", source="internal"),
-            LibraryRef(name="ExternalLib", source="external"),
-            LibraryRef(name="AmbigLib", source="ambiguous"),
+            LibraryRef(name="InternalLib", source="internal", kind="symbol", distribution="added"),
+            LibraryRef(name="ExternalLib", source="external", kind="footprint", distribution="added"),
+            LibraryRef(name="AmbigLib", source="ambiguous", kind="symbol", distribution="unknown"),
         )
         parsed = _parse(_pub(libraries=libs))
         assert "libraries" in parsed
         assert "InternalLib" in parsed["libraries"]["internal"]
         assert "ExternalLib" in parsed["libraries"]["external"]
         assert "AmbigLib" in parsed["libraries"]["ambiguous"]
+        assert "library_inventory" in parsed
+        assert "InternalLib" in parsed["library_inventory"]["symbol"]["added"]
+        assert "ExternalLib" in parsed["library_inventory"]["footprint"]["added"]
+        assert "AmbigLib" in parsed["library_inventory"]["symbol"]["unknown"]
 
     def test_empty_libraries_handled_gracefully(self) -> None:
         parsed = _parse(_pub(libraries=()))
@@ -330,8 +334,8 @@ class TestLibrariesSection:
 
     def test_multiple_internal_libs(self) -> None:
         libs = (
-            LibraryRef(name="Lib1", source="internal"),
-            LibraryRef(name="Lib2", source="internal"),
+            LibraryRef(name="Lib1", source="internal", kind="symbol", distribution="added"),
+            LibraryRef(name="Lib2", source="internal", kind="footprint", distribution="added"),
         )
         parsed = _parse(_pub(libraries=libs))
         internal = parsed["libraries"]["internal"]
@@ -341,12 +345,22 @@ class TestLibrariesSection:
     def test_buckets_ordered_alphabetically(self) -> None:
         """Within each bucket, libraries are sorted by name."""
         libs = (
-            LibraryRef(name="ZZZ", source="internal"),
-            LibraryRef(name="AAA", source="internal"),
+            LibraryRef(name="ZZZ", source="internal", kind="symbol", distribution="added"),
+            LibraryRef(name="AAA", source="internal", kind="symbol", distribution="added"),
         )
         parsed = _parse(_pub(libraries=libs))
         internal = parsed["libraries"]["internal"]
         assert internal == sorted(internal)
+
+    def test_legacy_buckets_deduplicate_name_across_symbol_and_footprint(self) -> None:
+        libs = (
+            LibraryRef(name="Shared", source="ambiguous", kind="symbol", distribution="unknown"),
+            LibraryRef(name="Shared", source="ambiguous", kind="footprint", distribution="unknown"),
+        )
+        parsed = _parse(_pub(libraries=libs))
+        assert parsed["libraries"]["ambiguous"] == ["Shared"]
+        assert parsed["library_inventory"]["symbol"]["unknown"] == ["Shared"]
+        assert parsed["library_inventory"]["footprint"]["unknown"] == ["Shared"]
 
 
 class TestImagePath:
