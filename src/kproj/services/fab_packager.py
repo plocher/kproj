@@ -124,7 +124,7 @@ class FabPackager:
                 skipped=True,
             )
 
-        gerber, gerber_diagnostics, ambiguous = _discover_gerber_zip(
+        gerber, gerber_diagnostics, ambiguous = discover_gerber_zip(
             production_dir, title=title, rev=rev
         )
         diagnostics.extend(gerber_diagnostics)
@@ -252,7 +252,7 @@ def _or_form(candidates: tuple[str, ...]) -> str:
     return f"{head} (or {', or '.join(rest)})"
 
 
-def _discover_gerber_zip(
+def discover_gerber_zip(
     production_dir: Path,
     *,
     title: str,
