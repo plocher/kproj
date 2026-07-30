@@ -637,7 +637,7 @@ def _findings_summary_for_stderr(findings: Sequence[Finding], *, verbose_level: 
     active = [f for f in findings if f.severity != Severity.EXCLUSION]
 
     # Build per-source description of active findings.
-    source_counts: dict[str, Counter] = {}
+    source_counts: dict[str, Counter[Severity]] = {}
     for f in active:
         bucket = _source_bucket(f.source)
         if bucket not in source_counts:
