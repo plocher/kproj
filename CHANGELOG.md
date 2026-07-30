@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.13.1 (2026-07-30)
+
+### Bug Fixes
+
+* fix(types): add explicit Counter type parameter in CLI findings summary ([`1eca7c9`](https://github.com/plocher/kproj/commit/1eca7c9fecf8279281956e7751e1dbefa8249cd8))
+
+* fix(libraries): walk the real KiCad project tree and stop counting history/backup files
+
+Use a deterministic project-centric traversal rooted at .kicad_pro, root schematic sheet hierarchy, and root PCB. Ignore .history, *-backups, and production. Keep symbol and footprint libraries as separate entries and add stock-vs-added distribution metadata. Preserve legacy libraries buckets while adding structured typed inventory. ([`2441131`](https://github.com/plocher/kproj/commit/244113152b80e9648ca3f21f6d651a77fbc7e88f))
+
+
 ## v0.13.0 (2026-07-30)
 
 ### Bug Fixes
