@@ -1,6 +1,116 @@
 # CHANGELOG
 
 
+## v0.13.0 (2026-07-30)
+
+### Bug Fixes
+
+* fix: clean up warnings ([`1ecf579`](https://github.com/plocher/kproj/commit/1ecf5795cf808a68d4538739b040b0ba13f051aa))
+
+* fix(output): remove noise from -v mode; drop (none) line; remove Note line in -v
+
+- ERC/DRC (none) line removed when 0 issues and 0 excluded — '0 issue(s)' is self-evident
+- Note: summary line removed from -v output — with -v everything is shown inline
+  (DRC/ERC via _print_design_findings_inline, audit via _render_result_to_stderr),
+  so there is nothing hidden to summarize
+- Updated unit test and behave step to match: -v no longer produces a Note line ([`1ce1ae6`](https://github.com/plocher/kproj/commit/1ce1ae6a4c4fd0be8251b676eb91fcc5a3406a84))
+
+* fix(output): use [excluded] label; suppress redundant Note line; drop suppression count from summary
+
+- DRC [suppressed] → [excluded] to match KiCad's own terminology
+- Compact Note line suppressed when all active findings are already shown by the
+  compact advisory display; if production_missing is the only issue and it's already
+  on the line above, the Note line disappears entirely
+- Summary no longer includes suppression count
+- Result for cpNode-IOX (no flags): Warning + final Note, clean
+- Result for cpNode-IOX (-v): DRC 0 issue(s) (6 suppressed) with [excluded] items ([`4ee7626`](https://github.com/plocher/kproj/commit/4ee7626d5cf781e95a32e6eb913d20b33374c542))
+
+* fix(output): human-readable summary; separate DRC issues from suppressions in -v display
+
+_print_design_findings_inline (publish_workflow.py):
+- Header counts only active (non-EXCLUSION) issues: 'DRC: 0 issue(s)  (6 suppressed)'
+- Active violations listed first as [severity]; suppressed violations after as [suppressed]
+- Avoids presenting KiCad-acknowledged exclusions as outstanding problems
+
+_findings_summary_for_stderr (cli/main.py):
+- Replace cryptic 'Collected N finding(s) [audit e0/w1/x0/i0; drc e0/w0/x6/i0]'
+  with plain English: 'Note: 1 issue (audit: 1 warning).  6 drc suppressed.'
+- Exclusions excluded from issue count; noted separately
+- 'No issues.' when only suppressions remain
+
+Tests: update 3 unit tests + behave step for new summary format. ([`746424e`](https://github.com/plocher/kproj/commit/746424e220d1e87ebefe830416bcc44969ed6e3d))
+
+* fix(output): show excluded DRC/ERC violations as [exclusion]; surface production warnings in compact mode
+
+design_analyzer: excluded violations (KiCad GUI 'ignored tests' or excluded=True
+flag) are now downgraded to Severity.EXCLUSION instead of being dropped silently.
+Previously kproj showed 'DRC: 0 violation(s) / (none)' when all DRC violations
+were KiCad-suppressed exclusions; now shows the actual count with [exclusion] labels
+so users can confirm which violations were suppressed.
+
+Exit code is unaffected: Severity.EXCLUSION is already outside _FINDING_SEVERITIES.
+
+cli/main.py:
+- Add production_missing and production_incomplete to _COMPACT_VISIBLE_ADVISORY_FIELDS
+  so these actionable advisories (fab.zip will be omitted) surface in compact mode
+  without requiring -v
+- Fix hint text: 'run with -v to see findings detail.' (was DRC/ERC-specific)
+- Fix verbose hint: 'Findings shown above.' (was 'DRC/ERC violations shown above.')
+
+Tests: update three design_analyzer tests from 'exclusions dropped → ()' to
+'exclusions kept → Severity.EXCLUSION findings'; update cli unit test hint text. ([`5c99499`](https://github.com/plocher/kproj/commit/5c994994fa53e89ae35ed8504bc9ed1720c6240d))
+
+* fix(output): demote implementation-detail log messages from INFO to DEBUG
+
+With -v now showing DRC/ERC inline + audit findings at end-of-run, the old
+INFO-level internal messages became noise for users:
+
+- publish_workflow.py: artifact regen decision, publish-context drift, and
+  github-url drift logs → _log.debug()
+- site_publisher.py: 'dry-run: would write' log removed entirely (the final
+  Note: --dry-run only... message already covers it cleanly)
+- fab_packager.py: fab.zip inputs selection log → _log.debug()
+- metadata_analyzer.py: production_stale suppression log → _log.debug()
+
+Result:
+  -v  = DRC/ERC inline + audit findings per-row + Info: banners + summary
+  -d  = all of the above + exec transcript + regen/drift/fab decisions
+
+Tests: update two caplog fixtures from INFO → DEBUG level to match. ([`e585cfe`](https://github.com/plocher/kproj/commit/e585cfecbd9cdbf2dbdfabc322d077dc96b7e604))
+
+* fix(output): update verbose.feature + step to new -v semantics; restore audit findings in end-of-run block
+
+-v now shows per-finding rows for audit (non-DRC/ERC) findings at end-of-run
+via _render_result_to_stderr, not just the compact advisory subset.  DRC/ERC
+are still shown inline by the workflow and skipped in the end-of-run block.
+
+- verbose.feature: rewrite scenario to expect per-finding detail, not compact
+- publish_steps.py: replace 'compact findings summary' step with 'findings
+  detail and a summary'; assert audit field names ARE visible on verbose stderr
+- cli/main.py: restore non_design findings output under verbose_level >= 1
+- test_cli.py: update unit test to assert audit finding IS shown, DRC is not ([`1b9f892`](https://github.com/plocher/kproj/commit/1b9f892754de0e0fe385d2f196e024642aacd522))
+
+### Features
+
+* feat(output): rework -v/-d display; shell-transcript exec log; inline DRC/ERC findings
+
+- brew upgrade fontconfig 2.18.0 -> 2.18.2 (fixes xsi:nil Fontconfig warnings at source)
+- subprocess_runner: replace kproj [INFO/DEBUG] exec syslog with shell-transcript
+  format (√  % <argv> / ?N % <argv>) activated by -d; add _filter_known_stderr_noise()
+  to strip residual Fontconfig warning lines as belt-and-suspenders
+- logging_setup: drop kproj [LEVEL] bracket prefix from log format (%(message)s)
+- publish_workflow: add _print_design_findings_inline(); call with -v to show DRC/ERC
+  findings grouped by source right after design analysis, before end-of-run summary
+- cli/main: _render_result_to_stderr now skips DRC/ERC at end when -v (already shown
+  inline); updates hint text from 'run with -d' to 'run with -v'
+- tests: 9 new tests for _filter_known_stderr_noise and debug log format; update
+  cli test to reflect new -v semantics (audit shown, DRC skipped at end of run) ([`48f4c70`](https://github.com/plocher/kproj/commit/48f4c705ffd474f7b6775bb5583ee2e9a48877c3))
+
+### Unknown
+
+* Merge branch 'feature/output-cleanup' ([`469148e`](https://github.com/plocher/kproj/commit/469148efb8858fcba293836deff9bd3ab003d432))
+
+
 ## v0.12.0 (2026-07-29)
 
 ### Bug Fixes
