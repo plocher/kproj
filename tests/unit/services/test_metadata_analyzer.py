@@ -424,6 +424,52 @@ def test_production_stale_boundary_just_under_threshold_is_quiet(tmp_path: Path)
     assert "production_stale" not in _fields(result.findings)
 
 
+def test_production_stale_checks_only_selected_revision_zip(tmp_path: Path) -> None:
+    """Historical stale zips must not trigger warnings for current revision."""
+    project_dir = _populated_project(tmp_path / "demo")
+    production = project_dir / "production"
+    production.mkdir()
+    # Current revision (design_rev=3.0, board_rev=3.0B) canonical gerber zip.
+    current = production / "demo_3.0B.zip"
+    current.write_bytes(b"PK")
+    # Historical zip from older rev kept for provenance.
+    historical = production / "demo_3.0A.zip"
+    historical.write_bytes(b"PK")
+    pcb = project_dir / "demo.kicad_pcb"
+    import os
+
+    # Current zip is fresh; historical zip is stale.
+    os.utime(historical, (1000, 1000))
+    os.utime(pcb, (2000, 2000))
+    os.utime(current, (2200, 2200))
+    info = _info()
+    result = _analyzer(tmp_path).analyze(info, project_dir)
+    assert "production_stale" not in _fields(result.findings)
+
+
+def test_production_stale_selected_revision_zip_when_stale(tmp_path: Path) -> None:
+    """When the selected revision zip is stale, emit a single matching warning."""
+    project_dir = _populated_project(tmp_path / "demo")
+    production = project_dir / "production"
+    production.mkdir()
+    current = production / "demo_3.0B.zip"
+    current.write_bytes(b"PK")
+    historical = production / "demo_3.0A.zip"
+    historical.write_bytes(b"PK")
+    pcb = project_dir / "demo.kicad_pcb"
+    import os
+
+    # Selected current zip stale; historical is newer but irrelevant.
+    os.utime(current, (1000, 1000))
+    os.utime(pcb, (2000, 2000))
+    os.utime(historical, (2200, 2200))
+    info = _info()
+    result = _analyzer(tmp_path).analyze(info, project_dir)
+    stale = _of(result.findings, "production_stale")
+    assert len(stale) == 1
+    assert stale[0].value == "demo_3.0B.zip"
+
+
 def test_production_stale_boundary_just_over_threshold_triggers(tmp_path: Path) -> None:
     """A delta just over 5 minutes MUST trigger production_stale.
 

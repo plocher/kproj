@@ -23,6 +23,7 @@ from ..model.analysis_info import AnalysisInfo
 from ..model.finding import Finding
 from ..model.project_info import ProjectInfo, Status
 from ..model.severity import Severity
+from .fab_packager import discover_gerber_zip
 
 _log = logging.getLogger(__name__)
 
@@ -317,46 +318,52 @@ class MetadataAnalyzer:
         if not pcb_path.exists():
             return
         pcb_mtime = pcb_path.stat().st_mtime
-        for zip_path in sorted(production_dir.glob("*.zip")):
-            # The PCB mtime moves when the user hits [Save] in KiCad; jbom
-            # opening the board via the Python API does NOT touch it (empirical
-            # observation).  So the delta between PCB and fab outputs is
-            # bounded only by "how long between Save and running jbom fab":
-            #   Happy path (done -> jbom fab -> Save+close): the fab outputs
-            #   are AT MOST a few minutes older than the PCB when Save follows
-            #   fab within a normal session.
-            #   Antipattern (Save -> jbom fab -> notice a bug -> edit -> Save,
-            #   forget to re-run jbom fab): the PCB is minutes-to-hours newer
-            #   than the fab outputs.
-            # A 5-minute tolerance catches the antipattern without alarming on
-            # the happy path.  This is a heuristic - kproj cannot confirm the
-            # fab pack is actually current from mtimes alone; the finding is a
-            # warning that delegates the final call to the user.
-            delta = pcb_mtime - zip_path.stat().st_mtime
-            if delta > _PRODUCTION_STALE_TOLERANCE_SECONDS:
-                yield Finding(
-                    severity=Severity.WARNING,
-                    field="production_stale",
-                    value=zip_path.name,
-                    reason=(
-                        f"{zip_path.name} is older than {pcb_path.name}; "
-                        "re-run `jbom fab` to regenerate fab artifacts"
-                    ),
-                    project=info.project,
-                )
-            elif delta > 0:
-                # Zip is older than the PCB but within the tolerance window
-                # (i.e. the happy-path Save/fab timing).  DEBUG-log the
-                # suppression + numeric delta so ``-d`` reveals the
-                # timing kproj is trusting when diagnosing staleness.
-                _log.debug(
-                    "production_stale suppressed: %s is %.1fs older than %s "
-                    "(tolerance %.0fs; happy-path Save/fab timing)",
-                    zip_path.name,
-                    delta,
-                    pcb_path.name,
-                    _PRODUCTION_STALE_TOLERANCE_SECONDS,
-                )
+        selected_zip, _diagnostics, _ambiguous = discover_gerber_zip(
+            production_dir,
+            title=info.project,
+            rev=info.board_rev,
+        )
+        if selected_zip is None:
+            return
+        # The PCB mtime moves when the user hits [Save] in KiCad; jbom
+        # opening the board via the Python API does NOT touch it (empirical
+        # observation).  So the delta between PCB and fab outputs is
+        # bounded only by "how long between Save and running jbom fab":
+        #   Happy path (done -> jbom fab -> Save+close): the fab outputs
+        #   are AT MOST a few minutes older than the PCB when Save follows
+        #   fab within a normal session.
+        #   Antipattern (Save -> jbom fab -> notice a bug -> edit -> Save,
+        #   forget to re-run jbom fab): the PCB is minutes-to-hours newer
+        #   than the fab outputs.
+        # A 5-minute tolerance catches the antipattern without alarming on
+        # the happy path.  This is a heuristic - kproj cannot confirm the
+        # fab pack is actually current from mtimes alone; the finding is a
+        # warning that delegates the final call to the user.
+        delta = pcb_mtime - selected_zip.stat().st_mtime
+        if delta > _PRODUCTION_STALE_TOLERANCE_SECONDS:
+            yield Finding(
+                severity=Severity.WARNING,
+                field="production_stale",
+                value=selected_zip.name,
+                reason=(
+                    f"{selected_zip.name} is older than {pcb_path.name}; "
+                    "re-run `jbom fab` to regenerate fab artifacts"
+                ),
+                project=info.project,
+            )
+        elif delta > 0:
+            # Zip is older than the PCB but within the tolerance window
+            # (i.e. the happy-path Save/fab timing).  DEBUG-log the
+            # suppression + numeric delta so ``-d`` reveals the
+            # timing kproj is trusting when diagnosing staleness.
+            _log.debug(
+                "production_stale suppressed: %s is %.1fs older than %s "
+                "(tolerance %.0fs; happy-path Save/fab timing)",
+                selected_zip.name,
+                delta,
+                pcb_path.name,
+                _PRODUCTION_STALE_TOLERANCE_SECONDS,
+            )
 
 
 _PRODUCTION_STALE_TOLERANCE_SECONDS: float = 5 * 60.0
