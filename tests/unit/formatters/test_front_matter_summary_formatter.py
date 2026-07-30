@@ -312,7 +312,9 @@ class TestLibrariesSection:
     def test_three_bucket_libraries_rendered(self) -> None:
         libs = (
             LibraryRef(name="InternalLib", source="internal", kind="symbol", distribution="added"),
-            LibraryRef(name="ExternalLib", source="external", kind="footprint", distribution="added"),
+            LibraryRef(
+                name="ExternalLib", source="external", kind="footprint", distribution="added"
+            ),
             LibraryRef(name="AmbigLib", source="ambiguous", kind="symbol", distribution="unknown"),
         )
         parsed = _parse(_pub(libraries=libs))
