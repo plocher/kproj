@@ -95,8 +95,13 @@ def test_drc_violation_with_items_emits_per_item_finding(tmp_path: Path) -> None
     assert drc_findings[0].value == "10,20"
 
 
-def test_exclusion_severity_suppressed(tmp_path: Path) -> None:
-    """``exclusion`` severity violations are suppressed by default."""
+def test_exclusion_severity_kept_as_exclusion_finding(tmp_path: Path) -> None:
+    """``exclusion`` severity violations are kept as EXCLUSION findings, not dropped.
+
+    They must be visible with -v (user can confirm what was suppressed in KiCad)
+    but must not affect exit code (Severity.EXCLUSION is excluded from
+    _FINDING_SEVERITIES per the locked contract in publish_result.py).
+    """
     payload = {
         "violations": [
             {
@@ -110,12 +115,21 @@ def test_exclusion_severity_suppressed(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload={"violations": []}, erc_payload=payload)
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    assert result.findings == ()
+    erc_findings = [f for f in result.findings if f.source == "erc"]
+    assert len(erc_findings) == 1
+    assert erc_findings[0].severity == Severity.EXCLUSION
+    assert erc_findings[0].field == "pin_to_pin"
+    # EXCLUSION findings are visible with -v but do not contribute to
+    # exit code 1 (has_findings counts only ERROR + WARNING).
     assert result.has_findings is False
 
 
-def test_excluded_violation_is_suppressed(tmp_path: Path) -> None:
-    """Violations flagged as excluded are filtered out entirely."""
+def test_excluded_violation_downgraded_to_exclusion(tmp_path: Path) -> None:
+    """Violations flagged excluded=True are downgraded to EXCLUSION, not dropped.
+
+    The original severity ("error" here) is overridden to EXCLUSION so the
+    violation remains visible with -v but does not contribute to exit code 1.
+    """
     payload = {
         "violations": [
             {
@@ -130,11 +144,14 @@ def test_excluded_violation_is_suppressed(tmp_path: Path) -> None:
     runner, _ = _fake_runner(drc_payload=payload, erc_payload={"violations": []})
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
-    assert result.findings == ()
+    drc_findings = [f for f in result.findings if f.source == "drc"]
+    assert len(drc_findings) == 1
+    assert drc_findings[0].severity == Severity.EXCLUSION
+    assert drc_findings[0].field == "courtyards_overlap"
 
 
-def test_excluded_items_are_skipped(tmp_path: Path) -> None:
-    """Excluded items are skipped while non-excluded items still surface."""
+def test_excluded_items_downgraded_non_excluded_items_surface_normally(tmp_path: Path) -> None:
+    """Excluded items become EXCLUSION findings; non-excluded items keep their severity."""
     payload = {
         "violations": [
             {
@@ -152,8 +169,11 @@ def test_excluded_items_are_skipped(tmp_path: Path) -> None:
     analyzer = DesignAnalyzer(tmp_path / "kicad-cli", runner=runner)
     result = analyzer.analyze(_resolved(tmp_path))
     drc_findings = [f for f in result.findings if f.source == "drc"]
-    assert len(drc_findings) == 1
-    assert drc_findings[0].value == "3,4"
+    assert len(drc_findings) == 2
+    excluded = next(f for f in drc_findings if f.value == "1,2")
+    active = next(f for f in drc_findings if f.value == "3,4")
+    assert excluded.severity == Severity.EXCLUSION
+    assert active.severity == Severity.WARNING
 
 
 def test_runner_receives_severity_all_and_format_json(tmp_path: Path) -> None:

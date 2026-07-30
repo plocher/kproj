@@ -587,9 +587,9 @@ def check_datasheet_links(
             Finding(
                 severity=Severity.WARNING,
                 field="datasheet_library_missing",
-                value=str(library_repo),
+                value=library_repo.name,
                 reason=(
-                    f"datasheet library clone not found at {library_repo}; cannot "
+                    f"datasheet library clone not found ({library_repo.name}); cannot "
                     f"confirm {len(names)} datasheet link(s) resolve or are pushed. "
                     "Clone plocher/SPCoast-inventory there, or override the path."
                 ),
@@ -603,7 +603,7 @@ def check_datasheet_links(
             Finding(
                 severity=Severity.WARNING,
                 field="datasheet_library_unpushed",
-                value=str(library_repo),
+                value=library_repo.name,
                 reason=(
                     "datasheet library clone's current commit isn't confirmed pushed "
                     "to its upstream; published deep-links may 404 until it is pushed"
@@ -622,8 +622,8 @@ def check_datasheet_links(
                     field="datasheet_unresolvable",
                     value=name,
                     reason=(
-                        f"{candidate.name} not found in the local datasheet library "
-                        f"clone ({datasheets_dir}); the published link may 404"
+                        f"{candidate.name} not found in the local datasheet library; "
+                        "the published link may 404"
                     ),
                     project=project,
                 )

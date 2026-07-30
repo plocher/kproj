@@ -2,13 +2,20 @@
 
 Per ``docs/DESIGN.md`` § *Verbosity* and ADR 0004 (§ *What
 "surfaced" means*), every :class:`Finding` is rendered as a
-human-readable one-liner on stderr:
+human-readable one-liner on stderr.
 
-    <severity> [<field>] <project>:<field>: <reason> (value: <value>)
+Verbose format (``verbose_level >= 1``, used with ``-v``)::
 
-The ``(value: …)`` segment is omitted when :attr:`Finding.value` is
-empty.  The ``<project>:`` qualifier is omitted when
-:attr:`Finding.project` is empty.
+    <severity> [<field>] <project>: <reason>
+
+The ``<project>:`` qualifier is omitted when :attr:`Finding.project`
+is empty.  The field appears once in the ``[<field>]`` bracket only;
+``(value: …)`` is omitted because the value is typically embedded in
+the reason text already.
+
+Compact format (``verbose_level == 0``, default)::
+
+    <Severity>: <reason>
 """
 
 from __future__ import annotations
@@ -21,13 +28,15 @@ from ..model.finding import Finding
 class StderrFormatter:
     """Renders :class:`Finding` objects to stderr-ready text.
 
-    One finding per line.  Format per ADR 0004 § *What "surfaced" means*::
+    One finding per line.
 
-        <severity> [<field>] <project>:<field>: <reason> (value: <value>)
+    Verbose (``verbose_level >= 1``)::
 
-    The ``(value: …)`` trailing segment is suppressed when the finding's
-    ``value`` attribute is empty.  The ``<project>:`` qualifier is
-    suppressed when ``project`` is empty.
+        <severity> [<field>] <project>: <reason>
+
+    Compact (``verbose_level == 0``)::
+
+        <Severity>: <reason>
     """
 
     def __init__(self, *, verbose_level: int = 0) -> None:
@@ -66,9 +75,9 @@ class StderrFormatter:
                 else finding.severity.value.title()
             )
             return f"{prefix}: {finding.reason}"
+        # Verbose: [field] appears once; project qualifies the subject;
+        # (value: …) is omitted because the value is embedded in the reason.
         sev = finding.severity.value.lower()
         field = finding.field
-        subject = f"{finding.project}:{field}" if finding.project else field
-        value_part = f" (value: {finding.value})" if finding.value else ""
-
-        return f"{sev} [{field}] {subject}: {finding.reason}{value_part}"
+        subject = f"{finding.project}: " if finding.project else ""
+        return f"{sev} [{field}] {subject}{finding.reason}"

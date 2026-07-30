@@ -534,7 +534,7 @@ def test_main_prints_compact_findings_summary_to_stderr(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Note: Collected 2 finding(s) [audit e1/w1/x0/i0]." in captured.err
+    assert "Note: 2 issues (audit: 1 error, 1 warning)." in captured.err
     assert "Warning: COMMENT9 absent" not in captured.err
     assert "Error: silk overlap" not in captured.err
     assert "kproj: published Demo-1.0B." in captured.err
@@ -586,7 +586,7 @@ def test_main_compact_mode_surfaces_github_link_advisory_note(
     assert "Note: Project is not a Git repository, so no links to a repo will be published." in (
         captured.err
     )
-    assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i1]." in captured.err
+    assert "Note: 2 issues (audit: 1 warning, 1 note)." in captured.err
     assert "Warning: A genuine metadata warning." not in captured.err
 
 
@@ -636,9 +636,8 @@ def test_main_verbose_flag_shows_audit_findings_and_skips_drc_in_end_block(
     assert "warning [comment9_missing]" in captured.err
     # DRC finding skipped at end-of-run (shown inline by workflow; stubbed here).
     assert "error [drc_violation]" not in captured.err
-    # Summary present with updated hint text.
-    assert "Note: Collected 2 finding(s) [audit e0/w1/x0/i0; drc e1/w0/x0/i0]." in captured.err
-    assert "DRC/ERC violations shown above." in captured.err
+    # No Note line in -v: everything is shown inline, nothing hidden.
+    assert "Note:" not in captured.err
 
 
 def test_main_emits_nothing_extra_when_findings_empty(

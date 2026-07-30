@@ -268,11 +268,6 @@ class SitePublisher:
             debt_note = (
                 f"\nNote: site repo has {pending} unpushed commit(s) (dry-run)." if pending else ""
             )
-            _log.info(
-                "dry-run: would write %s + %s",
-                version_file,
-                project_index_file,
-            )
             return PublishResult.build(
                 "published",
                 message=(

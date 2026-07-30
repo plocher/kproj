@@ -538,7 +538,7 @@ class PublishWorkflow:
             != _normalize_publish_context(publish_context)
         )
         if publish_context_drift:
-            _log.info(
+            _log.debug(
                 "publish context drift for %s-%s: existing=%s current=%s",
                 project_info.project,
                 project_info.board_rev,
@@ -559,7 +559,7 @@ class PublishWorkflow:
         current_github_url = github_link_detection.url or ""
         github_url_drift = version_file.exists() and existing_github_url != current_github_url
         if github_url_drift:
-            _log.info(
+            _log.debug(
                 "metadata drift for %s-%s: github_url changed from %r to %r",
                 project_info.project,
                 project_info.board_rev,
@@ -576,7 +576,7 @@ class PublishWorkflow:
             decision = "skip (sources unchanged)"
         if not needs_regen and github_url_drift:
             decision = "skip (sources unchanged; metadata drift: github_url changed)"
-        _log.info(
+        _log.debug(
             "artifact regeneration decision for %s-%s: %s",
             project_info.project,
             project_info.board_rev,
@@ -850,12 +850,15 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
     (``-v``).  Findings are displayed right after :meth:`DesignAnalyzer.analyze`
     returns so they appear in context rather than at the end-of-run summary.
 
-    Format per group::
+    Active issues (non-EXCLUSION) are shown first and counted in the header.
+    KiCad-excluded violations (``Severity.EXCLUSION``) are shown separately
+    as ``[excluded]`` lines so they are visible but clearly not problems::
 
-        DRC: 3 violation(s)
-          [warning] copper_to_board_edge: Silkscreen clipped by copper
-          [error]   track_width: Track width too narrow (at pos 42.3, 18.7)
-        ERC: 0 violation(s)
+        DRC: 1 issue (6 excluded)
+          [error] track_width: Track width too narrow (at pos 42.3, 18.7)
+          [excluded] courtyards_overlap: Footprint Board1 (at ...)
+        ERC: 0 issues
+          (none)
 
     Args:
         findings: The findings from :meth:`DesignAnalyzer.analyze` — only
@@ -869,15 +872,19 @@ def _print_design_findings_inline(findings: tuple[Finding, ...]) -> None:
     for src in _DESIGN_SOURCES:
         group = by_source[src]
         label = src.upper()
-        count = len(group)
-        print(f"{label}: {count} violation(s)", file=sys.stderr)
-        if group:
-            for f in group:
+        active = [f for f in group if f.severity != Severity.EXCLUSION]
+        suppressed = [f for f in group if f.severity == Severity.EXCLUSION]
+        sup_note = f" ({len(suppressed)} excluded)" if suppressed else ""
+        iss_note = "issue" if len(active) == 1 else "issues"
+        print(f"{label}: {len(active)} {iss_note}{sup_note}", file=sys.stderr)
+        if active:
+            for f in active:
                 sev = f.severity.value.lower()
                 location = f" (at {f.value})" if f.value else ""
                 print(f"  [{sev}] {f.field}: {f.reason}{location}", file=sys.stderr)
-        else:
-            print("  (none)", file=sys.stderr)
+        for f in suppressed:
+            location = f" (at {f.value})" if f.value else ""
+            print(f"  [excluded] {f.field}: {f.reason}{location}", file=sys.stderr)
 
 
 def _default_datasheet_name_lookup(
