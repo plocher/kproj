@@ -24,11 +24,16 @@ on the version page; the data layer just preserves the distinction.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 LibrarySource = Literal["internal", "external", "ambiguous"]
 """The three classifications a :class:`LibraryRef.source` may take."""
+LibraryKind = Literal["symbol", "footprint"]
+"""The KiCad object type that references the library."""
+
+LibraryDistribution = Literal["kicad", "added", "unknown"]
+"""Whether the library appears to be part of stock KiCad or project-added."""
 
 
 @dataclass(frozen=True, order=True)
@@ -42,7 +47,16 @@ class LibraryRef:
         source: One of ``"internal"``, ``"external"``, ``"ambiguous"``
             per :data:`LibrarySource`.  See module docstring for the
             classification rules.
+        kind: Either ``"symbol"`` or ``"footprint"``.  Libraries with
+            the same name but different kinds are represented as distinct
+            entries.
+        distribution: One of ``"kicad"``, ``"added"``, or ``"unknown"``.
+            This is a best-effort classification indicating whether the
+            library appears to be from the stock KiCad distribution or
+            introduced by the project/environment.
     """
 
     name: str
     source: LibrarySource
+    kind: LibraryKind = field(default="symbol", compare=True)
+    distribution: LibraryDistribution = field(default="unknown", compare=False)

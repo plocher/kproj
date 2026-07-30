@@ -155,6 +155,7 @@ class FrontMatterSummaryFormatter:
         libs_yaml = _render_libraries(publication)
         if libs_yaml is not None:
             data["libraries"] = libs_yaml
+            data["library_inventory"] = _render_library_inventory(publication)
 
         return yaml.dump(data, sort_keys=False, allow_unicode=True, default_flow_style=False)
 
@@ -216,6 +217,30 @@ def _count_design_findings(ai: AnalysisInfo, *, kind: str) -> dict[str, int]:
     }
 
 
+def _render_library_inventory(
+    publication: Publication,
+) -> dict[str, dict[str, list[str]]]:
+    """Render ``library_inventory`` grouped by kind and distribution."""
+    grouped: dict[str, dict[str, set[str]]] = {
+        "symbol": {"kicad": set(), "added": set(), "unknown": set()},
+        "footprint": {"kicad": set(), "added": set(), "unknown": set()},
+    }
+    for lib in publication.libraries:
+        grouped[lib.kind][lib.distribution].add(lib.name)
+    return {
+        "symbol": {
+            "kicad": sorted(grouped["symbol"]["kicad"]),
+            "added": sorted(grouped["symbol"]["added"]),
+            "unknown": sorted(grouped["symbol"]["unknown"]),
+        },
+        "footprint": {
+            "kicad": sorted(grouped["footprint"]["kicad"]),
+            "added": sorted(grouped["footprint"]["added"]),
+            "unknown": sorted(grouped["footprint"]["unknown"]),
+        },
+    }
+
+
 def _render_libraries(
     publication: Publication,
 ) -> dict[str, list[str]] | None:
@@ -252,7 +277,7 @@ def _render_libraries(
         buckets[lib.source].append(lib.name)
 
     return {
-        "internal": sorted(buckets.get("internal", [])),
-        "external": sorted(buckets.get("external", [])),
-        "ambiguous": sorted(buckets.get("ambiguous", [])),
+        "internal": sorted(set(buckets.get("internal", []))),
+        "external": sorted(set(buckets.get("external", []))),
+        "ambiguous": sorted(set(buckets.get("ambiguous", []))),
     }

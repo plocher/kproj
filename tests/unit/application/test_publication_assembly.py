@@ -80,7 +80,9 @@ def test_build_publication_populates_external_lib_from_fp_lib_table(tmp_path: Pa
         _project_info(),
         AnalysisInfo(findings=()),
     )
-    assert publication.libraries == (LibraryRef(name="SPCoast", source="external"),)
+    assert publication.libraries == (
+        LibraryRef(name="SPCoast", source="external", kind="footprint", distribution="added"),
+    )
 
 
 def test_build_publication_populates_internal_lib_from_fp_lib_table(tmp_path: Path) -> None:
@@ -97,7 +99,9 @@ def test_build_publication_populates_internal_lib_from_fp_lib_table(tmp_path: Pa
         _project_info(),
         AnalysisInfo(findings=()),
     )
-    assert publication.libraries == (LibraryRef(name="LocalLib", source="internal"),)
+    assert publication.libraries == (
+        LibraryRef(name="LocalLib", source="internal", kind="footprint", distribution="added"),
+    )
 
 
 def test_build_publication_populates_ambiguous_lib_from_lib_id_ref(tmp_path: Path) -> None:
@@ -112,7 +116,14 @@ def test_build_publication_populates_ambiguous_lib_from_lib_id_ref(tmp_path: Pat
         _project_info(),
         AnalysisInfo(findings=()),
     )
-    assert publication.libraries == (LibraryRef(name="SPCoast_KiCad_Library", source="ambiguous"),)
+    assert publication.libraries == (
+        LibraryRef(
+            name="SPCoast_KiCad_Library",
+            source="ambiguous",
+            kind="symbol",
+            distribution="unknown",
+        ),
+    )
 
 
 def test_build_publication_libraries_defaults_to_empty(tmp_path: Path) -> None:
