@@ -426,17 +426,22 @@ _NATURAL_PARTS_RE = re.compile(r"(\d+)")
 """Split strings into text/number chunks for natural ordering."""
 
 
-def _natural_sort_key(value: str) -> tuple[object, ...]:
-    """Return a case-insensitive natural sort key for *value*."""
+def _natural_sort_key(value: str) -> tuple[tuple[int, int | str], ...]:
+    """Return a case-insensitive natural sort key for *value*.
+
+    Each chunk is tagged so same-index elements stay comparable across mixed
+    version schemas (e.g. ``1.0A`` vs ``A``). Numeric chunks sort before text
+    chunks at the same position: ``(0, int)`` then ``(1, str)``.
+    """
     parts = _NATURAL_PARTS_RE.split(value.casefold())
-    key: list[object] = []
+    key: list[tuple[int, int | str]] = []
     for part in parts:
         if not part:
             continue
         if part.isdigit():
-            key.append(int(part))
+            key.append((0, int(part)))
         else:
-            key.append(part)
+            key.append((1, part))
     return tuple(key)
 
 

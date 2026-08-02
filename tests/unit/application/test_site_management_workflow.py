@@ -86,6 +86,45 @@ def test_list_projects_natural_orders_projects_and_versions(tmp_path: Path) -> N
     ]
 
 
+def test_list_projects_sorts_mixed_numeric_and_letter_versions(tmp_path: Path) -> None:
+    """Letter-only and numeric versions must sort without TypeError.
+
+    Regression for heterogeneous natural-sort keys (int vs str) when a project
+    has both schemas, e.g. published revisions ``1.0A`` and ``A``.
+    """
+    site_repo = tmp_path / "site"
+    site_repo.mkdir()
+    _seed_project(site_repo, "AltmillSwitchController", ("A", "1.0A", "2.0"))
+    workflow = SiteManagementWorkflow()
+
+    result = workflow.list_projects(_config(site_repo))
+
+    assert result.exit_code == 0
+    assert result.message == "AltmillSwitchController [1.0A, 2.0, A]"
+
+
+def test_delete_letter_version_when_numeric_sibling_exists(tmp_path: Path) -> None:
+    """Delete must discover projects whose versions mix letter and numeric IDs."""
+    site_repo = tmp_path / "site"
+    site_repo.mkdir()
+    _seed_project(site_repo, "AltmillSwitchController", ("1.0A", "A"))
+    request = DeleteRequest(
+        project="AltmillSwitchController",
+        version="A",
+        force=False,
+        dry_run=True,
+        config=_config(site_repo),
+    )
+    workflow = SiteManagementWorkflow()
+
+    result = workflow.delete(request)
+
+    assert result.exit_code == 0
+    assert result.outcome == "preview"
+    assert result.deleted_versions == ("A",)
+    assert "Would delete version AltmillSwitchController-A" in result.message
+
+
 def test_delete_version_removes_single_version_and_keeps_other_versions(tmp_path: Path) -> None:
     site_repo = tmp_path / "site"
     site_repo.mkdir()

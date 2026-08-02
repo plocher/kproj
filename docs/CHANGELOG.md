@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fixed `kproj list` / `kproj delete` crashing with `TypeError: '<' not supported between instances of 'str' and 'int'` when a project has mixed letter-only and numeric version IDs (e.g. `A` and `1.0A`). Natural-sort keys now tag each chunk so numeric and text parts stay comparable; numbers sort before letters at each position.
 - Refactored CLI parsing to first-class verbs (`kproj publish`, `kproj list`, `kproj delete`) and removed legacy token-dispatch command routing.
 - Added global `kproj --version` support and aligned list/delete with publish-style optional project resolution (defaults to `.` / CWD).
 - Added `kproj list --all` for full site overview and switched list output to one-line summaries (`project [natural-ordered versions]`).
