@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.13.3 (2026-08-02)
+
+### Bug Fixes
+
+* fix(site): make natural sort safe for mixed version schemas
+
+_natural_sort_key mixed bare ints and strs, so sorting versions like
+1.0A and A raised TypeError during list/delete discovery. Tag each
+chunk as (0, int) or (1, str) so keys stay comparable and numbers
+sort before letters. Add regression coverage for the Altmill-style
+case. ([`3ef81a0`](https://github.com/plocher/kproj/commit/3ef81a079946d80adf3baad0d4413a4019d0b1bb))
+
+
 ## v0.13.2 (2026-07-30)
 
 ### Bug Fixes
