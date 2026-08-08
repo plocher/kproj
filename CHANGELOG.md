@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v0.13.4 (2026-08-08)
+
+### Bug Fixes
+
+* fix(ibom): choose default layer view from footprint sides
+
+iBOM filters the BOM table by canvas layer, so a fixed --layer-view F
+hid back-side parts (e.g. IOX-Monitor J1-J3) until the visitor switched
+view. Select F/B/FB from PCB footprint placement so mixed boards open
+on FB without surprising single-sided boards. ([`b6e6ca5`](https://github.com/plocher/kproj/commit/b6e6ca53c804bc009ccaf9f22d18836bd1073c84))
+
+
 ## v0.13.3 (2026-08-02)
 
 ### Bug Fixes
