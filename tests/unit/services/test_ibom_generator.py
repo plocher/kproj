@@ -485,7 +485,6 @@ def test_generate_propagates_subprocess_failure(
     assert not output.exists()
 
 
-
 def _minimal_footprint(*, reference: str, layer: str, attr: str = "smd") -> str:
     """Return a minimal KiCad 8+ footprint s-expression for layer-side tests."""
     suffix = reference.encode("ascii", "ignore").hex()[:2].rjust(2, "0")
@@ -507,11 +506,7 @@ def _minimal_footprint(*, reference: str, layer: str, attr: str = "smd") -> str:
 def _write_stub_pcb(path: Path, footprints: str) -> Path:
     """Write a minimal ``.kicad_pcb`` containing *footprints*."""
     path.write_text(
-        "(kicad_pcb\n"
-        '\t(version 20240108)\n'
-        '\t(generator "kproj-test")\n'
-        f"{footprints}"
-        ")\n",
+        f'(kicad_pcb\n\t(version 20240108)\n\t(generator "kproj-test")\n{footprints})\n',
         encoding="utf-8",
     )
     return path
