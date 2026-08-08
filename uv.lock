@@ -123,7 +123,7 @@ wheels = [
 
 [[package]]
 name = "jbom"
-version = "7.9.0"
+version = "7.9.1"
 source = { editable = "../jBOM" }
 dependencies = [
     { name = "pydantic" },
