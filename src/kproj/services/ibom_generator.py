@@ -16,10 +16,16 @@ The argv, fixed by ADR 0008:
         --name-format <P>-<R>.ibom
         --extra-data-file <pcb|inventory-xml>
         --dnp-field kicad_dnp
-        --layer-view F
+        --layer-view <F|B|FB>
         --extra-fields <configured-extra-fields>
         --include-tracks
         <pcb>
+
+``--layer-view`` is chosen from footprint placement sides on the PCB:
+front-only -> ``F``, back-only -> ``B``, both sides -> ``FB``. Empty or
+unparseable boards fall back to ``F``. iBOM filters the BOM table by the
+active canvas layer, so a fixed ``F`` default hides back-side parts on
+mixed boards (e.g. bottom connectors) until the visitor switches view.
 
 ``<python>`` is **KiCad's bundled Python interpreter**, resolved by
 :func:`kproj.common.kicad_install.find_kicad_python` during pre-flight
@@ -40,6 +46,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import tempfile
 import time
 import xml.etree.ElementTree as ElementTree
@@ -68,8 +75,36 @@ _DEFAULT_EXTRA_FIELDS: tuple[str, ...] = ("MPN", "Manufacturer")
 
 _TRUE_DNP_MARKERS: frozenset[str] = frozenset({"1", "true", "yes", "y", "dnp"})
 """Truthy string markers treated as DNP during XML projection."""
-_IBOM_DEFAULT_LAYER_VIEW = "F"
-"""Preferred initial PCB layer view for generated iBOM pages."""
+_IBOM_FALLBACK_LAYER_VIEW = "F"
+"""Initial layer view when the PCB has no detectable footprint sides."""
+
+_FOOTPRINT_BLOCK_RE = re.compile(
+    r"\(footprint\b",
+    re.MULTILINE,
+)
+"""Matches the start of a footprint s-expression in a ``.kicad_pcb``."""
+
+_FOOTPRINT_LAYER_RE = re.compile(
+    r"\(layer\s+\"([FB])\.Cu\"\)",
+)
+"""Matches the footprint's own copper placement layer (not nested pads)."""
+
+_FOOTPRINT_ATTR_RE = re.compile(
+    r"\(attr\s+([^)]*)\)",
+)
+"""Matches the footprint ``(attr ...)`` token list."""
+
+_IGNORED_FOOTPRINT_ATTR_TOKENS: frozenset[str] = frozenset(
+    {
+        "board_only",
+        "exclude_from_bom",
+    }
+)
+"""Attr tokens whose footprints are ignored for default layer-view choice.
+
+``board_only`` / ``exclude_from_bom`` parts are typically mechanical and
+are not listed in the iBOM table, so they should not force ``FB``.
+"""
 
 _IBOM_USER_CSS_TEMPLATE = """/* Managed by kproj -- regenerated on every publish. Do not hand-edit.
  * __PROVENANCE__
@@ -305,6 +340,8 @@ class IbomGenerator:
                     extra_data_rows,
                     self._extra_fields,
                 )
+            has_front, has_back = detect_pcb_footprint_sides(pcb_path)
+            layer_view = choose_ibom_layer_view(has_front=has_front, has_back=has_back)
             argv = [
                 str(self._python_exe),
                 str(self._ibom_script),
@@ -319,7 +356,7 @@ class IbomGenerator:
                 "--dnp-field",
                 "kicad_dnp",
                 "--layer-view",
-                _IBOM_DEFAULT_LAYER_VIEW,
+                layer_view,
             ]
             if self._extra_fields:
                 argv.extend(["--extra-fields", ",".join(self._extra_fields)])
@@ -352,6 +389,86 @@ class IbomGenerator:
             command=result.command,
             elapsed_seconds=elapsed,
         )
+
+
+def detect_pcb_footprint_sides(pcb_path: Path) -> tuple[bool, bool]:
+    """Return whether *pcb_path* has front- and/or back-side footprints.
+
+    Scans footprint s-expressions for each footprint's own ``(layer "F.Cu")``
+    / ``(layer "B.Cu")`` placement side. Nested pad or graphical layer tokens
+    are ignored by only inspecting text from the footprint open through the
+    first ``(layer "?.Cu")`` occurrence (KiCad writes the placement layer
+    immediately under the footprint header).
+
+    Footprints whose ``(attr ...)`` includes ``board_only`` or
+    ``exclude_from_bom`` are skipped so mechanical-only back items do not
+    force a dual-side default view.
+
+    Args:
+        pcb_path: Path to a ``.kicad_pcb`` file.
+
+    Returns:
+        ``(has_front, has_back)``. Both ``False`` when the file is missing,
+        unreadable, or contains no countable footprints.
+    """
+    try:
+        text = pcb_path.read_text(encoding="utf-8")
+    except OSError:
+        return False, False
+
+    has_front = False
+    has_back = False
+    matches = list(_FOOTPRINT_BLOCK_RE.finditer(text))
+    for index, match in enumerate(matches):
+        block_start = match.start()
+        block_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        # Placement layer is written immediately under the footprint header.
+        # Search only the first copper ``(layer "?.Cu")`` near the open so
+        # nested pad ``(layers "F.Cu" "B.Cu")`` tokens cannot flip the side.
+        # ``(attr ...)`` sits after properties (~1.5–2 kB in); scan farther
+        # for attr only.
+        layer_window = text[block_start : min(block_start + 200, block_end)]
+        layer_match = _FOOTPRINT_LAYER_RE.search(layer_window)
+        if layer_match is None:
+            continue
+        attr_window = text[block_start : min(block_start + 3000, block_end)]
+        attr_match = _FOOTPRINT_ATTR_RE.search(attr_window)
+        if attr_match is not None:
+            attr_tokens = set(attr_match.group(1).split())
+            if attr_tokens & _IGNORED_FOOTPRINT_ATTR_TOKENS:
+                continue
+        side = layer_match.group(1)
+        if side == "F":
+            has_front = True
+        elif side == "B":
+            has_back = True
+        if has_front and has_back:
+            break
+    return has_front, has_back
+
+
+def choose_ibom_layer_view(*, has_front: bool, has_back: bool) -> str:
+    """Choose iBOM ``--layer-view`` so the default table shows every side.
+
+    iBOM filters the BOM table by canvas layer (``F`` / ``B`` / ``FB``).
+    Prefer the single populated side when only one side has parts; use
+    ``FB`` when both sides are populated so neither side is hidden on
+    first open. Fall back to front when nothing is detected.
+
+    Args:
+        has_front: True when at least one countable front footprint exists.
+        has_back: True when at least one countable back footprint exists.
+
+    Returns:
+        One of ``"F"``, ``"B"``, or ``"FB"``.
+    """
+    if has_front and has_back:
+        return "FB"
+    if has_back and not has_front:
+        return "B"
+    if has_front:
+        return "F"
+    return _IBOM_FALLBACK_LAYER_VIEW
 
 
 def write_ibom_user_files(
