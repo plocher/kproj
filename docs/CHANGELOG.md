@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Chose iBOM default `--layer-view` from PCB footprint sides: front-only boards open on `F`, back-only on `B`, mixed front+back on `FB`. A fixed `F` default previously hid back-side parts (e.g. bottom connectors) from the BOM table until the visitor switched layer view.
 - Fixed `kproj list` / `kproj delete` crashing with `TypeError: '<' not supported between instances of 'str' and 'int'` when a project has mixed letter-only and numeric version IDs (e.g. `A` and `1.0A`). Natural-sort keys now tag each chunk so numeric and text parts stay comparable; numbers sort before letters at each position.
 - Refactored CLI parsing to first-class verbs (`kproj publish`, `kproj list`, `kproj delete`) and removed legacy token-dispatch command routing.
 - Added global `kproj --version` support and aligned list/delete with publish-style optional project resolution (defaults to `.` / CWD).
@@ -19,7 +20,7 @@
 - Added CSV header alias normalization for generic/JLC lookup output (`Reference`/`Designator`, `Description`/`Comment`, `Lcsc`/`LCSC Part #`) so enrichment remains reference-correct under JLC defaults.
 - Switched iBOM `Datasheet` enrichment links to use curated `Datasheet Name` deep-links into `SPCoast-inventory` (GitHub blob URLs) instead of supplier-provided datasheet URLs.
 - Updated default iBOM extra columns to `Details,Description`; `Details` now composes `Manufacturer`, `MPN`, and a compact `Datasheet` link (`<br>` separated), replacing separate `Manufacturer`, `MPN`, `Fabricator Part Number`, `Datasheet`, and `Datasheet Name` default columns.
-- Updated generated iBOM UI defaults to start on the front side (`layer_view=F`) and hide `checkboxes` + `Footprint` columns by default while relabeling `References` to `Ref`.
+- Updated generated iBOM UI defaults to hide `checkboxes` + `Footprint` columns by default while relabeling `References` to `Ref` (initial `layer_view` is now chosen from footprint sides; see Unreleased).
 - Added generated iBOM column-width heuristics to minimize row number/`Ref`/`Value`/`Details` columns and favor remaining width for `Description` under common layouts.
 - Fixed the iBOM column-visibility dropdown (top-left cell) rendering only a single entry: SPCoast's iBOM UI defaults (column widths, default hidden columns, `References`->`Ref` relabeling) now ride iBOM's own supported `user.css`/`user.js` customization hooks instead of splicing text into iBOM's generated HTML/JS after the fact, and the `th.numCol` width constraint that hosted the dropdown (and was corrupting its rendering) is no longer applied.
 - Preserved fallback behavior when inventory is not configured (legacy PCB-backed iBOM extra-data path remains valid).

@@ -7,8 +7,11 @@ Validates the contract per ADR 0008 + ``docs/DESIGN.md`` §
   ``<python> <ibom_script> --no-browser --no-compression
   --dest-dir <staging> --name-format <P>-<R>.ibom
   --extra-data-file <pcb> --dnp-field kicad_dnp
-  --layer-view F
+  --layer-view <F|B|FB>
   --extra-fields MPN,Manufacturer --include-tracks <pcb>``.
+- ``--layer-view`` is chosen from footprint placement sides on the PCB:
+  front-only boards open on ``F``, back-only on ``B``, mixed on ``FB``
+  so the default BOM table does not hide one side of the board.
 - The Python interpreter is the injected KiCad-bundled Python
   (``python_exe``), NOT :data:`sys.executable` (ADR 0008 amendment /
   kproj#10: the iBOM script needs ``pcbnew``).
@@ -34,7 +37,11 @@ from kproj.model.datasheet_row import DatasheetRow
 from kproj.model.export_result import ExportResult
 from kproj.services import ibom_generator as ibom_generator_module
 from kproj.services.change_journal import ChangeJournal
-from kproj.services.ibom_generator import IbomGenerator
+from kproj.services.ibom_generator import (
+    IbomGenerator,
+    choose_ibom_layer_view,
+    detect_pcb_footprint_sides,
+)
 
 
 def _make_fake_ibom_run(
@@ -120,6 +127,7 @@ def test_generate_emits_canonical_argv(
     assert argv[dnp_idx] == "kicad_dnp"
     assert "--layer-view" in argv
     layer_view_idx = argv.index("--layer-view") + 1
+    # Stub PCB has no footprints → front default (same as front-only boards).
     assert argv[layer_view_idx] == "F"
     assert "--extra-fields" in argv
     fields_idx = argv.index("--extra-fields") + 1
@@ -475,3 +483,138 @@ def test_generate_propagates_subprocess_failure(
             name_format="demo.ibom",
         )
     assert not output.exists()
+
+
+
+def _minimal_footprint(*, reference: str, layer: str, attr: str = "smd") -> str:
+    """Return a minimal KiCad 8+ footprint s-expression for layer-side tests."""
+    suffix = reference.encode("ascii", "ignore").hex()[:2].rjust(2, "0")
+    return (
+        f'\t(footprint "Lib:FP_{reference}"\n'
+        f'\t\t(layer "{layer}")\n'
+        f'\t\t(uuid "00000000-0000-0000-0000-0000000000{suffix}")\n'
+        f"\t\t(at 0 0)\n"
+        f"\t\t(attr {attr})\n"
+        f'\t\t(property "Reference" "{reference}"\n'
+        f"\t\t\t(at 0 -1.5 0)\n"
+        f'\t\t\t(layer "F.Fab")\n'
+        f'\t\t\t(uuid "00000000-0000-0000-0000-0000000001{suffix}")\n'
+        f"\t\t)\n"
+        f"\t)\n"
+    )
+
+
+def _write_stub_pcb(path: Path, footprints: str) -> Path:
+    """Write a minimal ``.kicad_pcb`` containing *footprints*."""
+    path.write_text(
+        "(kicad_pcb\n"
+        '\t(version 20240108)\n'
+        '\t(generator "kproj-test")\n'
+        f"{footprints}"
+        ")\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("footprints", "expected_front", "expected_back"),
+    [
+        ("", False, False),
+        (_minimal_footprint(reference="R1", layer="F.Cu"), True, False),
+        (_minimal_footprint(reference="R1", layer="B.Cu"), False, True),
+        (
+            _minimal_footprint(reference="R1", layer="F.Cu")
+            + _minimal_footprint(reference="J1", layer="B.Cu"),
+            True,
+            True,
+        ),
+        # Nested pad/graphical layers must not be mistaken for placement side.
+        (
+            '\t(footprint "Lib:FP"\n'
+            '\t\t(layer "F.Cu")\n'
+            '\t\t(uuid "00000000-0000-0000-0000-000000000099")\n'
+            "\t\t(at 0 0)\n"
+            "\t\t(attr smd)\n"
+            '\t\t(property "Reference" "R9"\n'
+            "\t\t\t(at 0 -1.5 0)\n"
+            '\t\t\t(layer "B.Fab")\n'
+            '\t\t\t(uuid "00000000-0000-0000-0000-000000000199")\n'
+            "\t\t)\n"
+            '\t\t(pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "B.Cu")\n'
+            '\t\t\t(uuid "00000000-0000-0000-0000-000000000299")\n'
+            "\t\t)\n"
+            "\t)\n",
+            True,
+            False,
+        ),
+        # board_only / exclude_from_bom footprints are ignored for view choice.
+        (
+            _minimal_footprint(reference="H1", layer="B.Cu", attr="board_only exclude_from_bom")
+            + _minimal_footprint(reference="R1", layer="F.Cu"),
+            True,
+            False,
+        ),
+    ],
+)
+def test_detect_pcb_footprint_sides(
+    tmp_path: Path,
+    footprints: str,
+    expected_front: bool,
+    expected_back: bool,
+) -> None:
+    """Footprint placement sides are detected from the footprint's own layer."""
+    pcb = _write_stub_pcb(tmp_path / "board.kicad_pcb", footprints)
+    has_front, has_back = detect_pcb_footprint_sides(pcb)
+    assert has_front is expected_front
+    assert has_back is expected_back
+
+
+@pytest.mark.parametrize(
+    ("has_front", "has_back", "expected"),
+    [
+        (True, False, "F"),
+        (False, True, "B"),
+        (True, True, "FB"),
+        (False, False, "F"),
+    ],
+)
+def test_choose_ibom_layer_view(has_front: bool, has_back: bool, expected: str) -> None:
+    """Default layer view prefers the populated side(s) without hiding parts."""
+    assert choose_ibom_layer_view(has_front=has_front, has_back=has_back) == expected
+
+
+@pytest.mark.parametrize(
+    ("footprints", "expected_layer_view"),
+    [
+        (_minimal_footprint(reference="R1", layer="F.Cu"), "F"),
+        (_minimal_footprint(reference="R1", layer="B.Cu"), "B"),
+        (
+            _minimal_footprint(reference="R1", layer="F.Cu")
+            + _minimal_footprint(reference="J1", layer="B.Cu"),
+            "FB",
+        ),
+    ],
+)
+def test_generate_selects_layer_view_from_pcb_sides(
+    ibom_script: Path,
+    kicad_python: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    footprints: str,
+    expected_layer_view: str,
+) -> None:
+    """``generate`` passes a side-aware ``--layer-view`` so mixed boards open on FB."""
+    fake_run, captured = _make_fake_ibom_run()
+    monkeypatch.setattr(ibom_generator_module, "subprocess_run", fake_run)
+
+    pcb = _write_stub_pcb(tmp_path / "demo.kicad_pcb", footprints)
+    output = tmp_path / "demo.ibom.html"
+    IbomGenerator(ibom_script=ibom_script, python_exe=kicad_python).generate(
+        pcb_path=pcb,
+        output_file=output,
+        name_format="demo.ibom",
+    )
+    argv = captured[0]
+    layer_view_idx = argv.index("--layer-view") + 1
+    assert argv[layer_view_idx] == expected_layer_view
