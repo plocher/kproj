@@ -425,7 +425,7 @@ def detect_pcb_footprint_sides(pcb_path: Path) -> tuple[bool, bool]:
         # Placement layer is written immediately under the footprint header.
         # Search only the first copper ``(layer "?.Cu")`` near the open so
         # nested pad ``(layers "F.Cu" "B.Cu")`` tokens cannot flip the side.
-        # ``(attr ...)`` sits after properties (~1.5–2 kB in); scan farther
+        # ``(attr ...)`` sits after properties (~1.5-2 kB in); scan farther
         # for attr only.
         layer_window = text[block_start : min(block_start + 200, block_end)]
         layer_match = _FOOTPRINT_LAYER_RE.search(layer_window)
