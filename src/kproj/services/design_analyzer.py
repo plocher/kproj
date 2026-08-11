@@ -199,6 +199,7 @@ class DesignAnalyzer:
                 "--format",
                 "json",
                 "--severity-all",
+                "--refill-zones",
                 "--output",
                 str(output_path),
                 str(target_file),
